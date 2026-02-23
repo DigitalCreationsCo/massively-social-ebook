@@ -1,38 +1,56 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { db } from "./db";
+import {
+  blocks,
+  votes,
+  chat,
+  type Block,
+  type InsertBlock,
+  type Vote,
+  type InsertVote,
+  type ChatMessage,
+  type InsertChat
+} from "@shared/schema";
+import { desc, eq } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getCurrentBlock(): Promise<Block | undefined>;
+  createBlock(block: InsertBlock): Promise<Block>;
+  
+  getVotesForBlock(blockId: number): Promise<Vote[]>;
+  createVote(vote: InsertVote): Promise<Vote>;
+  
+  getRecentChat(limit?: number): Promise<ChatMessage[]>;
+  createChat(msg: InsertChat): Promise<ChatMessage>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  async getCurrentBlock(): Promise<Block | undefined> {
+    const [block] = await db.select().from(blocks).orderBy(desc(blocks.id)).limit(1);
+    return block;
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async createBlock(block: InsertBlock): Promise<Block> {
+    const [newBlock] = await db.insert(blocks).values(block).returning();
+    return newBlock;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async getVotesForBlock(blockId: number): Promise<Vote[]> {
+    return await db.select().from(votes).where(eq(votes.blockId, blockId));
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async createVote(vote: InsertVote): Promise<Vote> {
+    const [newVote] = await db.insert(votes).values(vote).returning();
+    return newVote;
+  }
+
+  async getRecentChat(limit: number = 50): Promise<ChatMessage[]> {
+    return await db.select().from(chat).orderBy(desc(chat.id)).limit(limit);
+  }
+
+  async createChat(msg: InsertChat): Promise<ChatMessage> {
+    const [newMsg] = await db.insert(chat).values(msg).returning();
+    return newMsg;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
