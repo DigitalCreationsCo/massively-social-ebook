@@ -56,6 +56,13 @@ export function CinematicCanvas({ block }: CinematicCanvasProps) {
               transition={{ delay: 0.5, duration: 1 }}
               className="max-w-3xl mx-auto w-full"
             >
+              {/* Title from v0 style */}
+              {block.title && (
+                <h2 className="font-serif text-lg sm:text-xl md:text-2xl font-semibold tracking-tight text-white/95 mb-4 text-glow drop-shadow-xl">
+                  {block.title}
+                </h2>
+              )}
+              {/* Story content with serif font from replit */}
               <p className="font-serif text-xl sm:text-2xl md:text-3xl leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap">
                 {block.content}
               </p>

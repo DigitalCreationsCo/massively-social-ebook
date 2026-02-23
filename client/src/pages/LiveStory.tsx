@@ -1,10 +1,23 @@
+import { useState } from 'react';
 import { useLiveState } from '@/hooks/use-live-state';
 import { CinematicCanvas } from '@/components/CinematicCanvas';
 import { DecisionPhase } from '@/components/DecisionPhase';
 import { LiveChat } from '@/components/LiveChat';
-import { Loader2, WifiOff } from 'lucide-react';
+import { Loader2, WifiOff, Users, Radio } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { motion, AnimatePresence } from 'framer-motion';
+
+const CHANNELS = [
+  { id: 'scifi', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
+  { id: 'gothic', name: 'Gothic Mystery', description: 'Dark alleys and supernatural secrets' }
+];
 
 export default function LiveStory() {
+  const [selectedChannel, setSelectedChannel] = useState<string>('scifi');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [showChannelSelector, setShowChannelSelector] = useState(false);
+
   const { 
     isLoading, 
     wsConnected, 
@@ -14,8 +27,15 @@ export default function LiveStory() {
     chatHistory, 
     hasVotedCurrent,
     submitChat, 
-    submitVote 
-  } = useLiveState();
+    submitVote,
+    voteResults,
+    viewerCount,
+    mostRecentMessage
+  } = useLiveState(selectedChannel);
+
+  const handleToggleChat = () => {
+    setChatOpen((prev) => !prev);
+  };
 
   if (isLoading) {
     return (
@@ -36,29 +56,104 @@ export default function LiveStory() {
         </div>
       )}
 
-      {/* Pane 1: Cinematic Visuals & Narrative (Flex grows to fill available space) */}
+      {/* Header bar from v0 */}
+      <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-5 pt-4 pb-2">
+        <div className="flex items-center gap-2">
+          {/* Channel selector */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowChannelSelector(!showChannelSelector)}
+              className="text-xs font-mono tracking-wider text-foreground border-border bg-background/50 backdrop-blur-sm h-7"
+            >
+              {CHANNELS.find(c => c.id === selectedChannel)?.name}
+            </Button>
+            
+            <AnimatePresence>
+              {showChannelSelector && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute top-full left-0 mt-2 bg-background/95 backdrop-blur-md border border-border rounded-lg shadow-lg overflow-hidden z-50"
+                >
+                  {CHANNELS.map((channel) => (
+                    <button
+                      key={channel.id}
+                      onClick={() => {
+                        setSelectedChannel(channel.id);
+                        setShowChannelSelector(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-primary/10 transition-colors ${
+                        selectedChannel === channel.id ? 'bg-primary/20 text-primary' : 'text-foreground'
+                      }`}
+                    >
+                      <div className="font-medium">{channel.name}</div>
+                      <div className="text-xs text-muted-foreground">{channel.description}</div>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+            <Badge variant="outline" className="text-[10px] font-mono tracking-wider text-foreground border-border bg-background/50 backdrop-blur-sm">
+              LIVE
+            </Badge>
+          </div>
+        </div>
+
+        {/* Live user count from v0 */}
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <Users className="size-3.5" />
+          <span className="text-xs font-mono tabular-nums">
+            {viewerCount.toLocaleString()}
+          </span>
+        </div>
+      </header>
+
+      {/* Pane 1: Cinematic Visuals & Narrative */}
       <section className="relative flex-1 min-h-[40vh] overflow-hidden">
         <CinematicCanvas block={currentBlock} />
       </section>
 
-      {/* Pane 2: Decision / Timer Area (Sticky middle) */}
+      {/* Pane 2: Decision / Timer Area */}
       <section className="z-20 shrink-0 border-t border-white/5 bg-black/80 backdrop-blur-2xl shadow-[0_-20px_40px_rgba(0,0,0,0.8)]">
         <DecisionPhase 
           phase={currentBlock?.phase} 
           timeRemaining={localTimeRemaining} 
           hasVoted={hasVotedCurrent}
-          onVote={submitVote} 
+          onVote={submitVote}
+          optionA={currentBlock?.optionA}
+          optionB={currentBlock?.optionB}
+          voteResults={voteResults}
+          selectedChoice={hasVotedCurrent ? (sessionStorage.getItem(`voted_${selectedChannel}_${currentBlock?.id}`) as 'A' | 'B') : null}
         />
       </section>
 
-      {/* Pane 3: Live Chat (Fixed height at bottom) */}
-      <section className="relative h-[38vh] min-h-[250px] max-h-[400px] shrink-0 border-t border-white/5 bg-[#050505]">
-        <LiveChat 
-          history={chatHistory} 
-          username={username} 
-          onSend={submitChat} 
-        />
-      </section>
+      {/* Most recent message at the bottom - from v0 */}
+      {!chatOpen && mostRecentMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute bottom-20 left-4 right-16 z-20 bg-black/80 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 text-sm"
+        >
+          <span className="text-primary font-medium">{mostRecentMessage.username}: </span>
+          <span className="text-white/80">{mostRecentMessage.text}</span>
+        </motion.div>
+      )}
+
+      {/* Chat panel */}
+      <LiveChat 
+        history={chatHistory} 
+        username={username} 
+        onSend={submitChat}
+        isOpen={chatOpen}
+        onToggle={handleToggleChat}
+      />
 
     </main>
   );

@@ -1,24 +1,27 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-
-export const blocks = pgTable("blocks", {
+  export const blocks = pgTable("blocks", {
   id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull().default('scifi'),
+  title: text("title"),
   content: text("content").notNull(),
   imageUrl: text("image_url"),
+  optionA: jsonb("option_a"), // { label: string, description: string }
+  optionB: jsonb("option_b"), // { label: string, description: string }
   createdAt: timestamp("created_at").defaultNow(),
 });
-
 export const votes = pgTable("votes", {
   id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull().default('scifi'),
   blockId: integer("block_id").notNull(),
   userId: text("user_id").notNull(),
   choice: text("choice").notNull(), // 'A' or 'B'
   createdAt: timestamp("created_at").defaultNow(),
 });
-
 export const chat = pgTable("chat", {
   id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull().default('scifi'),
   username: text("username").notNull(),
   text: text("text").notNull(),
   createdAt: timestamp("created_at").defaultNow(),

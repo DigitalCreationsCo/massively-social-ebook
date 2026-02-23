@@ -4,13 +4,21 @@ import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
 
-// Types derived from schema
 export type Phase = 'reading' | 'voting';
+
+export interface VoteOption {
+  label: string;
+  description: string;
+}
 
 export interface StoryState {
   id: number;
+  channelId: string;
+  title: string | null;
   content: string;
   imageUrl: string | null;
+  optionA: VoteOption | null;
+  optionB: VoteOption | null;
   createdAt: string;
   phase: Phase;
   timeRemaining: number;
@@ -23,11 +31,15 @@ export interface ChatMsg {
   createdAt: string;
 }
 
-export function useLiveState() {
+export interface VoteResults {
+  A: number;
+  B: number;
+}
+
+export function useLiveState(channelId: string = 'scifi') {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
-  // Session state
   const [username] = useState(() => {
     const stored = sessionStorage.getItem('reader_name');
     if (stored) return stored;
@@ -38,24 +50,24 @@ export function useLiveState() {
 
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-
-  // Local timer state for smooth UI ticking without waiting for WS syncs
   const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
+  const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
+  const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
-    queryKey: [api.blocks.current.path],
+    queryKey: [api.blocks.current.path, channelId],
     queryFn: async () => {
-      const res = await fetch(api.blocks.current.path);
+      const res = await fetch(`${api.blocks.current.path}?channelId=${channelId}`);
       if (!res.ok) throw new Error('Failed to fetch current block');
       return res.json() as Promise<StoryState>;
     },
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
-    queryKey: [api.chat.history.path],
+    queryKey: [api.chat.history.path, channelId],
     queryFn: async () => {
-      const res = await fetch(api.chat.history.path);
+      const res = await fetch(`${api.chat.history.path}?channelId=${channelId}`);
       if (!res.ok) throw new Error('Failed to fetch chat history');
       return res.json() as Promise<ChatMsg[]>;
     },
@@ -64,7 +76,7 @@ export function useLiveState() {
   // Sync local timer with server state
   useEffect(() => {
     if (currentBlock?.timeRemaining !== undefined) {
-      setLocalTimeRemaining(currentBlock.timeRemaining);
+      setLocalTimeRemaining(Math.floor(currentBlock.timeRemaining / 1000));
     }
   }, [currentBlock?.timeRemaining, currentBlock?.phase, currentBlock?.id]);
 
@@ -79,10 +91,21 @@ export function useLiveState() {
     return () => clearInterval(interval);
   }, [localTimeRemaining]);
 
-  // WebSocket Connection & Handling
+  // Simulate viewer count fluctuations
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setViewerCount(prev => {
+        const change = Math.floor(Math.random() * 21) - 10;
+        return Math.max(100, prev + change);
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // WebSocket Connection
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?channelId=${channelId}`;
     
     const connect = () => {
       const socket = new WebSocket(wsUrl);
@@ -90,12 +113,11 @@ export function useLiveState() {
 
       socket.onopen = () => {
         setWsConnected(true);
-        console.log('[LiveState] Connected to Realtime Broadcast');
+        console.log('[LiveState] Connected to channel:', channelId);
       };
 
       socket.onclose = () => {
         setWsConnected(false);
-        // Exponential backoff reconnect could go here
         setTimeout(connect, 3000);
       };
 
@@ -105,15 +127,18 @@ export function useLiveState() {
           
           if (message.type === 'sync_state') {
             const payload = message.payload as StoryState;
-            queryClient.setQueryData([api.blocks.current.path], payload);
+            queryClient.setQueryData([api.blocks.current.path, channelId], payload);
           } 
           else if (message.type === 'chat_message') {
             const payload = message.payload as ChatMsg;
-            queryClient.setQueryData<ChatMsg[]>([api.chat.history.path], (old = []) => {
-              // Prevent duplicates
+            queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => {
               if (old.some(m => m.id === payload.id)) return old;
               return [...old, payload];
             });
+          }
+          else if (message.type === 'vote_update') {
+            const payload = message.payload as VoteResults;
+            setVoteResults(payload);
           }
         } catch (err) {
           console.error('[LiveState] Failed to parse WS message:', err);
@@ -126,29 +151,27 @@ export function useLiveState() {
     return () => {
       wsRef.current?.close();
     };
-  }, [queryClient]);
+  }, [queryClient, channelId]);
 
-  // Actions
   const submitChat = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       toast({ title: "Connection lost", description: "Trying to reconnect...", variant: "destructive" });
       return;
     }
     
-    // Optimistic local append (optional, but makes it feel faster)
     const tempMsg: ChatMsg = {
-      id: Date.now(), // temporary
+      id: Date.now(),
       username,
       text,
       createdAt: new Date().toISOString()
     };
-    queryClient.setQueryData<ChatMsg[]>([api.chat.history.path], (old = []) => [...old, tempMsg]);
+    queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => [...old, tempMsg]);
 
     wsRef.current.send(JSON.stringify({
       type: 'submit_chat',
       payload: { username, text }
     }));
-  }, [username, queryClient, toast]);
+  }, [username, queryClient, toast, channelId]);
 
   const submitVote = useCallback((choice: 'A' | 'B') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -156,22 +179,30 @@ export function useLiveState() {
       return;
     }
     
-    // Optimistically record vote to disable buttons locally
-    sessionStorage.setItem(`voted_${currentBlock?.id}`, choice);
+    sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
     
     wsRef.current.send(JSON.stringify({
       type: 'submit_vote',
-      payload: { choice, blockId: currentBlock?.id }
+      payload: { choice, userId: username }
+    }));
+    
+    // Update local vote results optimistically
+    setVoteResults(prev => ({
+      ...prev,
+      [choice]: prev[choice] + 1
     }));
     
     toast({ 
       title: "Vote cast!", 
-      description: `You chose Path ${choice}.`,
+      description: `You chose ${currentBlock?.optionA && choice === 'A' ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
       duration: 2000 
     });
-  }, [currentBlock?.id, toast]);
+  }, [currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, channelId]);
 
-  const hasVotedCurrent = sessionStorage.getItem(`voted_${currentBlock?.id}`) !== null;
+  const hasVotedCurrent = sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
+
+  // Get most recent chat message
+  const mostRecentMessage = chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null;
 
   return {
     isLoading: blockLoading || chatLoading,
@@ -182,6 +213,9 @@ export function useLiveState() {
     chatHistory,
     hasVotedCurrent,
     submitChat,
-    submitVote
+    submitVote,
+    voteResults,
+    viewerCount,
+    mostRecentMessage
   };
 }

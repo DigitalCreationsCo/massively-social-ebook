@@ -1,13 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, UserCircle2 } from 'lucide-react';
+import { Send, MessageCircle, ChevronDown, UserCircle2 } from 'lucide-react';
 import type { ChatMsg } from '@/hooks/use-live-state';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface LiveChatProps {
   history: ChatMsg[];
   username: string;
   onSend: (text: string) => void;
+  isOpen: boolean;
+  onToggle: () => void;
 }
 
 // Deterministic color generator based on username string
@@ -20,16 +26,31 @@ function getUserColor(username: string) {
   return `hsl(${h}, 70%, 65%)`;
 }
 
-export function LiveChat({ history, username, onSend }: LiveChatProps) {
+function formatTime(isoString: string): string {
+  const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+  if (diff < 10) return "now";
+  if (diff < 60) return `${diff}s`;
+  return `${Math.floor(diff / 60)}m`;
+}
+
+export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveChatProps) {
   const [inputText, setInputText] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (isOpen && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [history.length]);
+  }, [history.length, isOpen]);
+
+  // Focus input when chat opens
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,81 +60,140 @@ export function LiveChat({ history, username, onSend }: LiveChatProps) {
     setInputText('');
   };
 
-  return (
-    <div className="flex flex-col h-full w-full">
-      {/* Chat Messages Area */}
-      <div 
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 scroll-smooth pb-32"
-      >
-        <AnimatePresence initial={false}>
-          {history.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-white/30 italic text-sm">
-              Be the first to speak...
-            </div>
-          ) : (
-            history.map((msg) => {
-              const isMe = msg.username === username;
-              return (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.2 }}
-                  className={cn(
-                    "flex flex-col max-w-[85%]",
-                    isMe ? "ml-auto items-end" : "mr-auto items-start"
-                  )}
-                >
-                  <span 
-                    className="text-xs font-medium mb-1 px-1 opacity-80"
-                    style={{ color: isMe ? 'hsl(var(--primary))' : getUserColor(msg.username) }}
-                  >
-                    {isMe ? 'You' : msg.username}
-                  </span>
-                  <div 
-                    className={cn(
-                      "px-4 py-2 rounded-2xl text-sm leading-relaxed",
-                      isMe 
-                        ? "bg-primary/20 text-white border border-primary/30 rounded-tr-sm" 
-                        : "bg-white/5 text-white/90 border border-white/5 rounded-tl-sm"
-                    )}
-                  >
-                    {msg.text}
-                  </div>
-                </motion.div>
-              );
-            })
-          )}
-        </AnimatePresence>
-      </div>
+  // Count unread (messages after chat was closed)
+  const [unreadCount, setUnreadCount] = useState(0);
+  const lastSeenRef = useRef<number>(0);
 
-      {/* Input Area (Fixed at bottom of this flex container) */}
-      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black via-black to-transparent pt-8">
-        <form 
-          onSubmit={handleSubmit}
-          className="flex items-center gap-2 max-w-4xl mx-auto bg-white/10 p-1.5 rounded-full border border-white/10 backdrop-blur-md focus-within:border-primary/50 focus-within:bg-white/15 transition-colors"
+  useEffect(() => {
+    if (!isOpen && history.length > 0) {
+      const latestId = history[history.length - 1].id;
+      if (latestId > lastSeenRef.current && lastSeenRef.current > 0) {
+        setUnreadCount(prev => prev + 1);
+      }
+    }
+    if (isOpen) {
+      if (history.length > 0) {
+        lastSeenRef.current = history[history.length - 1].id;
+      }
+      setUnreadCount(0);
+    }
+  }, [history, isOpen]);
+
+  return (
+    <>
+      {/* Toggle button - always visible when chat is closed */}
+      {!isOpen && (
+        <button
+          onClick={onToggle}
+          className="fixed bottom-5 right-5 z-40 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
+          aria-label="Open chat"
         >
-          <div className="pl-3 hidden sm:flex items-center justify-center text-white/40">
-            <UserCircle2 className="w-5 h-5" />
+          <MessageCircle className="size-5" />
+          {unreadCount > 0 && (
+            <Badge
+              variant="destructive"
+              className="absolute -top-1 -right-1 h-5 min-w-5 text-[10px] px-1"
+            >
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </Badge>
+          )}
+        </button>
+      )}
+
+      {/* Chat drawer - from v0 style */}
+      {isOpen && (
+        <motion.div 
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+          className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-background/95 backdrop-blur-md border-t border-border"
+          style={{ height: '50dvh' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="size-4 text-primary" />
+              <span className="text-sm font-medium text-foreground">Live Chat</span>
+              <span className="text-xs text-muted-foreground">
+                {history.length} messages
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggle}
+              aria-label="Close chat"
+              className="h-8 w-8"
+            >
+              <ChevronDown className="size-4" />
+            </Button>
           </div>
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="Discuss the story..."
-            className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-white/40 text-sm px-3 py-2"
-            maxLength={200}
-          />
-          <button
-            type="submit"
-            disabled={!inputText.trim()}
-            className="p-2.5 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
+
+          {/* Messages */}
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="flex flex-col gap-1.5 px-4 py-3">
+              <AnimatePresence initial={false}>
+                {history.length === 0 ? (
+                  <div className="text-center text-white/30 italic text-sm py-8">
+                    Be the first to speak...
+                  </div>
+                ) : (
+                  history.map((msg) => {
+                    const isMe = msg.username === username;
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-baseline gap-2 text-sm"
+                      >
+                        <span
+                          className="shrink-0 font-medium text-xs"
+                          style={{ color: isMe ? 'hsl(var(--primary))' : getUserColor(msg.username) }}
+                        >
+                          {isMe ? 'You' : msg.username}
+                        </span>
+                        <span className="text-foreground/80 break-words min-w-0">
+                          {msg.text}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground ml-auto tabular-nums">
+                          {formatTime(msg.createdAt)}
+                        </span>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </AnimatePresence>
+              <div ref={bottomRef} />
+            </div>
+          </ScrollArea>
+
+          {/* Input */}
+          <form
+            onSubmit={handleSubmit}
+            className="flex items-center gap-2 px-4 py-3 border-t border-border shrink-0"
           >
-            <Send className="w-4 h-4" />
-          </button>
-        </form>
-      </div>
-    </div>
+            <Input
+              ref={inputRef}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="Say something..."
+              className="flex-1 h-9 bg-secondary border-0 text-sm text-foreground placeholder:text-muted-foreground"
+              maxLength={200}
+              autoComplete="off"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!inputText.trim()}
+              className="h-9 w-9"
+            >
+              <Send className="size-4" />
+            </Button>
+          </form>
+        </motion.div>
+      )}
+    </>
   );
 }
