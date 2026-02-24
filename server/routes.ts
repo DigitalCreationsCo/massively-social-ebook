@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
+import { generateStoryBlock, generateStoryImage } from "./ai";
 import { api } from "@shared/routes";
 import { WS_EVENTS, type WsMessage, type Block } from "@shared/schema";
 
@@ -11,11 +12,12 @@ interface ChannelState {
   currentBlock: Block | undefined;
 }
 
-const CHANNELS = ['scifi', 'gothic'];
+type Channel = 'scifi' | 'mystery';
+const CHANNELS: Channel[] = [ 'scifi', 'mystery' ];
 
-const state: Record<string, ChannelState> = {
+const state: Record<Channel, ChannelState> = {
   scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined },
-  gothic: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined }
+  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined }
 };
 
 export async function registerRoutes(
@@ -27,23 +29,29 @@ export async function registerRoutes(
   for (const channelId of CHANNELS) {
     let block = await storage.getCurrentBlock(channelId);
     if (!block) {
-      if (channelId === 'scifi') {
+      const initialPrompt = channelId === 'scifi'
+        ? "We are a crew onboard a spaceship to Mars."
+        : "A detective is following a lead in a rainy alleyway.";
+
+      try {
+        const nextContent = await generateStoryBlock(channelId, initialPrompt);
+        const imageUrl = await generateStoryImage(nextContent.content);
+
         block = await storage.createBlock({
-          channelId: 'scifi',
-          title: "The Breach",
-          content: "The spaceship's hull groaned under the pressure. Alarms blared, bathing the corridor in a harsh, pulsing red light. Commander Vance had a split second to make a decision that would determine the fate of the entire crew.",
-          imageUrl: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop",
-          optionA: { label: "Manual Override", description: "Slam the manual override to seal the airlock, trapping the breach but sealing off the engineering bay." },
-          optionB: { label: "Route Power", description: "Route all power to the shields. The engines will die, but the hull might stop tearing." }
+          channelId,
+          ...nextContent,
+          imageUrl
         });
-      } else {
+      } catch (err) {
+        console.error("Failed initial seed:", err);
+      // Fallback for robust error handling
         block = await storage.createBlock({
-          channelId: 'gothic',
-          title: "The Alley",
-          content: "Rain hammered the cobblestones in sheets, each drop a tiny detonation of light beneath the gas lamps. Elena pressed herself into the doorway of a shuttered bookshop, her coat already soaked through. Somewhere ahead, past the narrow bend where the alley swallowed itself, a door had slammed.",
-          imageUrl: "https://images.unsplash.com/photo-1505672678657-cc70370f6e93?q=80&w=2000&auto=format&fit=crop",
-          optionA: { label: "Follow the Sound", description: "Step out into the rain and run toward where the door slammed." },
-          optionB: { label: "Wait it Out", description: "Stay hidden in the doorway and wait to see if anyone approaches." }
+          channelId,
+          title: "System Reboot",
+          content: "The story system encountered an anomaly and is attempting to reboot.",
+          imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
+          optionA: { label: "Reboot", description: "Attempt a system reboot." },
+          optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
         });
       }
     }
@@ -52,7 +60,7 @@ export async function registerRoutes(
 
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
-    const channelId = (req.query.channelId as string) || 'scifi';
+    const channelId = req.query.channelId as Channel;
     const channelState = state[channelId];
     if (!channelState || !channelState.currentBlock) {
       return res.status(404).json({ message: "No block found" });
@@ -67,7 +75,7 @@ export async function registerRoutes(
   });
 
   app.get(api.chat.history.path, async (req, res) => {
-    const channelId = (req.query.channelId as string) || 'scifi';
+    const channelId = req.query.channelId as Channel;
     const messages = await storage.getRecentChat(channelId, 50);
     // Reverse so newest is at the bottom
     res.json(messages.reverse().map(m => ({
@@ -80,9 +88,9 @@ export async function registerRoutes(
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
   // Map to store which channel a client is connected to
-  const clientChannels = new Map<WebSocket, string>();
+  const clientChannels = new Map<WebSocket, Channel>();
 
-  function broadcast(channelId: string, message: WsMessage) {
+  function broadcast(channelId: Channel, message: WsMessage) {
     const payload = JSON.stringify(message);
     wss.clients.forEach(client => {
       if (client.readyState === WebSocket.OPEN && clientChannels.get(client) === channelId) {
@@ -92,9 +100,9 @@ export async function registerRoutes(
   }
 
   wss.on('connection', (ws, req) => {
-    // Determine channel from URL query string if possible, default to scifi
+    // Determine channel from URL query string if possible, default to mystery
     const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const channelId = url.searchParams.get('channelId') || 'scifi';
+    const channelId = url.searchParams.get('channelId') as Channel || 'mystery';
     clientChannels.set(ws, channelId);
 
     const channelState = state[channelId];
@@ -115,7 +123,7 @@ export async function registerRoutes(
     ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString()) as WsMessage;
-        const currentChannelId = clientChannels.get(ws) || 'scifi';
+        const currentChannelId = clientChannels.get(ws) || 'mystery';
         const st = state[currentChannelId];
         
         if (message.type === WS_EVENTS.SUBMIT_CHAT) {
@@ -183,31 +191,34 @@ export async function registerRoutes(
             
             const winner = countA >= countB ? 'A' : 'B';
             
-            if (channelId === 'scifi') {
-              const nextContent = winner === 'A' 
-                ? "Vance slammed his fist onto the manual override. The airlock sealed, trapping the breach but sealing off the engineering bay. The ship shuddered, stabilizing."
-                : "Vance routed all power to the shields. The engines died immediately, leaving them adrift, but the hull stopped tearing. The silence that followed was deafening.";
-                
+            const optA = st.currentBlock.optionA as { label?: string, description?: string; } | null;
+            const optB = st.currentBlock.optionB as { label?: string, description?: string; } | null;
+
+            const winnerText = winner === 'A'
+              ? `${optA?.label || 'Choice A'}: ${optA?.description || 'The readers chose option A'}`
+              : `${optB?.label || 'Choice B'}: ${optB?.description || 'The readers chose option B'}`;
+
+            const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+
+            try {
+              const nextContent = await generateStoryBlock(channelId, previousContext);
+              const imageUrl = await generateStoryImage(nextContent.content);
+
               st.currentBlock = await storage.createBlock({
                 channelId,
-                title: "The Aftermath",
-                content: nextContent,
-                imageUrl: "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=2072&auto=format&fit=crop",
-                optionA: { label: "Investigate", description: "Send a drone to investigate the damage." },
-                optionB: { label: "Wait", description: "Wait for rescue signals." }
+                ...nextContent,
+                imageUrl
               });
-            } else {
-              const nextContent = winner === 'A'
-                ? "She stepped out, the rain instantly plastering her hair to her face. As she reached the corner where the door had slammed, she saw nothing but an empty dead end."
-                : "She waited, her breath pluming in the cold air. Minutes passed. The only sound was the rain, until a shadow detached itself from the wall across the street.";
-              
+            } catch (err) {
+              console.error("Failed to generate next block:", err);
+            // Fallback
               st.currentBlock = await storage.createBlock({
                 channelId,
-                title: "The Next Step",
-                content: nextContent,
-                imageUrl: "https://images.unsplash.com/photo-1518331647614-7a1f04cd34cf?q=80&w=2069&auto=format&fit=crop",
-                optionA: { label: "Call Out", description: "Shout into the darkness." },
-                optionB: { label: "Run Away", description: "Turn and run back the way she came." }
+                title: "Temporal Distortion",
+                content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+                imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
+                optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
+                optionB: { label: "Wait", description: "Wait for the distortion to pass." }
               });
             }
           }

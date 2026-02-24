@@ -80,12 +80,12 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
   }, [history, isOpen]);
 
   return (
-    <>
+    <div className='relative'>
       {/* Toggle button - always visible when chat is closed */}
       {!isOpen && (
         <button
           onClick={onToggle}
-          className="fixed bottom-5 right-5 z-40 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
+          className="self-end bottom-5 right-0 z-40 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
           aria-label="Open chat"
         >
           <MessageCircle className="size-5" />
@@ -161,7 +161,7 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
                           {formatTime(msg.createdAt)}
                         </span>
                       </motion.div>
-                    );
+                    )
                   })
                 )}
               </AnimatePresence>
@@ -194,6 +194,6 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
           </form>
         </motion.div>
       )}
-    </>
+    </div>
   );
 }
