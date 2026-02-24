@@ -38,12 +38,16 @@ export function DecisionPhase({
   return (
     <div className="w-full flex flex-col p-4 md:px-8">
       {/* Timer Header */}
-      <div className="flex items-center justify-between mb-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
+      <div className="flex items-center justify-end mb-3 gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
         <div className="flex items-center gap-2">
           {phase === 'reading' ? (
-            <><Timer className="w-4 h-4" /> Reading Phase</>
+            <><Timer className="w-4 h-4" />
+              { timeRemaining <= 32 &&
+                <motion.div>Read carefully. A decision approaches.</motion.div>
+              }
+            </>
           ) : (
-            <><Zap className="w-4 h-4 text-primary" /> Decision Phase</>
+              <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision</motion.div></>
           )}
         </div>
         <div className={cn("font-mono font-bold", phase === 'voting' && timeRemaining <= 10 ? "text-destructive animate-pulse" : "")}>
@@ -121,12 +125,7 @@ export function DecisionPhase({
           })}
         </motion.div>
       )}
-      
-      {phase === 'reading' && (
-        <div className="py-2 text-center text-sm text-white/40 italic">
-          Read carefully. A decision approaches.
-        </div>
-      )}
+
     </div>
   );
 }

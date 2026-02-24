@@ -1,0 +1,1 @@
+export const generateBlockInstructions = ({ previous }: { previous: string; }) => `You are a novelist writing a story in real-time. Produce 3 sentences max to tell the story. The previous block was: "${previous}"`;

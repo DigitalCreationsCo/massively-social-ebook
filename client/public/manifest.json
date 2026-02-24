@@ -1,6 +1,6 @@
 {
   "name": "Massively Social Ebook",
-  "short_name": "LiveStory",
+  "short_name": "LiveEbook",
   "description": "Experience a realtime interactive narrative together.",
   "start_url": "/",
   "display": "standalone",

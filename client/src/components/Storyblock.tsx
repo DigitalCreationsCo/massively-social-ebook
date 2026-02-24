@@ -2,11 +2,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { StoryState } from '@/hooks/use-live-state';
 import { BookOpen } from 'lucide-react';
 
-interface CinematicCanvasProps {
+interface StoryblockProps {
   block?: StoryState;
 }
 
-export function CinematicCanvas({ block }: CinematicCanvasProps) {
+export function Storyblock({ block }: StoryblockProps) {
   if (!block) {
     return (
       <div className="absolute inset-0 flex items-center justify-center bg-black">
