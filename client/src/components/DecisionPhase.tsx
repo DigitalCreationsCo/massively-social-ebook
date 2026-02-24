@@ -37,6 +37,14 @@ export function DecisionPhase({
 
   return (
     <div className="w-full flex flex-col justify-end min-h-[200px]">
+      { phase === 'voting' && (
+        <div className="flex items-center justify-center py-2 px-4 md:px-8 mb-3 gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
+          <div className="flex items-center gap-2">
+            <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision</motion.div></>
+          </div>
+        </div>
+      ) }
+
       {/* Voting Area */}
       {phase === 'voting' && (
         <motion.div 
@@ -107,6 +115,7 @@ export function DecisionPhase({
           transition={ { ease: "linear", duration: 1 } }
         />
       </div>
+
     </div>
   );
 }
