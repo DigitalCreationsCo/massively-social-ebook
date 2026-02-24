@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, MessageCircle, ChevronDown, UserCircle2 } from 'lucide-react';
-import type { ChatMsg } from '@/hooks/use-live-state';
+import { useLiveState, type ChatMsg } from '@/hooks/use-live-state';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,7 @@ function formatTime(isoString: string): string {
 }
 
 export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveChatProps) {
+  const { mostRecentMessage } = useLiveState();
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -80,24 +81,40 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
   }, [history, isOpen]);
 
   return (
-    <div className='relative'>
-      {/* Toggle button - always visible when chat is closed */}
-      {!isOpen && (
-        <button
-          onClick={onToggle}
-          className="self-end bottom-5 right-0 z-40 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
-          aria-label="Open chat"
-        >
+    <>
+      { (
+        <div className="flex justify-between py-5 px-5 gap-5">
+          {
+            mostRecentMessage && (
+              <motion.button
+                initial={ { opacity: 0, y: 20 } }
+                animate={ { opacity: 1, y: 0 } }
+                aria-label="Open chat"
+                onClick={ onToggle }
+                className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 h-12 w-12 text-sm"
+              >
+                <span className="text-primary font-medium">{ mostRecentMessage.username }: </span>
+                <span className="text-white/80">{ mostRecentMessage.text.slice(0, 15) + '...' }</span>
+              </motion.button>
+            )
+          }
+
+          {/* <button
+            onClick={ onToggle }
+            className="bottom-5 right-5 z-50 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
+            aria-label="Open chat"
+          >
           <MessageCircle className="size-5" />
           {unreadCount > 0 && (
             <Badge
-              variant="destructive"
-              className="absolute -top-1 -right-1 h-5 min-w-5 text-[10px] px-1"
+                variant="destructive"
+                className="absolute -top-1 -right-1 h-5 min-w-5 text-[10px] px-1"
             >
               {unreadCount > 99 ? "99+" : unreadCount}
             </Badge>
           )}
-        </button>
+        </button> */}
+        </div>
       )}
 
       {/* Chat drawer - from v0 style */}
@@ -179,7 +196,7 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Say something..."
-              className="flex-1 h-9 bg-secondary border-0 text-sm text-foreground placeholder:text-muted-foreground"
+              className="flex-1 h-12 bg-secondary border-0 text-sm text-foreground placeholder:text-muted-foreground"
               maxLength={200}
               autoComplete="off"
             />
@@ -187,13 +204,13 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
               type="submit"
               size="icon"
               disabled={!inputText.trim()}
-              className="h-9 w-9"
+              className="h-12 w-12"
             >
               <Send className="size-4" />
             </Button>
           </form>
         </motion.div>
       )}
-    </div>
+    </>
   );
 }

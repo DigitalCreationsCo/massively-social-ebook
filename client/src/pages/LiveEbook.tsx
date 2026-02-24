@@ -120,7 +120,7 @@ export default function LiveEbook() {
       </section>
 
       {/* Pane 2: Decision / Timer Area */ }
-      <section className="z-20 shrink-0 border-t border-white/5 bg-black/80 backdrop-blur-2xl shadow-[0_-20px_40px_rgba(0,0,0,0.8)]">
+      <section className="z-20 shrink-0 bg-black/80 backdrop-blur-2xl shadow-[0_-20px_40px_rgba(0,0,0,0.8)]">
         <DecisionPhase
           phase={ currentBlock?.phase }
           timeRemaining={ localTimeRemaining }
@@ -132,20 +132,6 @@ export default function LiveEbook() {
           selectedChoice={ hasVotedCurrent ? (sessionStorage.getItem(`voted_${selectedChannel}_${currentBlock?.id}`) as 'A' | 'B') : null }
         />
       </section>
-
-      {/* Most recent message at the bottom - from v0 */ }
-      {
-        !chatOpen && mostRecentMessage && (
-          <motion.div
-            initial={ { opacity: 0, y: 20 } }
-            animate={ { opacity: 1, y: 0 } }
-            className="absolute bottom-20 left-4 right-16 z-20 bg-black/80 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 text-sm"
-          >
-            <span className="text-primary font-medium">{ mostRecentMessage.username }: </span>
-            <span className="text-white/80">{ mostRecentMessage.text }</span>
-          </motion.div>
-        )
-      }
 
       {/* Chat panel */ }
       <LiveChat

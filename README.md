@@ -12,10 +12,10 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 - **Dynamic Image Generation**: Generates 1920x1080 (1080p) thematic images to accompany the storylines.
 - **Real-time Syncing**: WebSockets sync votes and chat messages simultaneously for an active live feel.
 - **Robust Error Handling**: If an API error (or rate limit issue) occurs, a self-contained fallback block is generated to keep the experience seamless.
-- **Database Storage**: Uses PostgreSQL + Drizzle ORM to record historical story blocks and voting tallies.
+- **Responsive UI Layout**: Centered cinematic narrative display with stable component mounting to prevent layout shifts.
 
 ## Running Tests
-AI features are 100% test-covered using vitest.
+AI features and UI components are thoroughly test-covered using vitest.
 ```bash
 npm run test -- --coverage
 ```
