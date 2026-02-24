@@ -36,41 +36,13 @@ export function DecisionPhase({
   if (!phase) return null;
 
   return (
-    <div className="w-full flex flex-col p-4 md:px-8">
-      {/* Timer Header */}
-      <div className="flex items-center justify-end mb-3 gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
-        <div className="flex items-center gap-2">
-          {phase === 'reading' ? (
-            <><Timer className="w-4 h-4" />
-              { timeRemaining <= 32 &&
-                <motion.div>Read carefully. A decision approaches.</motion.div>
-              }
-            </>
-          ) : (
-              <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision</motion.div></>
-          )}
-        </div>
-        <div className={cn("font-mono font-bold", phase === 'voting' && timeRemaining <= 10 ? "text-destructive animate-pulse" : "")}>
-          00:{timeRemaining.toString().padStart(2, '0')}
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mb-4">
-        <motion.div 
-          className={cn("h-full rounded-full", phase === 'reading' ? "bg-white/30" : "bg-primary")}
-          initial={{ width: `${progressPercent}%` }}
-          animate={{ width: `${progressPercent}%` }}
-          transition={{ ease: "linear", duration: 1 }}
-        />
-      </div>
-
+    <div className="w-full flex flex-col justify-end min-h-[200px]">
       {/* Voting Area */}
       {phase === 'voting' && (
         <motion.div 
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-2 gap-4"
+          initial={ { opacity: 0, y: 10, scale: 0.8 } }
+          animate={ { opacity: 1, y: 0, scale: 1 } }
+          className="grid grid-cols-2 gap-4 px-4 pb-4 md:px-8"
         >
           {(['A', 'B'] as const).map((choice) => {
             const option = choice === 'A' ? optionA : optionB;
@@ -124,8 +96,17 @@ export function DecisionPhase({
             );
           })}
         </motion.div>
-      )}
+      ) }
 
+      {/* Progress Bar */ }
+      <div className="w-full h-1.5 bg-white/10 overflow-hidden">
+        <motion.div
+          className={ cn("h-full", phase === 'reading' ? "bg-white/30" : "bg-primary") }
+          initial={ { width: `${progressPercent}%` } }
+          animate={ { width: `${progressPercent}%` } }
+          transition={ { ease: "linear", duration: 1 } }
+        />
+      </div>
     </div>
   );
 }
