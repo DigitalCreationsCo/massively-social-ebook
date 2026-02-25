@@ -10,7 +10,9 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 ## Features
 - **Dynamic Content Generation**: Blocks of up to 3 sentences generated conditionally based on reader voting using structured JSON schema output from Gemini.
 - **Dynamic Image Generation**: Generates 1920x1080 (1080p) thematic images to accompany the storylines.
-- **Real-time Syncing**: WebSockets sync votes and chat messages simultaneously for an active live feel.
+- **Periodic Decision Phases**: Story choices occur every 3-4 turns (randomized), allowing for longer narrative arcs between reader decisions.
+- **Narrative Progress Timer**: Real-time timer indicating exactly when the next choice will be available, with visual phase indicators ("Narrative Evolution" vs. "Decision Active").
+- **Real-time Syncing**: WebSockets sync votes, chat messages, and the countdown timer simultaneously for an active live feel.
 - **Robust Error Handling**: If an API error (or rate limit issue) occurs, a self-contained fallback block is generated to keep the experience seamless.
 - **Responsive UI Layout**: Centered cinematic narrative display with stable component mounting to prevent layout shifts.
 

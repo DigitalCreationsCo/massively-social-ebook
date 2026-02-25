@@ -24,6 +24,7 @@ export default function LiveEbook() {
     username,
     currentBlock,
     localTimeRemaining,
+    localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,
     submitChat,
@@ -124,6 +125,7 @@ export default function LiveEbook() {
         <DecisionPhase
           phase={ currentBlock?.phase }
           timeRemaining={ localTimeRemaining }
+          turnsToNextChoice={ localTurnsToNextChoice }
           hasVoted={ hasVotedCurrent }
           onVote={ submitVote }
           optionA={ currentBlock?.optionA }

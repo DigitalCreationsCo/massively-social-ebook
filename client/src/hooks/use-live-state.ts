@@ -23,6 +23,7 @@ export interface StoryState {
   createdAt: string;
   phase: Phase;
   timeRemaining: number;
+  turnsToNextChoice: number;
 }
 
 export interface ChatMsg {
@@ -59,6 +60,7 @@ export function useLiveState(channelId: string) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
+  const [ localTurnsToNextChoice, setLocalTurnsToNextChoice ] = useState(0);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
@@ -136,6 +138,7 @@ export function useLiveState(channelId: string) {
           if (message.type === 'SYNC_STATE') {
             const payload = message.payload as StoryState;
             queryClient.setQueryData([ api.blocks.current.path, obfId ], payload);
+            setLocalTurnsToNextChoice(payload.turnsToNextChoice);
           } 
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
@@ -218,6 +221,7 @@ export function useLiveState(channelId: string) {
     username,
     currentBlock,
     localTimeRemaining,
+    localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,
     submitChat,

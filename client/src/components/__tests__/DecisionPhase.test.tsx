@@ -10,6 +10,7 @@ describe('DecisionPhase', () => {
     const { container } = render(
       <DecisionPhase
         timeRemaining={ 30 }
+        turnsToNextChoice={ 3 }
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
@@ -19,11 +20,12 @@ describe('DecisionPhase', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders voting options when phase is voting', () => {
+  it('renders voting options when phase is voting and turnsToNextChoice is 0', () => {
     render(
       <DecisionPhase
         phase="voting"
         timeRemaining={ 15 }
+        turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
         optionA={ { label: 'Path A', description: 'Description A' } }
@@ -36,19 +38,37 @@ describe('DecisionPhase', () => {
     expect(screen.getByText('Path B')).toBeInTheDocument();
   });
 
-  it('renders reading status (progress bar) when phase is reading', () => {
-    const { container } = render(
+  it('does NOT render voting options when turnsToNextChoice > 0', () => {
+    render(
+      <DecisionPhase
+        phase="voting"
+        timeRemaining={ 15 }
+        turnsToNextChoice={ 1 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        optionA={ { label: 'Path A', description: 'Description A' } }
+        optionB={ { label: 'Path B', description: 'Description B' } }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    expect(screen.queryByText('Path A')).not.toBeInTheDocument();
+    expect(screen.queryByText('Path B')).not.toBeInTheDocument();
+  });
+
+  it('renders "Next choice in X:XX" when turnsToNextChoice > 0', () => {
+    render(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 45 }
+        turnsToNextChoice={ 1 } // 1 * 120 + 45 = 165s = 2:45
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
       />
     );
 
-    // Header text "00:45" was removed by user, so we check for the progress bar area
-    const progressBar = container.querySelector('.bg-white\\/30');
-    expect(progressBar).toBeInTheDocument();
+    expect(screen.getByText('Next choice in 2:45')).toBeInTheDocument();
+    expect(screen.getByText('Narrative Evolution')).toBeInTheDocument();
   });
 });
