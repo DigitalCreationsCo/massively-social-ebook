@@ -1,5 +1,7 @@
 {
-  "name": "Massively Social Ebook",
+  "name": "The 25th Chapter",
+  "short_name": "The 25th Chapter",
+  "description": "Read a new story a live, 25-minute session. Join a global community and start your daily 25. The next chapter begins soon.",
   "short_name": "LiveEbook",
   "description": "Experience a realtime interactive narrative together.",
   "start_url": "/",
