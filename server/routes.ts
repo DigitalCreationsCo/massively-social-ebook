@@ -45,7 +45,7 @@ export const state: Record<Channel, ChannelState> = {
 };
 
 function getRandomTurns() {
-  return Math.floor(Math.random() * 2) + 3; // 3 or 4
+  return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
 }
 
 function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | 'B') {
@@ -276,6 +276,10 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.turnsToNextChoice--;
           st.phaseEndsAt = now + NARRATIVE_TURN_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
+          // CRITICAL FIX: Update initialTimeToDecision so the progress bar is accurate for the current narrative sequence
+          st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
+
+          console.log(`[GameLoop] ${channelId}: Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Total decision cycle time: ${st.initialTimeToDecision / 1000}s`);
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
@@ -304,8 +308,13 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
                 ...nextData
               } as any);
 
+              // Clear used pregenerated blocks
+              st.nextBlockA = undefined;
+              st.nextBlockB = undefined;
+
               pregenerateOption(channelId, st, 'A');
               pregenerateOption(channelId, st, 'B');
+              console.log(`[GameLoop] ${channelId}: Advanced story to block ${st.currentBlock.id}`);
             } catch (err) {
               console.error("Failed to advance narrative:", err);
             }
@@ -315,6 +324,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.currentPhase = 'voting';
           st.phaseEndsAt = now + VOTING_PHASE_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
+          st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
+          console.log(`[GameLoop] ${channelId}: ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`);
         }
       } else {
         // Voting phase ended: tally votes and generate next block
@@ -323,6 +334,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.turnsToNextChoice = getRandomTurns();
         st.decisionEndsAt = computeDecisionEndsAt(st);
         st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
+        console.log(`[GameLoop] ${channelId}: VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`);
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);
@@ -357,6 +369,10 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
               channelId,
               ...nextData
             } as any);
+
+            // Clear used pregenerated blocks
+            st.nextBlockA = undefined;
+            st.nextBlockB = undefined;
 
             pregenerateOption(channelId, st, 'A');
             pregenerateOption(channelId, st, 'B');

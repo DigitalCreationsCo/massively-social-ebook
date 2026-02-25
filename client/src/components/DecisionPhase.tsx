@@ -33,8 +33,8 @@ export function DecisionPhase({
   // Progress bar represents time to next decision, not next storyblock
   // Robust fallback: if initialTimeToDecision is 0, use timeToDecision to avoid 100% stuck state
   const maxDecisionTime = phase === 'voting' ? 40 : Math.max(initialTimeToDecision, timeToDecision, 1);
-  // Calculate progress as filling (0% -> 100%)
-  const progressPercent = Math.min(100, Math.max(0, 100 - (timeToDecision / maxDecisionTime) * 100));
+  // Calculate progress as emptying (100% -> 0%) as requested by user
+  const progressPercent = Math.min(100, Math.max(0, (timeToDecision / maxDecisionTime) * 100));
 
   // Calculate vote percentages
   const totalVotes = voteResults.A + voteResults.B;

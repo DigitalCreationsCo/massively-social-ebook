@@ -137,7 +137,7 @@ describe('handleGameLoopTick', () => {
         await handleGameLoopTick(now + 2000, mockBroadcast);
 
         expect(state.scifi.currentPhase).toBe('reading');
-        expect(state.scifi.turnsToNextChoice).toBeGreaterThanOrEqual(3);
+        expect(state.scifi.turnsToNextChoice).toBeGreaterThanOrEqual(2);
         expect(state.scifi.turnsToNextChoice).toBeLessThanOrEqual(4);
         expect(mockedStorage.getVotesForBlock).toHaveBeenCalledWith(1);
     });
@@ -240,6 +240,8 @@ describe('handleGameLoopTick', () => {
         const expectedPhaseEnd = tickTime + NARRATIVE_TURN_MS;
         const expectedDecisionEnd = expectedPhaseEnd + 1 * NARRATIVE_TURN_MS;
         expect(state.scifi.decisionEndsAt).toBe(expectedDecisionEnd);
+        // Verify initialTimeToDecision is updated after turn
+        expect(state.scifi.initialTimeToDecision).toBe(expectedDecisionEnd - tickTime);
     });
 
     it('sets decisionEndsAt to phaseEndsAt on entering voting', async () => {
