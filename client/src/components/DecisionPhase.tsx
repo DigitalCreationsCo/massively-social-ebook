@@ -4,7 +4,7 @@ import { Timer, Zap } from 'lucide-react';
 import type { VoteOption, VoteResults } from '@/hooks/use-live-state';
 
 interface DecisionPhaseProps {
-  phase?: 'reading' | 'voting';
+  phase?: 'reading' | 'voting' | 'resolution';
   timeRemaining: number;
   timeToDecision: number;
   initialTimeToDecision: number;
@@ -56,17 +56,25 @@ export function DecisionPhase({
       <div className="flex flex-col items-center justify-center py-2 px-4 md:px-8 mb-3 gap-1">
         <div className="flex items-center gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
           <div className="flex items-center gap-2">
-            { isDecisionAvailable ? (
-              <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision Active</motion.div></>
-            ) : (
-              <><Timer className="w-4 h-4 text-white/40" /><motion.div>Narrative Evolution</motion.div></>
+            { isDecisionAvailable && (
+              <motion.div className="flex items-center gap-2"><Zap className="w-4 h-4 text-primary" />Decision</motion.div>
+            ) }
+            { phase === 'resolution' && (
+              <motion.div
+                initial={ { opacity: 0 } }
+                animate={ { opacity: 1 } }
+                className="flex items-center gap-2 text-primary font-bold tracking-[0.2em]"
+              >
+                Session Ending
+              </motion.div>
             ) }
           </div>
         </div>
-        { !isDecisionAvailable && totalSecondsToChoice > 0 && (
-          <div className="text-xs font-mono text-primary/80 tracking-widest uppercase">
+        { !isDecisionAvailable && phase !== 'resolution' && totalSecondsToChoice > 0 && (
+          <motion.div className="flex items-center gap-2 text-xs font-mono text-primary/80 tracking-widest uppercase">
+            <Timer className="w-4 h-4 text-white/40" />
             Next choice in { timeStr }
-          </div>
+          </motion.div>
         ) }
       </div>
 

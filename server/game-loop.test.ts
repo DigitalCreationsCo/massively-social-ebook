@@ -10,6 +10,9 @@ vi.mock('./storage', () => ({
         createBlock: vi.fn(),
         getVotesForBlock: vi.fn(),
         getRandomImage: vi.fn(),
+        getNextSession: vi.fn(),
+        getActiveSession: vi.fn(),
+        updateSessionStatus: vi.fn(),
     },
 }));
 
@@ -73,9 +76,27 @@ describe('handleGameLoopTick', () => {
             initialTimeToDecision: 2 * NARRATIVE_TURN_MS + 1000,
             currentBlock: { id: 1, content: 'Test content', title: 'Test', channelId: 'scifi', createdAt: new Date() } as any,
             turnsToNextChoice: 2,
+            activeSession: {
+                id: 1,
+                channelId: 'scifi',
+                title: 'Active Session',
+                scheduledStart: new Date(now - 10000),
+                scheduledEnd: new Date(now + 1000000),
+                status: 'active'
+            } as any,
+        };
+        state.mystery = {
+            currentPhase: 'reading',
+            phaseEndsAt: now + 10000,
+            decisionEndsAt: now + 20000,
+            initialTimeToDecision: 20000,
+            currentBlock: undefined,
+            turnsToNextChoice: 2,
+            activeSession: undefined,
         };
         // Default mock for createBlock to avoid undefined currentBlock
         mockedStorage.createBlock.mockImplementation(async (data: any) => ({ ...data, id: Math.random() }));
+        mockedStorage.getNextSession.mockResolvedValue(null);
     });
 
     it('decrements turnsToNextChoice and stays in reading phase during a narrative turn', async () => {
@@ -240,8 +261,8 @@ describe('handleGameLoopTick', () => {
         const expectedPhaseEnd = tickTime + NARRATIVE_TURN_MS;
         const expectedDecisionEnd = expectedPhaseEnd + 1 * NARRATIVE_TURN_MS;
         expect(state.scifi.decisionEndsAt).toBe(expectedDecisionEnd);
-        // Verify initialTimeToDecision is updated after turn
-        expect(state.scifi.initialTimeToDecision).toBe(expectedDecisionEnd - tickTime);
+        // Verify initialTimeToDecision is NOT updated after turn (remains what it was at start of reading)
+        expect(state.scifi.initialTimeToDecision).toBe(2 * NARRATIVE_TURN_MS + 1000);
     });
 
     it('sets decisionEndsAt to phaseEndsAt on entering voting', async () => {
@@ -295,5 +316,39 @@ describe('handleGameLoopTick', () => {
         await handleGameLoopTick(tickTime, mockBroadcast);
 
         expect(state.scifi.phaseEndsAt).toBe(tickTime + NARRATIVE_TURN_MS);
+    });
+
+    it('enters resolution phase when session end is reached', async () => {
+        state.scifi.activeSession!.scheduledEnd = new Date(now - 1000); // Ended
+        mockedAi.generateStoryBlock.mockResolvedValue({
+            title: 'The End',
+            content: 'Cliffhanger ending...',
+        } as any);
+
+        await handleGameLoopTick(now, mockBroadcast);
+
+        expect(state.scifi.currentPhase).toBe('resolution');
+        expect(mockedAi.generateStoryBlock).toHaveBeenCalledWith('scifi', expect.any(String), true);
+        expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+            type: 'SYNC_STATE',
+            payload: expect.objectContaining({
+                phase: 'resolution'
+            })
+        }));
+    });
+
+    it('completes session after resolution phase duration ends', async () => {
+        state.scifi.currentPhase = 'resolution';
+        state.scifi.phaseEndsAt = now - 1000; // Resolution ended
+        state.scifi.activeSession!.scheduledEnd = new Date(now - 5000);
+
+        await handleGameLoopTick(now, mockBroadcast);
+
+        expect(state.scifi.activeSession).toBeUndefined();
+        expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(1, 'completed');
+        expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+            type: 'SESSION_STATUS',
+            payload: { status: 'completed', session: expect.any(Object) }
+        }));
     });
 });

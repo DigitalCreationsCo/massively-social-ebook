@@ -1,8 +1,8 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { generateBlockInstructions } from "../prompts/generate-block";
-import { generateImageInstructions } from "../prompts/generate-image";
+import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
+import { createImageInstructions } from "../prompts/image-instructions";
 import { buildRAGContext } from "./rag";
 
 export const ai = new GoogleGenAI({});
@@ -15,17 +15,18 @@ const lmParamsGoogle = {
 export interface StoryBlockResult {
   title: string;
   content: string;
-  optionA: { label: string; description: string; };
-  optionB: { label: string; description: string; };
+  optionA?: { label: string; description: string; };
+  optionB?: { label: string; description: string; };
 }
 
-export async function generateStoryBlock(channelId: string, previousContext: string): Promise<StoryBlockResult> {
+export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false): Promise<StoryBlockResult> {
   // Enrich context with RAG (transparently falls back to previousContext on error)
   const enrichedContext = await buildRAGContext(channelId, previousContext);
 
-  const prompt = generateBlockInstructions({
+  const prompt = createStoryBlockInstructions({
     previous: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
+    isResolution,
   });
 
   const responseSchema: Schema = {
@@ -50,7 +51,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
         required: [ "label", "description" ]
       }
     },
-    required: [ "title", "content", "optionA", "optionB" ]
+    required: [ "title", "content" ] // optionA and optionB are no longer strictly required at schema level for resolution
   };
 
   const response = await ai.models.generateContent({
@@ -66,11 +67,19 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     throw new Error("Failed to generate story block: No text returned.");
   }
 
-  return JSON.parse(response.text) as StoryBlockResult;
+  const result = JSON.parse(response.text) as StoryBlockResult;
+
+  // Ensure options are present if not resolution, or removed if resolution
+  if (isResolution) {
+    delete result.optionA;
+    delete result.optionB;
+  }
+
+  return result;
 }
 
 export async function generateStoryImage(description: string): Promise<string> {
-  const prompt = generateImageInstructions({ description });
+  const prompt = createImageInstructions({ description });
 
   try {
     const response = await ai.models.generateImages({

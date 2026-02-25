@@ -11,6 +11,8 @@ describe('Storyblock', () => {
         phase: 'reading' as const,
         imageUrl: 'https://example.com/image.jpg',
         timeRemaining: 30,
+        timeToNextDecision: 120,
+        initialTimeToNextDecision: 120,
         createdAt: new Date().toISOString(),
         optionA: { label: 'A', description: 'Desc A' },
         optionB: { label: 'B', description: 'Desc B' },
