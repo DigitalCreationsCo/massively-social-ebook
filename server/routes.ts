@@ -5,20 +5,68 @@ import { storage } from "./storage";
 import { generateStoryBlock, generateStoryImage } from "./ai";
 import { api } from "@shared/routes";
 import { WS_EVENTS, type WsMessage, type Block } from "@shared/schema";
+import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
+
+interface PendingBlock {
+  promise: Promise<{
+    title: string;
+    content: string;
+    imageUrl: string;
+    optionA: unknown;
+    optionB: unknown;
+  }>;
+}
 
 interface ChannelState {
   currentPhase: 'reading' | 'voting';
   phaseEndsAt: number;
   currentBlock: Block | undefined;
+  nextBlockA?: PendingBlock;
+  nextBlockB?: PendingBlock;
 }
-
-type Channel = 'scifi' | 'mystery';
-const CHANNELS: Channel[] = [ 'scifi', 'mystery' ];
 
 const state: Record<Channel, ChannelState> = {
   scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined },
   mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined }
 };
+
+function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | 'B') {
+  if (!st.currentBlock) return;
+  const opt = option === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+  const optData = opt as { label?: string, description?: string; } | null;
+  const winnerText = `${optData?.label || `Choice ${option}`}: ${optData?.description || `The readers chose option ${option}`}`;
+  const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+
+  const promise = (async () => {
+    try {
+      const nextContent = await generateStoryBlock(channelId, previousContext);
+      let imageUrl: string;
+      try {
+        imageUrl = await generateStoryImage(nextContent.content);
+      } catch (imageErr) {
+        console.warn(`Image generation failed for ${channelId}, using fallback:`, imageErr);
+        imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+      }
+      return { ...nextContent, imageUrl };
+    } catch (err) {
+      console.error(`Failed to pregenerate option ${option} for ${channelId}:`, err);
+      // Fallback
+      return {
+        title: "Temporal Distortion",
+        content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+        imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
+        optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
+        optionB: { label: "Wait", description: "Wait for the distortion to pass." }
+      };
+    }
+  })();
+
+  if (option === 'A') {
+    st.nextBlockA = { promise };
+  } else {
+    st.nextBlockB = { promise };
+  }
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -35,7 +83,13 @@ export async function registerRoutes(
 
       try {
         const nextContent = await generateStoryBlock(channelId, initialPrompt);
-        const imageUrl = await generateStoryImage(nextContent.content);
+        let imageUrl: string;
+        try {
+          imageUrl = await generateStoryImage(nextContent.content);
+        } catch (imageErr) {
+          console.warn(`Initial seed image generation failed for ${channelId}, using fallback:`, imageErr);
+          imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+        }
 
         block = await storage.createBlock({
           channelId,
@@ -56,11 +110,15 @@ export async function registerRoutes(
       }
     }
     state[channelId].currentBlock = block;
+    // Kick off background generation for the initial block
+    pregenerateOption(channelId, state[ channelId ], 'A');
+    pregenerateOption(channelId, state[ channelId ], 'B');
   }
 
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
-    const channelId = req.query.channelId as Channel;
+    const rawChannelId = req.query.channelId as string;
+    const channelId = getRealChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
     if (!channelState || !channelState.currentBlock) {
       return res.status(404).json({ message: "No block found" });
@@ -75,7 +133,8 @@ export async function registerRoutes(
   });
 
   app.get(api.chat.history.path, async (req, res) => {
-    const channelId = req.query.channelId as Channel;
+    const rawChannelId = req.query.channelId as string;
+    const channelId = getRealChannelId(rawChannelId) as Channel;
     const messages = await storage.getRecentChat(channelId, 50);
     // Reverse so newest is at the bottom
     res.json(messages.reverse().map(m => ({
@@ -102,7 +161,8 @@ export async function registerRoutes(
   wss.on('connection', (ws, req) => {
     // Determine channel from URL query string if possible, default to mystery
     const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const channelId = url.searchParams.get('channelId') as Channel || 'mystery';
+    const rawChannelId = url.searchParams.get('channelId');
+    const channelId = getRealChannelId(rawChannelId) as Channel;
     clientChannels.set(ws, channelId);
 
     const channelState = state[channelId];
@@ -110,7 +170,7 @@ export async function registerRoutes(
     // Send initial state on connect
     if (channelState && channelState.currentBlock) {
       ws.send(JSON.stringify({
-        type: WS_EVENTS.SYNC_STATE,
+        type: 'SYNC_STATE',
         payload: {
           ...channelState.currentBlock,
           createdAt: channelState.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
@@ -126,19 +186,19 @@ export async function registerRoutes(
         const currentChannelId = clientChannels.get(ws) || 'mystery';
         const st = state[currentChannelId];
         
-        if (message.type === WS_EVENTS.SUBMIT_CHAT) {
+        if (message.type === 'SUBMIT_CHAT') {
           const { username, text } = message.payload as { username: string, text: string };
           if (username && text) {
             const newMsg = await storage.createChat({ channelId: currentChannelId, username, text });
             broadcast(currentChannelId, {
-              type: WS_EVENTS.CHAT_MESSAGE,
+              type: 'CHAT_MESSAGE',
               payload: {
                 ...newMsg,
                 createdAt: newMsg.createdAt?.toISOString() ?? new Date().toISOString()
               }
             });
           }
-        } else if (message.type === WS_EVENTS.SUBMIT_VOTE) {
+        } else if (message.type === 'SUBMIT_VOTE') {
           const { choice, userId } = message.payload as { choice: string, userId: string };
           if (st.currentPhase === 'voting' && st.currentBlock && (choice === 'A' || choice === 'B')) {
             await storage.createVote({
@@ -152,7 +212,7 @@ export async function registerRoutes(
             const countA = votes.filter(v => v.choice === 'A').length;
             const countB = votes.filter(v => v.choice === 'B').length;
             broadcast(currentChannelId, {
-              type: WS_EVENTS.VOTE_UPDATE,
+              type: 'VOTE_UPDATE',
               payload: { A: countA, B: countB }
             });
           }
@@ -191,26 +251,38 @@ export async function registerRoutes(
             
             const winner = countA >= countB ? 'A' : 'B';
             
-            const optA = st.currentBlock.optionA as { label?: string, description?: string; } | null;
-            const optB = st.currentBlock.optionB as { label?: string, description?: string; } | null;
-
-            const winnerText = winner === 'A'
-              ? `${optA?.label || 'Choice A'}: ${optA?.description || 'The readers chose option A'}`
-              : `${optB?.label || 'Choice B'}: ${optB?.description || 'The readers chose option B'}`;
-
-            const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
-
             try {
-              const nextContent = await generateStoryBlock(channelId, previousContext);
-              const imageUrl = await generateStoryImage(nextContent.content);
+              let nextData;
+              if (winner === 'A' && st.nextBlockA) {
+                nextData = await st.nextBlockA.promise;
+              } else if (winner === 'B' && st.nextBlockB) {
+                nextData = await st.nextBlockB.promise;
+              } else {
+                const opt = winner === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+                const optData = opt as { label?: string, description?: string; } | null;
+                const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
+                const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+                const nextContent = await generateStoryBlock(channelId, previousContext);
+                let imageUrl: string;
+                try {
+                  imageUrl = await generateStoryImage(nextContent.content);
+                } catch (imageErr) {
+                  console.warn(`Game loop image generation failed for ${channelId}, using fallback:`, imageErr);
+                  imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+                }
+                nextData = { ...nextContent, imageUrl };
+              }
 
               st.currentBlock = await storage.createBlock({
                 channelId,
-                ...nextContent,
-                imageUrl
-              });
+                ...nextData
+              } as any); // Use any to bypass strict JSON type check for now until schema and AI results are perfectly aligned
+
+              // Precompute the next branches concurrently
+              pregenerateOption(channelId, st, 'A');
+              pregenerateOption(channelId, st, 'B');
             } catch (err) {
-              console.error("Failed to generate next block:", err);
+              console.error("Failed to adopt next block:", err);
             // Fallback
               st.currentBlock = await storage.createBlock({
                 channelId,
@@ -220,13 +292,16 @@ export async function registerRoutes(
                 optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
                 optionB: { label: "Wait", description: "Wait for the distortion to pass." }
               });
+
+              pregenerateOption(channelId, st, 'A');
+              pregenerateOption(channelId, st, 'B');
             }
           }
         }
 
         if (st.currentBlock) {
           broadcast(channelId, {
-            type: WS_EVENTS.SYNC_STATE,
+            type: 'SYNC_STATE',
             payload: {
               ...st.currentBlock,
               createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
@@ -239,7 +314,7 @@ export async function registerRoutes(
         // Send time updates every second to keep clients perfectly in sync
         if (st.currentBlock) {
           broadcast(channelId, {
-            type: WS_EVENTS.SYNC_STATE,
+            type: 'SYNC_STATE',
             payload: {
               ...st.currentBlock,
               createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
