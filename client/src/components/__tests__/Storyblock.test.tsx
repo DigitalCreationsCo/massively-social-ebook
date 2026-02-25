@@ -13,7 +13,8 @@ describe('Storyblock', () => {
         timeRemaining: 30,
         createdAt: new Date().toISOString(),
         optionA: { label: 'A', description: 'Desc A' },
-        optionB: { label: 'B', description: 'Desc B' }
+        optionB: { label: 'B', description: 'Desc B' },
+        turnsToNextChoice: 5
     };
 
     it('positions narrative content at the bottom (justify-end)', () => {

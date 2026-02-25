@@ -6,6 +6,7 @@ import type { VoteOption, VoteResults } from '@/hooks/use-live-state';
 interface DecisionPhaseProps {
   phase?: 'reading' | 'voting';
   timeRemaining: number;
+  timeToDecision: number;
   turnsToNextChoice: number;
   hasVoted: boolean;
   onVote: (choice: 'A' | 'B') => void;
@@ -18,6 +19,7 @@ interface DecisionPhaseProps {
 export function DecisionPhase({ 
   phase, 
   timeRemaining, 
+  timeToDecision,
   turnsToNextChoice,
   hasVoted, 
   onVote,
@@ -26,9 +28,9 @@ export function DecisionPhase({
   voteResults,
   selectedChoice
 }: DecisionPhaseProps) {
-  // Max time assumptions for progress bar
-  const maxTime = phase === 'reading' ? 120 : 30;
-  const progressPercent = Math.min(100, Math.max(0, (timeRemaining / maxTime) * 100));
+  // Progress bar represents time to next decision, not next storyblock
+  const maxDecisionTime = phase === 'voting' ? 40 : Math.max(timeToDecision, 1);
+  const progressPercent = Math.min(100, Math.max(0, (timeToDecision / maxDecisionTime) * 100));
 
   // Calculate vote percentages
   const totalVotes = voteResults.A + voteResults.B;
@@ -37,10 +39,8 @@ export function DecisionPhase({
 
   if (!phase) return null;
 
-  // Format time remaining for next choice
-  // Each turn is 2 minutes (120s) reading.
-  // total seconds = (turnsToNextChoice * 120) + (phase === 'reading' ? timeRemaining : 0)
-  const totalSecondsToChoice = (turnsToNextChoice * 120) + (phase === 'reading' ? timeRemaining : 0);
+  // Time to next decision from server-provided countdown
+  const totalSecondsToChoice = timeToDecision;
   const minutes = Math.floor(totalSecondsToChoice / 60);
   const seconds = totalSecondsToChoice % 60;
   const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;

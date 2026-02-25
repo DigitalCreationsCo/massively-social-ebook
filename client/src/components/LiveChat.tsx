@@ -95,7 +95,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
               { mostRecentMessage ? (
                 <>
                 <span className="text-primary font-medium">{ mostRecentMessage.username }: </span>
-                <span className="text-white/80">{ mostRecentMessage.text.slice(0, 15) + '...' }</span>
+                  <span className="text-white/80">{ mostRecentMessage.text.length > 15 ? mostRecentMessage.text.slice(0, 15) + '...' : mostRecentMessage.text }</span>
                 </>
               ) : (
                 <span className="flex items-center gap-2 text-primary font-medium justify-center">

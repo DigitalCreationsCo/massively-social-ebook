@@ -23,6 +23,7 @@ export interface StoryState {
   createdAt: string;
   phase: Phase;
   timeRemaining: number;
+  timeToNextDecision: number;
   turnsToNextChoice: number;
 }
 
@@ -60,6 +61,7 @@ export function useLiveState(channelId: string) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
+  const [ localTimeToDecision, setLocalTimeToDecision ] = useState(0);
   const [ localTurnsToNextChoice, setLocalTurnsToNextChoice ] = useState(0);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
@@ -83,23 +85,27 @@ export function useLiveState(channelId: string) {
     },
   });
 
-  // Sync local timer with server state
+  // Sync local timers with server state
   useEffect(() => {
     if (currentBlock?.timeRemaining !== undefined) {
       setLocalTimeRemaining(Math.floor(currentBlock.timeRemaining / 1000));
     }
-  }, [currentBlock?.timeRemaining, currentBlock?.phase, currentBlock?.id]);
+    if (currentBlock?.timeToNextDecision !== undefined) {
+      setLocalTimeToDecision(Math.floor(currentBlock.timeToNextDecision / 1000));
+    }
+  }, [ currentBlock?.timeRemaining, currentBlock?.timeToNextDecision, currentBlock?.phase, currentBlock?.id ]);
 
-  // Local countdown interval
+  // Local countdown interval for both timers
   useEffect(() => {
-    if (localTimeRemaining <= 0) return;
+    if (localTimeRemaining <= 0 && localTimeToDecision <= 0) return;
     
     const interval = setInterval(() => {
       setLocalTimeRemaining(prev => Math.max(0, prev - 1));
+      setLocalTimeToDecision(prev => Math.max(0, prev - 1));
     }, 1000);
     
     return () => clearInterval(interval);
-  }, [localTimeRemaining]);
+  }, [ localTimeRemaining, localTimeToDecision ]);
 
   // Simulate viewer count fluctuations
   useEffect(() => {
@@ -139,6 +145,9 @@ export function useLiveState(channelId: string) {
             const payload = message.payload as StoryState;
             queryClient.setQueryData([ api.blocks.current.path, obfId ], payload);
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+            if (payload.timeToNextDecision !== undefined) {
+              setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
+            }
           } 
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
@@ -221,6 +230,7 @@ export function useLiveState(channelId: string) {
     username,
     currentBlock,
     localTimeRemaining,
+    localTimeToDecision,
     localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,

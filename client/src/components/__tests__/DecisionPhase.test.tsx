@@ -10,6 +10,7 @@ describe('DecisionPhase', () => {
     const { container } = render(
       <DecisionPhase
         timeRemaining={ 30 }
+        timeToDecision={ 200 }
         turnsToNextChoice={ 3 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -25,6 +26,7 @@ describe('DecisionPhase', () => {
       <DecisionPhase
         phase="voting"
         timeRemaining={ 15 }
+        timeToDecision={ 15 }
         turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -43,6 +45,7 @@ describe('DecisionPhase', () => {
       <DecisionPhase
         phase="voting"
         timeRemaining={ 15 }
+        timeToDecision={ 95 }
         turnsToNextChoice={ 1 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -56,19 +59,72 @@ describe('DecisionPhase', () => {
     expect(screen.queryByText('Path B')).not.toBeInTheDocument();
   });
 
-  it('renders "Next choice in X:XX" when turnsToNextChoice > 0', () => {
+  it('renders "Next choice in X:XX" using timeToDecision', () => {
     render(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 45 }
-        turnsToNextChoice={ 1 } // 1 * 120 + 45 = 165s = 2:45
+        timeToDecision={ 165 }
+        turnsToNextChoice={ 1 }
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
       />
     );
 
+    // timeToDecision = 165s = 2:45
     expect(screen.getByText('Next choice in 2:45')).toBeInTheDocument();
     expect(screen.getByText('Narrative Evolution')).toBeInTheDocument();
+  });
+
+  it('displays "Decision Active" during voting phase with turnsToNextChoice 0', () => {
+    render(
+      <DecisionPhase
+        phase="voting"
+        timeRemaining={ 30 }
+        timeToDecision={ 30 }
+        turnsToNextChoice={ 0 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    expect(screen.getByText('Decision Active')).toBeInTheDocument();
+  });
+
+  it('progress bar uses timeToDecision, not timeRemaining', () => {
+    // timeRemaining = 70 (storyblock timer), timeToDecision = 230 (decision timer)
+    // These should be distinct values to verify the progress bar uses the right one
+    const { container } = render(
+      <DecisionPhase
+        phase="reading"
+        timeRemaining={ 70 }
+        timeToDecision={ 230 }
+        turnsToNextChoice={ 2 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    // The "Next choice in" text should show 3:50 (230 seconds)
+    expect(screen.getByText('Next choice in 3:50')).toBeInTheDocument();
+  });
+
+  it('does not show "Next choice in" when decision is active', () => {
+    render(
+      <DecisionPhase
+        phase="voting"
+        timeRemaining={ 30 }
+        timeToDecision={ 30 }
+        turnsToNextChoice={ 0 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
 });

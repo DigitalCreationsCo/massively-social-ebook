@@ -4,6 +4,7 @@ import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 export default defineConfig({
+  root: "client",
   plugins: [
     react(),
     runtimeErrorOverlay(),
@@ -39,6 +40,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "jsdom",
+    include: [
+      "**/*.{test,spec}.?(c|m)[jt]s?(x)",
+      "../server/**/*.{test,spec}.?(c|m)[jt]s?(x)",
+      "../shared/**/*.{test,spec}.?(c|m)[jt]s?(x)",
+    ],
     setupFiles: [ path.resolve(import.meta.dirname, "client/src/test/setup.ts") ],
     coverage: {
       provider: "v8",

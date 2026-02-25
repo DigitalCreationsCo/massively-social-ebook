@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { generateBlockInstructions } from "../prompts/generate-block";
 import { generateImageInstructions } from "../prompts/generate-image";
+import { buildRAGContext } from "./rag";
 
 export const ai = new GoogleGenAI({});
 
@@ -19,7 +20,13 @@ export interface StoryBlockResult {
 }
 
 export async function generateStoryBlock(channelId: string, previousContext: string): Promise<StoryBlockResult> {
-  const prompt = generateBlockInstructions({ previous: previousContext });
+  // Enrich context with RAG (transparently falls back to previousContext on error)
+  const enrichedContext = await buildRAGContext(channelId, previousContext);
+
+  const prompt = generateBlockInstructions({
+    previous: previousContext,
+    ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
+  });
 
   const responseSchema: Schema = {
     type: Type.OBJECT,
@@ -83,7 +90,7 @@ export async function generateStoryImage(description: string): Promise<string> {
     }
 
     const filename = `img_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-    const filepath = path.join(process.cwd(), "public", "images", filename);
+    const filepath = path.join(process.cwd(), "client", "public", "images", filename);
 
     // Ensure the directory exists
     await fs.mkdir(path.dirname(filepath), { recursive: true });

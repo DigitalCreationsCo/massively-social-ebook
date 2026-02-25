@@ -17,18 +17,30 @@ interface PendingBlock {
   }>;
 }
 
+// Phase duration constants (milliseconds)
+export const NARRATIVE_TURN_MS = 80_000;
+export const VOTING_PHASE_MS = 40_000;
+export const POST_VOTE_READING_MS = 120_000;
+
 interface ChannelState {
   currentPhase: 'reading' | 'voting';
   phaseEndsAt: number;
+  decisionEndsAt: number;
   currentBlock: Block | undefined;
   nextBlockA?: PendingBlock;
   nextBlockB?: PendingBlock;
   turnsToNextChoice: number;
 }
 
+/** Compute wall-clock time when the next decision (voting) phase begins. */
+export function computeDecisionEndsAt(st: ChannelState): number {
+  if (st.currentPhase === 'voting') return st.phaseEndsAt; // already in decision
+  return st.phaseEndsAt + (st.turnsToNextChoice * NARRATIVE_TURN_MS);
+}
+
 export const state: Record<Channel, ChannelState> = {
-  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined, turnsToNextChoice: 3 },
-  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined, turnsToNextChoice: 3 }
+  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, currentBlock: undefined, turnsToNextChoice: 3 },
+  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, currentBlock: undefined, turnsToNextChoice: 3 }
 };
 
 function getRandomTurns() {
@@ -116,6 +128,7 @@ export async function registerRoutes(
     }
     state[channelId].currentBlock = block;
     state[ channelId ].turnsToNextChoice = getRandomTurns();
+    state[ channelId ].decisionEndsAt = computeDecisionEndsAt(state[ channelId ]);
     // Kick off background generation for the initial block
     pregenerateOption(channelId, state[ channelId ], 'A');
     pregenerateOption(channelId, state[ channelId ], 'B');
@@ -130,11 +143,13 @@ export async function registerRoutes(
       return res.status(404).json({ message: "No block found" });
     }
     
+    const now = Date.now();
     res.json({
       ...channelState.currentBlock,
       createdAt: channelState.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
       phase: channelState.currentPhase,
-      timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now()),
+      timeRemaining: Math.max(0, channelState.phaseEndsAt - now),
+      timeToNextDecision: Math.max(0, channelState.decisionEndsAt - now),
       turnsToNextChoice: channelState.turnsToNextChoice
     });
   });
@@ -176,13 +191,15 @@ export async function registerRoutes(
 
     // Send initial state on connect
     if (channelState && channelState.currentBlock) {
+      const connectNow = Date.now();
       ws.send(JSON.stringify({
         type: 'SYNC_STATE',
         payload: {
           ...channelState.currentBlock,
           createdAt: channelState.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
           phase: channelState.currentPhase,
-          timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now()),
+          timeRemaining: Math.max(0, channelState.phaseEndsAt - connectNow),
+          timeToNextDecision: Math.max(0, channelState.decisionEndsAt - connectNow),
           turnsToNextChoice: channelState.turnsToNextChoice
         }
       }));
@@ -253,7 +270,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         if (st.turnsToNextChoice > 0) {
           // Narrative turn: skip voting, go straight to next block
           st.turnsToNextChoice--;
-          st.phaseEndsAt = now + 80000; // 80 seconds Reset reading timer for next narrative block
+          st.phaseEndsAt = now + NARRATIVE_TURN_MS;
+          st.decisionEndsAt = computeDecisionEndsAt(st);
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
@@ -291,13 +309,15 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         } else {
         // Choice turn: enter voting phase
           st.currentPhase = 'voting';
-          st.phaseEndsAt = now + 40000; // 40 seconds for voting
+          st.phaseEndsAt = now + VOTING_PHASE_MS;
+          st.decisionEndsAt = computeDecisionEndsAt(st);
         }
       } else {
         // Voting phase ended: tally votes and generate next block
         st.currentPhase = 'reading';
-        st.phaseEndsAt = now + 120000; // 2 minutes for reading
-        st.turnsToNextChoice = getRandomTurns(); // Set next choice turn count
+        st.phaseEndsAt = now + POST_VOTE_READING_MS;
+        st.turnsToNextChoice = getRandomTurns();
+        st.decisionEndsAt = computeDecisionEndsAt(st);
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);
@@ -361,6 +381,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
             phase: st.currentPhase,
             timeRemaining: Math.max(0, st.phaseEndsAt - now),
+            timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
             turnsToNextChoice: st.turnsToNextChoice
           }
         });
@@ -375,6 +396,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
             phase: st.currentPhase,
             timeRemaining: Math.max(0, st.phaseEndsAt - now),
+            timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
             turnsToNextChoice: st.turnsToNextChoice
           }
         });

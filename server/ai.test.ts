@@ -13,7 +13,15 @@ vi.mock('node:fs/promises', () => ({
     }
 }));
 
+// Mock the RAG module so AI tests remain isolated
+vi.mock('./rag', () => ({
+    buildRAGContext: vi.fn((_channelId: string, immediateContext: string) =>
+        Promise.resolve(immediateContext)
+    ),
+}));
+
 import { ai, generateStoryBlock, generateStoryImage } from './ai';
+import { buildRAGContext } from './rag';
 
 describe('AI Generators', () => {
     beforeEach(() => {
@@ -52,27 +60,46 @@ describe('AI Generators', () => {
 
             await expect(generateStoryBlock('scifi', 'Previous context')).rejects.toThrow('Failed to generate story block: No text returned.');
         });
-    });
 
-    describe('generateStoryBlock', () => {
-        it('should generate a story block successfully', async () => {
+        it('should throw error if empty text is returned', async () => {
+            (ai.models.generateContent as any).mockResolvedValueOnce({ text: '' });
+            await expect(generateStoryBlock('scifi', 'Context')).rejects.toThrow('Failed to generate story block: No text returned.');
+        });
+
+        it('should call buildRAGContext with the channelId and previousContext', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
                 text: JSON.stringify({
-                    title: 'Block Title',
-                    content: 'Block Content',
+                    title: 'RAG Title',
+                    content: 'RAG content',
                     optionA: { label: 'A', description: 'desc A' },
-                    optionB: { label: 'B', description: 'desc B' }
+                    optionB: { label: 'B', description: 'desc B' },
                 })
             });
 
-            const result = await generateStoryBlock('scifi', 'Once upon a time...');
-            expect(result.title).toBe('Block Title');
-            expect(ai.models.generateContent).toHaveBeenCalled();
+            await generateStoryBlock('mystery', 'The detective investigated.');
+
+            expect(buildRAGContext).toHaveBeenCalledWith('mystery', 'The detective investigated.');
         });
 
-        it('should throw error if no text is returned', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({ text: '' });
-            await expect(generateStoryBlock('scifi', 'Context')).rejects.toThrow('Failed to generate story block: No text returned.');
+        it('should use enriched context when RAG returns different content', async () => {
+            const enrichedContext = 'Story So Far:\n1. It began.\n\nCurrent Situation:\nThe crew arrived.';
+            (buildRAGContext as any).mockResolvedValueOnce(enrichedContext);
+
+            (ai.models.generateContent as any).mockResolvedValueOnce({
+                text: JSON.stringify({
+                    title: 'Enriched Title',
+                    content: 'Enriched content',
+                    optionA: { label: 'A', description: 'desc A' },
+                    optionB: { label: 'B', description: 'desc B' },
+                })
+            });
+
+            const result = await generateStoryBlock('scifi', 'The crew arrived.');
+
+            expect(result.title).toBe('Enriched Title');
+            // The prompt should have included ragContext since enrichedContext !== previousContext
+            const calledPrompt = (ai.models.generateContent as any).mock.calls[ 0 ][ 0 ].contents;
+            expect(calledPrompt).toContain('Story So Far');
         });
     });
 
@@ -91,7 +118,7 @@ describe('AI Generators', () => {
             expect(ai.models.generateImages).toHaveBeenCalledTimes(1);
             expect(url).toMatch(/^\/images\/img_\d+_[a-z0-9]+\.jpg$/);
 
-            expect(fs.mkdir).toHaveBeenCalledTimes(1);
+            expect(fs.mkdir).toHaveBeenCalledWith(expect.stringContaining(path.join('client', 'public', 'images')), { recursive: true });
             expect(fs.writeFile).toHaveBeenCalledTimes(1);
         });
 

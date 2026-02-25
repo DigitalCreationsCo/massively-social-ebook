@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleGameLoopTick, state } from './routes';
+import { handleGameLoopTick, state, computeDecisionEndsAt, NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS } from './routes';
 import { storage } from './storage';
 import * as ai from './ai';
 
@@ -21,6 +21,41 @@ vi.mock('./ai', () => ({
 const mockedStorage = vi.mocked(storage);
 const mockedAi = vi.mocked(ai);
 
+describe('computeDecisionEndsAt', () => {
+    it('returns phaseEndsAt when already in voting phase', () => {
+        const st = {
+            currentPhase: 'voting' as const,
+            phaseEndsAt: 5000,
+            decisionEndsAt: 0,
+            currentBlock: undefined,
+            turnsToNextChoice: 2,
+        };
+        expect(computeDecisionEndsAt(st)).toBe(5000);
+    });
+
+    it('returns phaseEndsAt + turnsToNextChoice * NARRATIVE_TURN_MS during reading', () => {
+        const st = {
+            currentPhase: 'reading' as const,
+            phaseEndsAt: 10000,
+            decisionEndsAt: 0,
+            currentBlock: undefined,
+            turnsToNextChoice: 3,
+        };
+        expect(computeDecisionEndsAt(st)).toBe(10000 + 3 * NARRATIVE_TURN_MS);
+    });
+
+    it('returns phaseEndsAt when turnsToNextChoice is 0 during reading', () => {
+        const st = {
+            currentPhase: 'reading' as const,
+            phaseEndsAt: 10000,
+            decisionEndsAt: 0,
+            currentBlock: undefined,
+            turnsToNextChoice: 0,
+        };
+        expect(computeDecisionEndsAt(st)).toBe(10000);
+    });
+});
+
 describe('handleGameLoopTick', () => {
     const mockBroadcast = vi.fn();
     const now = Date.now();
@@ -31,6 +66,7 @@ describe('handleGameLoopTick', () => {
         state.scifi = {
             currentPhase: 'reading',
             phaseEndsAt: now + 1000,
+            decisionEndsAt: now + 1000 + 2 * NARRATIVE_TURN_MS,
             currentBlock: { id: 1, content: 'Test content', title: 'Test', channelId: 'scifi', createdAt: new Date() } as any,
             turnsToNextChoice: 2,
         };
@@ -147,5 +183,110 @@ describe('handleGameLoopTick', () => {
         await handleGameLoopTick(now + 2000, mockBroadcast);
 
         expect(state.scifi.currentBlock?.imageUrl).toBe('/images/img_1771936309521_ieycq2.jpg');
+    });
+
+    // --- New tests for timer separation ---
+
+    it('includes timeToNextDecision in SYNC_STATE broadcast during reading phase', async () => {
+        state.scifi.phaseEndsAt = now + 10000;
+        state.scifi.decisionEndsAt = now + 10000 + 2 * NARRATIVE_TURN_MS;
+
+        await handleGameLoopTick(now + 5000, mockBroadcast);
+
+        expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+            type: 'SYNC_STATE',
+            payload: expect.objectContaining({
+                timeRemaining: 5000,
+                timeToNextDecision: 5000 + 2 * NARRATIVE_TURN_MS,
+            })
+        }));
+    });
+
+    it('timeToNextDecision equals timeRemaining when in voting phase', async () => {
+        state.scifi.currentPhase = 'voting';
+        state.scifi.phaseEndsAt = now + 10000;
+        state.scifi.decisionEndsAt = now + 10000;
+
+        await handleGameLoopTick(now + 5000, mockBroadcast);
+
+        const call = mockBroadcast.mock.calls[ 0 ];
+        const payload = call[ 1 ].payload;
+        expect(payload.timeRemaining).toBe(5000);
+        expect(payload.timeToNextDecision).toBe(5000);
+    });
+
+    it('recalculates decisionEndsAt after narrative turn', async () => {
+        state.scifi.turnsToNextChoice = 2;
+        state.scifi.phaseEndsAt = now + 1000;
+        mockedAi.generateStoryBlock.mockResolvedValue({
+            title: 'Narrative',
+            content: 'Content',
+            optionA: { label: 'A', description: 'desc A' },
+            optionB: { label: 'B', description: 'desc B' },
+        });
+        mockedAi.generateStoryImage.mockResolvedValue('http://image.jpg');
+
+        const tickTime = now + 2000;
+        await handleGameLoopTick(tickTime, mockBroadcast);
+
+        // After decrement, turnsToNextChoice = 1
+        // phaseEndsAt = tickTime + NARRATIVE_TURN_MS
+        // decisionEndsAt = phaseEndsAt + 1 * NARRATIVE_TURN_MS
+        const expectedPhaseEnd = tickTime + NARRATIVE_TURN_MS;
+        const expectedDecisionEnd = expectedPhaseEnd + 1 * NARRATIVE_TURN_MS;
+        expect(state.scifi.decisionEndsAt).toBe(expectedDecisionEnd);
+    });
+
+    it('sets decisionEndsAt to phaseEndsAt on entering voting', async () => {
+        state.scifi.turnsToNextChoice = 0;
+        state.scifi.phaseEndsAt = now + 1000;
+
+        const tickTime = now + 2000;
+        await handleGameLoopTick(tickTime, mockBroadcast);
+
+        // Entered voting: decisionEndsAt = phaseEndsAt
+        expect(state.scifi.currentPhase).toBe('voting');
+        expect(state.scifi.decisionEndsAt).toBe(state.scifi.phaseEndsAt);
+    });
+
+    it('recalculates decisionEndsAt after voting ends', async () => {
+        state.scifi.currentPhase = 'voting';
+        state.scifi.phaseEndsAt = now + 1000;
+        mockedStorage.getVotesForBlock.mockResolvedValue([
+            { choice: 'A', userId: '1' },
+        ] as any);
+        mockedAi.generateStoryBlock.mockResolvedValue({
+            title: 'Post Vote',
+            content: 'Voted content',
+            optionA: { label: 'A', description: 'desc A' },
+            optionB: { label: 'B', description: 'desc B' },
+        });
+        mockedAi.generateStoryImage.mockResolvedValue('http://image.jpg');
+
+        const tickTime = now + 2000;
+        await handleGameLoopTick(tickTime, mockBroadcast);
+
+        expect(state.scifi.currentPhase).toBe('reading');
+        const expectedPhaseEnd = tickTime + POST_VOTE_READING_MS;
+        const expectedDecisionEnd = expectedPhaseEnd + state.scifi.turnsToNextChoice * NARRATIVE_TURN_MS;
+        expect(state.scifi.decisionEndsAt).toBe(expectedDecisionEnd);
+    });
+
+    it('uses correct timing constants for phase durations', async () => {
+        // Verify narrative turn uses NARRATIVE_TURN_MS
+        state.scifi.turnsToNextChoice = 1;
+        state.scifi.phaseEndsAt = now + 1000;
+        mockedAi.generateStoryBlock.mockResolvedValue({
+            title: 'T',
+            content: 'C',
+            optionA: { label: 'A', description: 'dA' },
+            optionB: { label: 'B', description: 'dB' },
+        });
+        mockedAi.generateStoryImage.mockResolvedValue('http://x.jpg');
+
+        const tickTime = now + 2000;
+        await handleGameLoopTick(tickTime, mockBroadcast);
+
+        expect(state.scifi.phaseEndsAt).toBe(tickTime + NARRATIVE_TURN_MS);
     });
 });
