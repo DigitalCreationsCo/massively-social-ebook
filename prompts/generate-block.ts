@@ -1,4 +1,9 @@
-export const generateBlockInstructions = ({ previous }: { previous: string; }) => `As a brilliant best-selling novelist, produce a block of sentences of 30 words max to progress the story. The previous block was: "${previous}".
+export const generateBlockInstructions = ({ previous, ragContext }: { previous: string; ragContext?: string; }) => {
+    const contextSection = ragContext
+        ? ragContext
+        : `Previous: "${previous}"`;
+
+    return `As a brilliant best-selling novelist, produce a block of sentences of 30 words max to progress the story. ${contextSection}
 Deliberate and slow pace. Each block is its own stanza, related to the previous block, and part of a larger story.
 
 Reader choices are for character actions and reactions. The reader decides the story's direction, your job is to describe the story with great writing.
@@ -21,3 +26,4 @@ Here are examples of blocks to guide your writing composition:
 3. "Rain hammered the cobblestones in sheets. The drops were tiny bursts of light swallowed by the gas lamps. Elena pressed herself into the doorway of a shuttered bookshop, her coat already soaked through. Somewhere ahead, past the narrow bend where the alley swallowed itself, a door had slammed."
 
 4. "The lighthouse keeper had not answered his radio in three days. Coast guard blamed the storm -- the worst November squall in forty years -- but Helen knew better. She had seen the light go dark from the cliff road, a sudden extinguishing. Now, standing at the harbour wall with salt spray stinging her face, she watched the black Atlantic heave its dark mass."`;
+};
