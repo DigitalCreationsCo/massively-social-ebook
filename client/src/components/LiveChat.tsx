@@ -10,6 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface LiveChatProps {
   history: ChatMsg[];
+  mostRecentMessage: ChatMsg | null;
   username: string;
   onSend: (text: string) => void;
   isOpen: boolean;
@@ -33,8 +34,7 @@ function formatTime(isoString: string): string {
   return `${Math.floor(diff / 60)}m`;
 }
 
-export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveChatProps) {
-  const { mostRecentMessage } = useLiveState();
+export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen, onToggle }: LiveChatProps) {
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,18 +85,24 @@ export function LiveChat({ history, username, onSend, isOpen, onToggle }: LiveCh
       { (
         <div className="flex justify-between py-5 px-5 gap-5">
           {
-            mostRecentMessage && (
               <motion.button
                 initial={ { opacity: 0, y: 20 } }
                 animate={ { opacity: 1, y: 0 } }
                 aria-label="Open chat"
                 onClick={ onToggle }
-                className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 h-12 w-12 text-sm"
+              className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm border border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
               >
+              { mostRecentMessage ? (
+                <>
                 <span className="text-primary font-medium">{ mostRecentMessage.username }: </span>
                 <span className="text-white/80">{ mostRecentMessage.text.slice(0, 15) + '...' }</span>
-              </motion.button>
-            )
+                </>
+              ) : (
+                <span className="flex items-center gap-2 text-primary font-medium justify-center">
+                  <MessageCircle className="size-5" />
+                  Join The Chat</span>
+              ) }
+            </motion.button>
           }
 
           {/* <button

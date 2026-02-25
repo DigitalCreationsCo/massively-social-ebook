@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
+import { getObfuscatedChannelId } from '@shared/channels';
 
 export type Phase = 'reading' | 'voting';
 
@@ -36,10 +37,17 @@ export interface VoteResults {
   B: number;
 }
 
-export function useLiveState(channelId: string = 'scifi') {
+export function useLiveState(channelId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
+  // Ensure channelId is never undefined or empty
+  if (!channelId) {
+    console.warn('[LiveState] Undefined channelId provided, defaulting to x7v9z');
+    channelId = 'x7v9z';
+  }
+  const obfId = channelId; // The input is now expected to be obfuscated ID from the selector
+
   const [username] = useState(() => {
     const stored = sessionStorage.getItem('reader_name');
     if (stored) return stored;
@@ -56,18 +64,18 @@ export function useLiveState(channelId: string = 'scifi') {
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
-    queryKey: [api.blocks.current.path, channelId],
+    queryKey: [ api.blocks.current.path, obfId ],
     queryFn: async () => {
-      const res = await fetch(`${api.blocks.current.path}?channelId=${channelId}`);
+      const res = await fetch(`${api.blocks.current.path}?channelId=${obfId}`);
       if (!res.ok) throw new Error('Failed to fetch current block');
       return res.json() as Promise<StoryState>;
     },
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
-    queryKey: [api.chat.history.path, channelId],
+    queryKey: [ api.chat.history.path, obfId ],
     queryFn: async () => {
-      const res = await fetch(`${api.chat.history.path}?channelId=${channelId}`);
+      const res = await fetch(`${api.chat.history.path}?channelId=${obfId}`);
       if (!res.ok) throw new Error('Failed to fetch chat history');
       return res.json() as Promise<ChatMsg[]>;
     },
@@ -105,7 +113,7 @@ export function useLiveState(channelId: string = 'scifi') {
   // WebSocket Connection
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?channelId=${channelId}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?channelId=${obfId}`;
     
     const connect = () => {
       const socket = new WebSocket(wsUrl);
@@ -113,7 +121,7 @@ export function useLiveState(channelId: string = 'scifi') {
 
       socket.onopen = () => {
         setWsConnected(true);
-        console.log('[LiveState] Connected to channel:', channelId);
+        console.log('[LiveState] Connected to channel:', obfId);
       };
 
       socket.onclose = () => {
@@ -125,18 +133,18 @@ export function useLiveState(channelId: string = 'scifi') {
         try {
           const message = JSON.parse(event.data);
           
-          if (message.type === 'sync_state') {
+          if (message.type === 'SYNC_STATE') {
             const payload = message.payload as StoryState;
-            queryClient.setQueryData([api.blocks.current.path, channelId], payload);
+            queryClient.setQueryData([ api.blocks.current.path, obfId ], payload);
           } 
-          else if (message.type === 'chat_message') {
+          else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
-            queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => {
+            queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, obfId ], (old = []) => {
               if (old.some(m => m.id === payload.id)) return old;
               return [...old, payload];
             });
           }
-          else if (message.type === 'vote_update') {
+          else if (message.type === 'VOTE_UPDATE') {
             const payload = message.payload as VoteResults;
             setVoteResults(payload);
           }
@@ -151,7 +159,7 @@ export function useLiveState(channelId: string = 'scifi') {
     return () => {
       wsRef.current?.close();
     };
-  }, [queryClient, channelId]);
+  }, [ queryClient, obfId ]);
 
   const submitChat = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -165,13 +173,13 @@ export function useLiveState(channelId: string = 'scifi') {
       text,
       createdAt: new Date().toISOString()
     };
-    queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => [...old, tempMsg]);
+    queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, obfId ], (old = []) => [ ...old, tempMsg ]);
 
     wsRef.current.send(JSON.stringify({
-      type: 'submit_chat',
+      type: 'SUBMIT_CHAT',
       payload: { username, text }
     }));
-  }, [username, queryClient, toast, channelId]);
+  }, [ username, queryClient, toast, obfId ]);
 
   const submitVote = useCallback((choice: 'A' | 'B') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -179,10 +187,10 @@ export function useLiveState(channelId: string = 'scifi') {
       return;
     }
     
-    sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
+    sessionStorage.setItem(`voted_${obfId}_${currentBlock?.id}`, choice);
     
     wsRef.current.send(JSON.stringify({
-      type: 'submit_vote',
+      type: 'SUBMIT_VOTE',
       payload: { choice, userId: username }
     }));
     
@@ -197,9 +205,9 @@ export function useLiveState(channelId: string = 'scifi') {
       description: `You chose ${currentBlock?.optionA && choice === 'A' ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
       duration: 2000 
     });
-  }, [currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, channelId]);
+  }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, obfId ]);
 
-  const hasVotedCurrent = sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
+  const hasVotedCurrent = sessionStorage.getItem(`voted_${obfId}_${currentBlock?.id}`) !== null;
 
   // Get most recent chat message
   const mostRecentMessage = chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null;

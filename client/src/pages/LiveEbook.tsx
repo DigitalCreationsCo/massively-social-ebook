@@ -9,12 +9,12 @@ import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const CHANNELS = [
-  { id: 'scifi', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
-  { id: 'mystery', name: 'Mystery', description: 'Dark alleys and supernatural secrets' }
+  { id: 'x7v9z', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
+  { id: 'm2w4k', name: 'Mystery', description: 'Dark alleys and supernatural secrets' }
 ];
 
 export default function LiveEbook() {
-  const [ selectedChannel, setSelectedChannel ] = useState<string>('scifi');
+  const [ selectedChannel, setSelectedChannel ] = useState<string>('m2w4k');
   const [ chatOpen, setChatOpen ] = useState(false);
   const [ showChannelSelector, setShowChannelSelector ] = useState(false);
 
@@ -30,7 +30,7 @@ export default function LiveEbook() {
     submitVote,
     voteResults,
     viewerCount,
-    mostRecentMessage
+    mostRecentMessage,
   } = useLiveState(selectedChannel);
 
   const handleToggleChat = () => {
@@ -136,6 +136,7 @@ export default function LiveEbook() {
       {/* Chat panel */ }
       <LiveChat
         history={ chatHistory }
+        mostRecentMessage={ mostRecentMessage }
         username={ username }
         onSend={ submitChat }
         isOpen={ chatOpen }
