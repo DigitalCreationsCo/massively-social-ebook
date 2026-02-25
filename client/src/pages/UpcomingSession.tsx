@@ -3,16 +3,29 @@ import { useLocation } from "wouter";
 import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Bell, Loader2, BookOpen } from "lucide-react";
+import { Calendar, Bell, Loader2, BookOpen, Mail } from "lucide-react";
 import { format } from "date-fns";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function UpcomingSession({ channelId = 'x7v9z' }: { channelId?: string; }) {
     const { sessionStatus, activeSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
     const [ reminding, setReminding ] = useState(false);
+    const [ email, setEmail ] = useState("");
+    const [ isDialogOpen, setIsDialogOpen ] = useState(false);
     const [ _, setLocation ] = useLocation();
 
     const [timeLeft, setTimeLeft] = useState("");
@@ -55,36 +68,31 @@ export default function UpcomingSession({ channelId = 'x7v9z' }: { channelId?: s
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && activeSession;
 
-    const handleReminder = async () => {
-        if (!activeSession) return;
+    const handleReminder = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!activeSession || !email) return;
         setReminding(true);
         try {
             const res = await fetch(api.sessions.reminder.path, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: activeSession.id })
+                body: JSON.stringify({
+                    sessionId: activeSession.id,
+                    email
+                })
             });
 
-            if (!res.ok) throw new Error("Failed to generate reminder");
-
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `session-${activeSession.id}.ics`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            if (!res.ok) throw new Error("Failed to schedule reminder");
 
             toast({
-                title: "Calendar event downloaded",
-                description: "Open the .ics file to add this session to your calendar.",
+                title: "Calendar Sync Triggered",
+                description: "We've sent a request to add this to your Google and Outlook calendars.",
             });
+            setIsDialogOpen(false);
         } catch (err) {
             toast({
                 title: "Error",
-                description: "Could not generate calendar reminder.",
+                description: "Could not schedule calendar reminder.",
                 variant: "destructive"
             });
         } finally {
@@ -204,23 +212,56 @@ export default function UpcomingSession({ channelId = 'x7v9z' }: { channelId?: s
                                 </div>
 
                                 <div className="grid grid-cols-1 gap-4 pt-4">
-                                    <Button
-                                        onClick={ handleReminder }
-                                        disabled={ reminding }
-                                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-lg py-8 shadow-[0_0_20px_rgba(var(--primary),0.3)] transition-all hover:shadow-[0_0_30px_rgba(var(--primary),0.5)]"
-                                    >
-                                        { reminding ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null }
-                                        [ Claim My 25 ]
-                                    </Button>
+                                    <Dialog open={ isDialogOpen } onOpenChange={ setIsDialogOpen }>
+                                        <DialogTrigger asChild>
+                                            <Button
+                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-lg py-8 shadow-[0_0_20px_rgba(var(--primary),0.3)] transition-all hover:shadow-[0_0_30px_rgba(var(--primary),0.5)]"
+                                            >
+                                                [ Claim My 25 ]
+                                            </Button>
+                                        </DialogTrigger>
+                                        <DialogContent className="bg-zinc-950 border-white/10 text-white">
+                                            <DialogHeader>
+                                                <DialogTitle className="text-2xl font-serif">Sync to Calendar</DialogTitle>
+                                                <DialogDescription className="text-white/60 font-serif italic">
+                                                    Enter your email to receive automatic invitations for this session on Google and Outlook.
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <form onSubmit={ handleReminder } className="space-y-4 py-4">
+                                                <div className="space-y-2">
+                                                    <Label htmlFor="email" className="text-xs uppercase tracking-widest text-white/40">Your Email</Label>
+                                                    <Input
+                                                        id="email"
+                                                        type="email"
+                                                        placeholder="reader@example.com"
+                                                        required
+                                                        value={ email }
+                                                        onChange={ (e) => setEmail(e.target.value) }
+                                                        className="bg-white/5 border-white/10 focus:border-primary/50"
+                                                    />
+                                                </div>
+                                                <DialogFooter>
+                                                    <Button
+                                                        type="submit"
+                                                        disabled={ reminding }
+                                                        className="w-full bg-primary text-primary-foreground font-serif uppercase tracking-widest"
+                                                    >
+                                                        { reminding ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Mail className="w-4 h-4 mr-2" /> }
+                                                        Remind Me
+                                                    </Button>
+                                                </DialogFooter>
+                                            </form>
+                                        </DialogContent>
+                                    </Dialog>
 
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <Button 
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {/* <Button 
                                             variant="outline" 
                                             className="border-white/10 bg-white/5 hover:bg-white/10 text-white/70 font-sans text-xs uppercase tracking-widest h-auto py-4"
                                             onClick={() => toast({ title: "Coming Soon", description: "Author profiles are being scribed." })}
                                         >
                                             Meet the Author
-                                        </Button>
+                                        </Button> */}
                                         <Button 
                                             variant="outline" 
                                             className="border-white/10 bg-white/5 hover:bg-white/10 text-white/70 font-sans text-xs uppercase tracking-widest h-auto py-4"
