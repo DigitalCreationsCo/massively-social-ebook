@@ -4,8 +4,10 @@ import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
 import { getObfuscatedChannelId } from '@shared/channels';
+import type { Session } from '@shared/schema';
 
-export type Phase = 'reading' | 'voting';
+export type Phase = 'reading' | 'voting' | 'resolution';
+export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
 
 export interface VoteOption {
   label: string;
@@ -18,8 +20,8 @@ export interface StoryState {
   title: string | null;
   content: string;
   imageUrl: string | null;
-  optionA: VoteOption | null;
-  optionB: VoteOption | null;
+  optionA: VoteOption | null | undefined;
+  optionB: VoteOption | null | undefined;
   createdAt: string;
   phase: Phase;
   timeRemaining: number;
@@ -65,6 +67,8 @@ export function useLiveState(channelId: string) {
   const [ localTimeToDecision, setLocalTimeToDecision ] = useState(0);
   const [ localInitialTimeToDecision, setLocalInitialTimeToDecision ] = useState(0);
   const [ localTurnsToNextChoice, setLocalTurnsToNextChoice ] = useState(0);
+  const [ sessionStatus, setSessionStatus ] = useState<SessionStatus | 'loading'>('loading');
+  const [ activeSession, setActiveSession ] = useState<Session | null>(null);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
@@ -139,6 +143,7 @@ export function useLiveState(channelId: string) {
 
       socket.onclose = () => {
         setWsConnected(false);
+        setSessionStatus('loading');
         setTimeout(connect, 3000);
       };
 
@@ -167,6 +172,15 @@ export function useLiveState(channelId: string) {
           else if (message.type === 'VOTE_UPDATE') {
             const payload = message.payload as VoteResults;
             setVoteResults(payload);
+          }
+          else if (message.type === 'SESSION_STATUS') {
+            const payload = message.payload as { status: SessionStatus, session: Session | null; };
+            setSessionStatus(payload.status);
+            setActiveSession(payload.session);
+            if (payload.status === 'active') {
+              // Refetch block if session just started
+              queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, obfId ] });
+            }
           }
         } catch (err) {
           console.error('[LiveState] Failed to parse WS message:', err);
@@ -247,6 +261,8 @@ export function useLiveState(channelId: string) {
     submitVote,
     voteResults,
     viewerCount,
-    mostRecentMessage
+    mostRecentMessage,
+    sessionStatus,
+    activeSession
   };
 }

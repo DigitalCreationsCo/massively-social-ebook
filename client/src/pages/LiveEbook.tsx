@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveState } from '@/hooks/use-live-state';
+import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
 import { DecisionPhase } from '@/components/DecisionPhase';
 import { LiveChat } from '@/components/LiveChat';
@@ -34,7 +35,15 @@ export default function LiveEbook() {
     voteResults,
     viewerCount,
     mostRecentMessage,
+    sessionStatus
   } = useLiveState(selectedChannel);
+
+  const [ _, setLocation ] = useLocation();
+
+  // Redirect to upcoming if no active session
+  if (!isLoading && sessionStatus === 'scheduled') {
+    setLocation('/upcoming');
+  }
 
   const handleToggleChat = () => {
     setChatOpen((prev) => !prev);
