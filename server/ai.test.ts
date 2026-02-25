@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 vi.mock('@google/genai', () => ({
     GoogleGenAI: class { },

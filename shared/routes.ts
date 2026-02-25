@@ -7,6 +7,17 @@ export const errorSchemas = {
   internal: z.object({ message: z.string() }),
 };
 
+export const sessionResponseSchema = z.object({
+  id: z.number(),
+  channelId: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  scheduledStart: z.string(),
+  scheduledEnd: z.string(),
+  status: z.enum([ 'scheduled', 'active', 'completed', 'cancelled' ]),
+  createdAt: z.string(),
+});
+
 export const api = {
   chat: {
     history: {
@@ -37,7 +48,56 @@ export const api = {
         }),
       }
     }
-  }
+  },
+  sessions: {
+    next: {
+      method: 'GET' as const,
+      path: '/api/sessions/next' as const,
+      responses: {
+        200: sessionResponseSchema.nullable(),
+      },
+    },
+    reminder: {
+      method: 'POST' as const,
+      path: '/api/sessions/reminder' as const,
+      body: z.object({
+        sessionId: z.number(),
+        email: z.string().email().optional(), // for future SMTP
+      }),
+    },
+  },
+  admin: {
+    sessions: {
+      list: {
+        method: 'GET' as const,
+        path: '/api/admin/sessions' as const,
+        responses: {
+          200: z.array(sessionResponseSchema),
+        },
+      },
+      create: {
+        method: 'POST' as const,
+        path: '/api/admin/sessions' as const,
+        body: z.object({
+          channelId: z.string(),
+          title: z.string(),
+          description: z.string().optional(),
+          scheduledStart: z.string(),
+          scheduledEnd: z.string(),
+        }),
+        responses: {
+          201: sessionResponseSchema,
+        },
+      },
+      cancel: {
+        method: 'PATCH' as const,
+        path: '/api/admin/sessions/:id/cancel' as const,
+        responses: {
+          200: sessionResponseSchema,
+        },
+      },
+    },
+  },
 };
 
 export function buildUrl(path: string, params?: Record<string, string | number>): string {
