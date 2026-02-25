@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Zap, Bug } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -10,6 +11,14 @@ interface DebugToolsProps {
 
 export function DebugTools({ channelId }: DebugToolsProps) {
   const [loading, setLoading] = useState(false);
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('admin_token') || '');
+
+  const handleTokenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newToken = e.target.value;
+    setAdminToken(newToken);
+    localStorage.setItem('admin_token', newToken);
+  };
+
   const { toast } = useToast();
   
   // Only show if debug=true in URL
@@ -22,7 +31,10 @@ export function DebugTools({ channelId }: DebugToolsProps) {
     try {
       const res = await fetch('/api/debug/sessions/resolve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-admin-token': adminToken
+        },
         body: JSON.stringify({ channelId }),
       });
       
@@ -45,6 +57,13 @@ export function DebugTools({ channelId }: DebugToolsProps) {
         <div className="flex items-center gap-2 text-primary font-mono text-[10px] uppercase tracking-tighter">
           <Bug className="w-3 h-3" /> Debug Console
         </div>
+        <Input 
+          type="password" 
+          placeholder="Admin Token" 
+          value={adminToken} 
+          onChange={handleTokenChange}
+          className="h-6 text-[10px] font-mono bg-black/50 border-white/10 text-white placeholder:text-white/30"
+        />
         <Button 
           variant="outline" 
           size="sm" 
