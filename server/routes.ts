@@ -23,12 +23,17 @@ interface ChannelState {
   currentBlock: Block | undefined;
   nextBlockA?: PendingBlock;
   nextBlockB?: PendingBlock;
+  turnsToNextChoice: number;
 }
 
-const state: Record<Channel, ChannelState> = {
-  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined },
-  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined }
+export const state: Record<Channel, ChannelState> = {
+  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined, turnsToNextChoice: 3 },
+  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + 120000, currentBlock: undefined, turnsToNextChoice: 3 }
 };
+
+function getRandomTurns() {
+  return Math.floor(Math.random() * 2) + 3; // 3 or 4
+}
 
 function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | 'B') {
   if (!st.currentBlock) return;
@@ -45,7 +50,7 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
         imageUrl = await generateStoryImage(nextContent.content);
       } catch (imageErr) {
         console.warn(`Image generation failed for ${channelId}, using fallback:`, imageErr);
-        imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+        imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
       }
       return { ...nextContent, imageUrl };
     } catch (err) {
@@ -54,7 +59,7 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
       return {
         title: "Temporal Distortion",
         content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
-        imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
+        imageUrl: "/images/img_1771936309521_ieycq2.jpg",
         optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
         optionB: { label: "Wait", description: "Wait for the distortion to pass." }
       };
@@ -88,7 +93,7 @@ export async function registerRoutes(
           imageUrl = await generateStoryImage(nextContent.content);
         } catch (imageErr) {
           console.warn(`Initial seed image generation failed for ${channelId}, using fallback:`, imageErr);
-          imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+          imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
         }
 
         block = await storage.createBlock({
@@ -103,13 +108,14 @@ export async function registerRoutes(
           channelId,
           title: "System Reboot",
           content: "The story system encountered an anomaly and is attempting to reboot.",
-          imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
+          imageUrl: "/images/img_1771936309521_ieycq2.jpg",
           optionA: { label: "Reboot", description: "Attempt a system reboot." },
           optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
         });
       }
     }
     state[channelId].currentBlock = block;
+    state[ channelId ].turnsToNextChoice = getRandomTurns();
     // Kick off background generation for the initial block
     pregenerateOption(channelId, state[ channelId ], 'A');
     pregenerateOption(channelId, state[ channelId ], 'B');
@@ -128,7 +134,8 @@ export async function registerRoutes(
       ...channelState.currentBlock,
       createdAt: channelState.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
       phase: channelState.currentPhase,
-      timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now())
+      timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now()),
+      turnsToNextChoice: channelState.turnsToNextChoice
     });
   });
 
@@ -175,7 +182,8 @@ export async function registerRoutes(
           ...channelState.currentBlock,
           createdAt: channelState.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
           phase: channelState.currentPhase,
-          timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now())
+          timeRemaining: Math.max(0, channelState.phaseEndsAt - Date.now()),
+          turnsToNextChoice: channelState.turnsToNextChoice
         }
       }));
     }
@@ -229,46 +237,42 @@ export async function registerRoutes(
 
   // Game Loop
   setInterval(async () => {
-    const now = Date.now();
-    
-    for (const channelId of CHANNELS) {
-      const st = state[channelId];
-      if (!st) continue;
-      
-      if (now >= st.phaseEndsAt) {
-        if (st.currentPhase === 'reading') {
-          st.currentPhase = 'voting';
-          st.phaseEndsAt = now + 30000; // 30 seconds for voting
-        } else {
-          // Tally votes and generate next block
-          st.currentPhase = 'reading';
-          st.phaseEndsAt = now + 120000; // 2 minutes for reading
-          
+    await handleGameLoopTick(Date.now(), broadcast);
+  }, 1000);
+
+  return httpServer;
+}
+
+export async function handleGameLoopTick(now: number, broadcast: (channelId: Channel, message: WsMessage) => void) {
+  for (const channelId of CHANNELS) {
+    const st = state[ channelId ];
+    if (!st) continue;
+
+    if (now >= st.phaseEndsAt) {
+      if (st.currentPhase === 'reading') {
+        if (st.turnsToNextChoice > 0) {
+          // Narrative turn: skip voting, go straight to next block
+          st.turnsToNextChoice--;
+          st.phaseEndsAt = now + 80000; // 80 seconds Reset reading timer for next narrative block
+
+          // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
-            const votes = await storage.getVotesForBlock(st.currentBlock.id);
-            const countA = votes.filter(v => v.choice === 'A').length;
-            const countB = votes.filter(v => v.choice === 'B').length;
-            
-            const winner = countA >= countB ? 'A' : 'B';
-            
             try {
               let nextData;
-              if (winner === 'A' && st.nextBlockA) {
+              if (st.nextBlockA) {
                 nextData = await st.nextBlockA.promise;
-              } else if (winner === 'B' && st.nextBlockB) {
-                nextData = await st.nextBlockB.promise;
               } else {
-                const opt = winner === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+                // Fallback if pregeneration didn't happen
+                const opt = st.currentBlock.optionA;
                 const optData = opt as { label?: string, description?: string; } | null;
-                const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
-                const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+                const winnerText = `${optData?.label || 'Choice A'}: ${optData?.description || 'The story continues...'}`;
+                const previousContext = `${st.currentBlock.title}\n${st.currentBlock.content}${winnerText}`;
                 const nextContent = await generateStoryBlock(channelId, previousContext);
                 let imageUrl: string;
                 try {
                   imageUrl = await generateStoryImage(nextContent.content);
                 } catch (imageErr) {
-                  console.warn(`Game loop image generation failed for ${channelId}, using fallback:`, imageErr);
-                  imageUrl = await storage.getRandomImage(channelId) || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop";
+                  imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
                 }
                 nextData = { ...nextContent, imageUrl };
               }
@@ -276,56 +280,105 @@ export async function registerRoutes(
               st.currentBlock = await storage.createBlock({
                 channelId,
                 ...nextData
-              } as any); // Use any to bypass strict JSON type check for now until schema and AI results are perfectly aligned
+              } as any);
 
-              // Precompute the next branches concurrently
               pregenerateOption(channelId, st, 'A');
               pregenerateOption(channelId, st, 'B');
             } catch (err) {
-              console.error("Failed to adopt next block:", err);
-            // Fallback
-              st.currentBlock = await storage.createBlock({
-                channelId,
-                title: "Temporal Distortion",
-                content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
-                imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2000&auto=format&fit=crop",
-                optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
-                optionB: { label: "Wait", description: "Wait for the distortion to pass." }
-              });
-
-              pregenerateOption(channelId, st, 'A');
-              pregenerateOption(channelId, st, 'B');
+              console.error("Failed to advance narrative:", err);
             }
           }
-        }
-
-        if (st.currentBlock) {
-          broadcast(channelId, {
-            type: 'SYNC_STATE',
-            payload: {
-              ...st.currentBlock,
-              createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-              phase: st.currentPhase,
-              timeRemaining: Math.max(0, st.phaseEndsAt - Date.now())
-            }
-          });
+        } else {
+        // Choice turn: enter voting phase
+          st.currentPhase = 'voting';
+          st.phaseEndsAt = now + 40000; // 40 seconds for voting
         }
       } else {
-        // Send time updates every second to keep clients perfectly in sync
+        // Voting phase ended: tally votes and generate next block
+        st.currentPhase = 'reading';
+        st.phaseEndsAt = now + 120000; // 2 minutes for reading
+        st.turnsToNextChoice = getRandomTurns(); // Set next choice turn count
+
         if (st.currentBlock) {
-          broadcast(channelId, {
-            type: 'SYNC_STATE',
-            payload: {
-              ...st.currentBlock,
-              createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-              phase: st.currentPhase,
-              timeRemaining: Math.max(0, st.phaseEndsAt - Date.now())
+          const votes = await storage.getVotesForBlock(st.currentBlock.id);
+          const countA = votes.filter(v => v.choice === 'A').length;
+          const countB = votes.filter(v => v.choice === 'B').length;
+
+          const winner = countA >= countB ? 'A' : 'B';
+
+          try {
+            let nextData;
+            if (winner === 'A' && st.nextBlockA) {
+              nextData = await st.nextBlockA.promise;
+            } else if (winner === 'B' && st.nextBlockB) {
+              nextData = await st.nextBlockB.promise;
+            } else {
+              const opt = winner === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+              const optData = opt as { label?: string, description?: string; } | null;
+              const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
+              const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+              const nextContent = await generateStoryBlock(channelId, previousContext);
+              let imageUrl: string;
+              try {
+                imageUrl = await generateStoryImage(nextContent.content);
+              } catch (imageErr) {
+                console.warn(`Game loop image generation failed for ${channelId}, using fallback:`, imageErr);
+                imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+              }
+              nextData = { ...nextContent, imageUrl };
             }
-          });
+
+            st.currentBlock = await storage.createBlock({
+              channelId,
+              ...nextData
+            } as any);
+
+            pregenerateOption(channelId, st, 'A');
+            pregenerateOption(channelId, st, 'B');
+          } catch (err) {
+            console.error("Failed to adopt next block:", err);
+            // Fallback
+            st.currentBlock = await storage.createBlock({
+              channelId,
+              title: "Temporal Distortion",
+              content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+              imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+              optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
+              optionB: { label: "Wait", description: "Wait for the distortion to pass." }
+            });
+
+            pregenerateOption(channelId, st, 'A');
+            pregenerateOption(channelId, st, 'B');
+          }
         }
       }
-    }
-  }, 1000);
 
-  return httpServer;
+      if (st.currentBlock) {
+        broadcast(channelId, {
+          type: 'SYNC_STATE',
+          payload: {
+            ...st.currentBlock,
+            createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+            phase: st.currentPhase,
+            timeRemaining: Math.max(0, st.phaseEndsAt - now),
+            turnsToNextChoice: st.turnsToNextChoice
+          }
+        });
+      }
+    } else {
+      // Send time updates every second to keep clients perfectly in sync
+      if (st.currentBlock) {
+        broadcast(channelId, {
+          type: 'SYNC_STATE',
+          payload: {
+            ...st.currentBlock,
+            createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+            phase: st.currentPhase,
+            timeRemaining: Math.max(0, st.phaseEndsAt - now),
+            turnsToNextChoice: st.turnsToNextChoice
+          }
+        });
+      }
+    }
+  }
 }

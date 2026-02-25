@@ -63,59 +63,38 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 }
 
 export async function generateStoryImage(description: string): Promise<string> {
-  // const prompt = generateImageInstructions({ description });
+  const prompt = generateImageInstructions({ description });
 
-  // const response = await ai.models.generateImages({
-  //   model: lmParamsGoogle.imagenModel,
-  //   prompt: prompt,
-  //   config: {
-  //     numberOfImages: 1,
-  //     aspectRatio: "16:9",
-  //     outputMimeType: "image/jpeg",
-  //   }
-  // });
+  try {
+    const response = await ai.models.generateImages({
+      model: lmParamsGoogle.imagenModel,
+      prompt: prompt,
+      config: {
+        numberOfImages: 1,
+        aspectRatio: "16:9",
+        outputMimeType: "image/jpeg",
+      }
+    });
 
-  // const base64Image = response.generatedImages?.[ 0 ]?.image?.imageBytes;
+    const base64Image = response.generatedImages?.[ 0 ]?.image?.imageBytes;
 
-  // if (!base64Image) {
-  //   throw new Error("Failed to generate image: No image data returned.");
-  // }
+    if (!base64Image) {
+      throw new Error("No image data returned.");
+    }
 
-  // const response = await ai.models.generateContent({
-  //   model: "gemini-2.5-flash-image",
-  //   contents: prompt,
-  //   config: {
-  //     candidateCount: 1,
-  //     responseModalities: [ "image" ],
-  //     imageConfig: {
-  //       aspectRatio: "16:9",
-  //       outputMimeType: "image/jpeg",
-  //     },
-  //   }
-  // });
+    const filename = `img_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+    const filepath = path.join(process.cwd(), "public", "images", filename);
 
-  // if (!response.candidates?.[ 0 ]?.content?.parts?.[ 0 ]?.inlineData?.data) {
-  //   throw new Error("Failed to generate image: No image data returned.");
-  // }
+    // Ensure the directory exists
+    await fs.mkdir(path.dirname(filepath), { recursive: true });
 
-  // const images = (response.candidates ?? []).flatMap(cand =>
-  //   (cand.content?.parts ?? [])
-  //     .filter(part => part.inlineData?.data && part.inlineData?.mimeType)
-  //     .map(part => ({
-  //       imageBytes: part.inlineData!.data!,
-  //       mimeType: part.inlineData!.mimeType!
-  //     }))
-  // )
+    // Write the base64 data to a file
+    await fs.writeFile(filepath, Buffer.from(base64Image, 'base64'));
 
-  // const filename = `img_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-  // const filepath = path.join(process.cwd(), "public", "images", filename);
-
-  // // Ensure the directory exists
-  // await fs.mkdir(path.dirname(filepath), { recursive: true });
-
-  // // Write the base64 data to a file
-  // await fs.writeFile(filepath, Buffer.from(images[ 0 ].imageBytes, 'base64'));
-
-  // Return the web-accessible URL
-  return `/images/img_1771939929482_nv8xxg.jpg`;
+    // Return the web-accessible URL
+    return `/images/${filename}`;
+  } catch (err) {
+    console.warn("Failed to generate image, using fallback:", err);
+    return `/images/img_1771936309521_ieycq2.jpg`;
+  }
 }

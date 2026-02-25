@@ -6,6 +6,7 @@ import type { VoteOption, VoteResults } from '@/hooks/use-live-state';
 interface DecisionPhaseProps {
   phase?: 'reading' | 'voting';
   timeRemaining: number;
+  turnsToNextChoice: number;
   hasVoted: boolean;
   onVote: (choice: 'A' | 'B') => void;
   optionA?: VoteOption | null;
@@ -17,6 +18,7 @@ interface DecisionPhaseProps {
 export function DecisionPhase({ 
   phase, 
   timeRemaining, 
+  turnsToNextChoice,
   hasVoted, 
   onVote,
   optionA,
@@ -35,18 +37,37 @@ export function DecisionPhase({
 
   if (!phase) return null;
 
+  // Format time remaining for next choice
+  // Each turn is 2 minutes (120s) reading.
+  // total seconds = (turnsToNextChoice * 120) + (phase === 'reading' ? timeRemaining : 0)
+  const totalSecondsToChoice = (turnsToNextChoice * 120) + (phase === 'reading' ? timeRemaining : 0);
+  const minutes = Math.floor(totalSecondsToChoice / 60);
+  const seconds = totalSecondsToChoice % 60;
+  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+  const isDecisionAvailable = turnsToNextChoice === 0 && phase === 'voting';
+
   return (
     <div className="w-full flex flex-col justify-end min-h-[200px]">
-      { phase === 'voting' && (
-        <div className="flex items-center justify-center py-2 px-4 md:px-8 mb-3 gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
+      <div className="flex flex-col items-center justify-center py-2 px-4 md:px-8 mb-3 gap-1">
+        <div className="flex items-center gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
           <div className="flex items-center gap-2">
-            <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision</motion.div></>
+            { isDecisionAvailable ? (
+              <><Zap className="w-4 h-4 text-primary" /><motion.div>Decision Active</motion.div></>
+            ) : (
+              <><Timer className="w-4 h-4 text-white/40" /><motion.div>Narrative Evolution</motion.div></>
+            ) }
           </div>
         </div>
-      ) }
+        { !isDecisionAvailable && totalSecondsToChoice > 0 && (
+          <div className="text-xs font-mono text-primary/80 tracking-widest uppercase">
+            Next choice in { timeStr }
+          </div>
+        ) }
+      </div>
 
       {/* Voting Area */}
-      {phase === 'voting' && (
+      { isDecisionAvailable && (
         <motion.div 
           initial={ { opacity: 0, y: 10, scale: 0.8 } }
           animate={ { opacity: 1, y: 0, scale: 1 } }
