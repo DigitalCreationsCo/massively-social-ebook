@@ -81,61 +81,66 @@ export function DecisionPhase({
       {/* Voting Area */}
       { isDecisionAvailable && (
         <motion.div 
-          initial={ { opacity: 0, y: 10, scale: 0.8 } }
-          animate={ { opacity: 1, y: 0, scale: 1 } }
-          className="grid grid-cols-2 gap-4 px-4 pb-4 md:px-8"
+          initial={ { opacity: 0, scale: 0.95 } }
+          animate={ { opacity: 1, scale: 1 } }
+          className="px-4 pb-4 md:px-8"
         >
-          {(['A', 'B'] as const).map((choice) => {
-            const option = choice === 'A' ? optionA : optionB;
-            const isSelected = selectedChoice === choice;
-            const isWinner = hasVoted && (
-              (choice === 'A' && voteResults.A >= voteResults.B) ||
-              (choice === 'B' && voteResults.B >= voteResults.A)
-            );
-            const percentage = choice === 'A' ? percentA : percentB;
+          { !hasVoted ? (
+            <motion.div
+              key="options"
+              initial={ { opacity: 0, y: 10 } }
+              animate={ { opacity: 1, y: 0 } }
+              exit={ { opacity: 0, scale: 0.95 } }
+              className="grid grid-cols-2 gap-4"
+            >
+              { ([ 'A', 'B' ] as const).map((choice) => {
+                const option = choice === 'A' ? optionA : optionB;
 
-            return (
-              <button
-                key={choice}
-                disabled={hasVoted}
-                onClick={() => onVote(choice)}
-                className={cn(
-                  "relative group py-4 px-6 rounded-xl font-serif text-xl border-2 transition-all duration-300 overflow-hidden flex flex-col items-center",
-                  hasVoted 
-                    ? isWinner 
-                      ? "border-primary bg-primary/20 text-primary" 
-                      : "border-white/10 text-white/40 bg-black/20"
-                    : "border-primary/30 text-primary hover:border-primary hover:bg-primary/10 active:scale-95 bg-black/40",
-                  isSelected && hasVoted && "ring-2 ring-primary ring-offset-2 ring-offset-black"
-                )}
-              >
-                {/* Button Inner Glow */}
-                {!hasVoted && (
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_center,hsla(var(--primary)/0.2)_0%,transparent_100%)]" />
-                )}
-                
-                <span className="relative z-10 font-semibold">{option?.label || `Path ${choice}`}</span>
-                
-                {/* Description from v0 */}
-                {option?.description && (
-                  <span className="relative z-10 text-sm font-sans text-white/60 mt-2 text-center">
-                    {option.description}
-                  </span>
-                )}
-
-                {/* Vote percentage display from v0 */}
-                {hasVoted && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="mt-3 text-2xl font-mono font-bold"
+                return (
+                  <button
+                    key={ choice }
+                    onClick={ () => onVote(choice) }
+                    className={ cn(
+                      "relative group py-4 px-6 rounded-xl font-serif text-xl border-2 transition-all duration-300 overflow-hidden flex flex-col items-center",
+                      "border-primary/30 text-primary hover:border-primary hover:bg-primary/10 active:scale-95 bg-black/40"
+                    ) }
                   >
-                    {percentage}%
-                  </motion.div>
-                )}
-              </button>
-            );
-          })}
+                    {/* Button Inner Glow */ }
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_center,hsla(var(--primary)/0.2)_0%,transparent_100%)]" />
+
+                    <span className="relative z-10 font-semibold">{ option?.label || `Path ${choice}` }</span>
+
+                    { option?.description && (
+                      <span className="relative z-10 text-sm font-sans text-white/60 mt-2 text-center">
+                        { option.description }
+                      </span>
+                    ) }
+                  </button>
+                );
+              }) }
+            </motion.div>
+          ) : (
+            <motion.div
+                key="toast"
+                initial={ { opacity: 0, y: 20, scale: 0.9 } }
+                animate={ { opacity: 1, y: 0, scale: 1 } }
+                className="flex justify-center"
+              >
+              <div className="bg-primary/10 backdrop-blur-md border border-primary/40 px-8 py-4 rounded-2xl shadow-[0_0_30px_rgba(var(--primary-rgb),0.2)] flex flex-col items-center gap-1 group">
+                <span className="text-primary/60 text-xs font-medium tracking-widest uppercase">Your Choice</span>
+                <span className="text-primary text-2xl font-serif font-bold tracking-tight">
+                  { selectedChoice === 'A' ? (optionA?.label || 'Path A') : (optionB?.label || 'Path B') }
+                </span>
+                <div className="mt-2 flex items-center gap-4 w-full">
+                  <div className="h-px flex-1 bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+                  <span className="text-primary/80 font-mono text-lg font-bold">
+                    { selectedChoice === 'A' ? percentA : percentB }%
+                  </span>
+                  <div className="h-px flex-1 bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+                </div>
+              </div>
+            </motion.div>
+          ) }
         </motion.div>
       ) }
 

@@ -80,12 +80,16 @@ cp .env.example .env
 - **Periodic Decision Phases** — Story choices occur every 3–4 turns (randomized), allowing for longer narrative arcs between reader decisions.
 - **Proactive Branch Generation** — Both option A and option B storyblocks (and images) are pregenerated during reading phases, so transitions are instant.
 - **Scheduled Story Sessions** — The game loop now only runs during active sessions. Infrastructure includes a `sessions` table for time-gated narrative events.
+- **Automated Lifecycle Notifications** — Strategic multi-channel retention system:
+    - **Weekly Email Briefing**: Monday morning habit reinforcement with the week's schedule.
+    - **5-Minute Push Warning**: Urgent "Go-Time" alerts to minimize attendance leak.
 - **Session Resolution Phase** — Sessions end with a dedicated `resolution` phase where the AI generates a dramatic cliffhanger or intriguing ending, ensuringstories don't just cut off abruptly.
-- **Automated Session Scheduling** — Integrated a recurring scheduler that automatically seeds daily story sessions (Sci-Fi and Mystery) if none are scheduled, ensuring constant content availability.
-- **Admin Session Management** — Dedicated REST API for creating, listing, and cancelling sessions, allowing for precise control over the daily broadcast.
-- **Calendar Reminders (ICS)** — Public endpoint to generate and download RFC 5545 compliant `.ics` calendar files, complete with 15-minute alerts.
+- **Automated Session Scheduling** — Integrated a recurring scheduler that automatically seeds daily story sessions (Sci-Fi and Mystery) if none are scheduled.
+- **Admin & Debug Security** — Token-based protection (`x-admin-token`) for all sensitive admin management and debug endpoints.
+- **Admin Session Management** — Dedicated REST API for creating, listing, and cancelling sessions.
+- **Calendar Reminders (ICS)** — Public endpoint to generate and download RFC 5545 compliant `.ics` calendar files.
 - **Client Session Experience** — An `UpcomingSession` page displays event details and countdowns, with automatic real-time redirection to the `LiveEbook` when a session begins.
-- **Debug Tools** — A hidden debug overlay (triggered via `?debug=true`) allows developers to force session resolution for instant verification of cliffhanger generation.
+- **Debug Tools** — A hidden debug overlay (triggered via `?debug=true&token=...`) allows developers to force session resolution for instant verification.
 - **Live Chat** — Real-time chat alongside the story per channel.
 - **Real-time Syncing** — WebSockets sync votes, chat messages, and the countdown timer simultaneously.
 - **Multi-Channel** — Two parallel story channels (`scifi`, `mystery`) with obfuscated channel IDs for URLs.
@@ -310,7 +314,7 @@ React SPA with Vite, Tailwind CSS, and Radix UI primitives. Key components:
 
 - **LiveEbook** — Main story display with cinematic centered layout
 - **Storyblock** — Individual story block with title, content, and image
-- **DecisionPhase** — Voting UI with options A/B and live vote percentages
+- **DecisionPhase** — Dynamic voting UI that unmounts options after selection and displays a persistent choice toast with live percentages.
 - **LiveChat** — Real-time chat panel alongside the story
 
 Routing handled by `wouter`. State management via `@tanstack/react-query` for REST and a custom `useWebSocket` hook for real-time sync.
@@ -361,11 +365,13 @@ npm test server/ai.test.ts
 | `server/storage.test.ts` | 6 | DB access, block count, sequence retrieval |
 | `server/session-storage.test.ts`| 7 | Session CRUD and status management |
 | `server/ics.test.ts` | 4 | iCalendar date formatting and VEVENT generation |
+| `server/notifications.test.ts` | 2 | 5-minute push warns and weekly email dispatch |
+| `server/admin-security.test.ts`| 4 | Token-based protection for REST and WS |
 | `server/game-loop.test.ts` | 17 | Phase transitions, resolution, votes, fallbacks, dual timers |
 | `server/session-scheduler.test.ts`| 5 | Recurrent scheduling and game loop start/stop transitions |
 | `server/session-routes.test.ts` | 7 | REST API integration for sessions |
 | `server/index.test.ts` | 1 | Server module loading |
-| `client/…/DecisionPhase.test.tsx` | 8 | Voting UI, resolution state, timer rendering |
+| `client/…/DecisionPhase.test.tsx` | 10 | Voting UI, resolution state, choice persistence, toast rendering |
 | `client/…/UpcomingSession.test.tsx`| 6 | Session details, countdown, reminders, date safety |
 | `client/…/LiveEbook.test.tsx` | 3 | Session-based redirection gating |
 | `client/…/Storyblock.test.tsx` | 3 | Story display component |

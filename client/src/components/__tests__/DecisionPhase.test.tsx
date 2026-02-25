@@ -203,4 +203,31 @@ describe('DecisionPhase', () => {
     );
     expect(bar).toHaveAttribute('aria-valuenow', '0');
   });
+
+  it('unmounts options and shows choice toast after voting', () => {
+    render(
+      <DecisionPhase
+        phase="voting"
+        timeRemaining={ 30 }
+        timeToDecision={ 30 }
+        initialTimeToDecision={ 40 }
+        turnsToNextChoice={ 0 }
+        hasVoted={ true }
+        onVote={ mockOnVote }
+        selectedChoice="A"
+        optionA={ { label: 'Path A', description: 'Description A' } }
+        optionB={ { label: 'Path B', description: 'Description B' } }
+        voteResults={ { A: 10, B: 5 } }
+      />
+    );
+
+    // Options should be unmounted
+    expect(screen.queryByText('Path B')).not.toBeInTheDocument();
+
+    // Toast should be shown
+    expect(screen.getByText('Your Choice')).toBeInTheDocument();
+    expect(screen.getByText('Path A')).toBeInTheDocument();
+    // 10 / 15 = 67%
+    expect(screen.getByText('67%')).toBeInTheDocument();
+  });
 });
