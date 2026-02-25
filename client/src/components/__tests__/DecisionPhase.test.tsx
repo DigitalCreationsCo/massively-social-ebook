@@ -134,4 +134,56 @@ describe('DecisionPhase', () => {
 
     expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
+
+  it('progress bar fills up from 0% to 100% as timeToDecision decreases', () => {
+    // Start of cycle: timeToDecision = initialTimeToDecision = 100
+    // progress = 100 - (100 / 100 * 100) = 0%
+    const { rerender } = render(
+      <DecisionPhase
+        phase="reading"
+        timeRemaining={ 100 }
+        timeToDecision={ 100 }
+        initialTimeToDecision={ 100 }
+        turnsToNextChoice={ 1 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    let bar = screen.getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '0');
+
+    // Halfway: timeToDecision = 50
+    // progress = 100 - (50 / 100 * 100) = 50%
+    rerender(
+      <DecisionPhase
+        phase="reading"
+        timeRemaining={ 50 }
+        timeToDecision={ 50 }
+        initialTimeToDecision={ 100 }
+        turnsToNextChoice={ 1 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+    expect(bar).toHaveAttribute('aria-valuenow', '50');
+
+    // End: timeToDecision = 0
+    // progress = 100 - (0 / 100 * 100) = 100%
+    rerender(
+      <DecisionPhase
+        phase="reading"
+        timeRemaining={ 0 }
+        timeToDecision={ 0 }
+        initialTimeToDecision={ 100 }
+        turnsToNextChoice={ 1 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+    expect(bar).toHaveAttribute('aria-valuenow', '100');
+  });
 });
