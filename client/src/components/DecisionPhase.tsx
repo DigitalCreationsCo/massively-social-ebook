@@ -31,8 +31,10 @@ export function DecisionPhase({
   initialTimeToDecision
 }: DecisionPhaseProps) {
   // Progress bar represents time to next decision, not next storyblock
-  const maxDecisionTime = phase === 'voting' ? 40 : Math.max(initialTimeToDecision, 1);
-  const progressPercent = Math.min(100, Math.max(0, (timeToDecision / maxDecisionTime) * 100));
+  // Robust fallback: if initialTimeToDecision is 0, use timeToDecision to avoid 100% stuck state
+  const maxDecisionTime = phase === 'voting' ? 40 : Math.max(initialTimeToDecision, timeToDecision, 1);
+  // Calculate progress as filling (0% -> 100%)
+  const progressPercent = Math.min(100, Math.max(0, 100 - (timeToDecision / maxDecisionTime) * 100));
 
   // Calculate vote percentages
   const totalVotes = voteResults.A + voteResults.B;
@@ -132,6 +134,10 @@ export function DecisionPhase({
       {/* Progress Bar */ }
       <div className="w-full h-1.5 bg-white/10 overflow-hidden">
         <motion.div
+          role="progressbar"
+          aria-valuenow={ Math.round(progressPercent) }
+          aria-valuemin={ 0 }
+          aria-valuemax={ 100 }
           className={ cn("h-full", phase === 'reading' ? "bg-white/30" : "bg-primary") }
           initial={ { width: `${progressPercent}%` } }
           animate={ { width: `${progressPercent}%` } }
