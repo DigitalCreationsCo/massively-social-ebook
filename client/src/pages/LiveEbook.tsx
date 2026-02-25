@@ -4,6 +4,7 @@ import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
 import { DecisionPhase } from '@/components/DecisionPhase';
 import { LiveChat } from '@/components/LiveChat';
+import { DebugTools } from '@/components/DebugTools';
 import { Loader2, WifiOff, Users, Radio } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -158,6 +159,7 @@ export default function LiveEbook() {
         onToggle={ handleToggleChat }
       />
 
+      <DebugTools channelId={ selectedChannel } />
     </main >
   );
 }

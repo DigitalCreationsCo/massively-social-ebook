@@ -4,26 +4,27 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { generateStoryBlock, generateStoryImage } from "./ai";
 import { api } from "@shared/routes";
-import { WS_EVENTS, type WsMessage, type Block } from "@shared/schema";
+import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/schema";
 import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
+import { generateICS } from "./ics";
 
 interface PendingBlock {
   promise: Promise<{
     title: string;
     content: string;
     imageUrl: string;
-    optionA: unknown;
-    optionB: unknown;
+    optionA?: unknown;
+    optionB?: unknown;
   }>;
 }
 
 // Phase duration constants (milliseconds)
-export const NARRATIVE_TURN_MS = 80_000;
+export const NARRATIVE_TURN_MS = 40_000;
 export const VOTING_PHASE_MS = 40_000;
-export const POST_VOTE_READING_MS = 120_000;
+export const POST_VOTE_READING_MS = 40_000;
 
 interface ChannelState {
-  currentPhase: 'reading' | 'voting';
+  currentPhase: 'reading' | 'voting' | 'resolution';
   phaseEndsAt: number;
   decisionEndsAt: number;
   initialTimeToDecision: number;
@@ -31,6 +32,7 @@ interface ChannelState {
   nextBlockA?: PendingBlock;
   nextBlockB?: PendingBlock;
   turnsToNextChoice: number;
+  activeSession?: Session;
 }
 
 /** Compute wall-clock time when the next decision (voting) phase begins. */
@@ -86,63 +88,143 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
   }
 }
 
+async function startSessionForChannel(channelId: Channel, session: Session, broadcast: (channelId: Channel, message: WsMessage) => void) {
+  console.log(`[Session] Starting session "${session.title}" for channel ${channelId}`);
+  const st = state[ channelId ];
+  st.activeSession = session;
+  
+  // Seed or resume block
+  let block = await storage.getCurrentBlock(channelId);
+  if (!block) {
+    const initialPrompt = channelId === 'scifi'
+      ? "We are a crew onboard a spaceship to Mars."
+      : "A detective is following a lead in a rainy alleyway.";
+
+    try {
+      const nextContent = await generateStoryBlock(channelId, initialPrompt, false);
+      let imageUrl: string;
+      try {
+        imageUrl = await generateStoryImage(nextContent.content);
+      } catch (imageErr) {
+        imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+      }
+      block = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+    } catch (err) {
+      block = await storage.createBlock({
+        channelId,
+        title: "System Reboot",
+        content: "The story system encountered an anomaly and is attempting to reboot.",
+        imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+        optionA: { label: "Reboot", description: "Attempt a system reboot." },
+        optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
+      });
+    }
+  }
+
+  st.currentBlock = block;
+  st.currentPhase = 'reading';
+  st.phaseEndsAt = Date.now() + POST_VOTE_READING_MS;
+  st.turnsToNextChoice = getRandomTurns();
+  st.decisionEndsAt = computeDecisionEndsAt(st);
+  st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - Date.now());
+
+  pregenerateOption(channelId, st, 'A');
+  pregenerateOption(channelId, st, 'B');
+
+  await storage.updateSessionStatus(session.id, 'active');
+
+  broadcast(channelId, {
+    type: 'SESSION_STATUS',
+    payload: { status: 'active', session }
+  });
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
-  // Seed initial blocks if DB is empty for channels
+
+  // Static state seeding (now managed by sessions, but we can keep basic init)
   for (const channelId of CHANNELS) {
-    let block = await storage.getCurrentBlock(channelId);
-    if (!block) {
-      const initialPrompt = channelId === 'scifi'
-        ? "We are a crew onboard a spaceship to Mars."
-        : "A detective is following a lead in a rainy alleyway.";
-
-      try {
-        const nextContent = await generateStoryBlock(channelId, initialPrompt);
-        let imageUrl: string;
-        try {
-          imageUrl = await generateStoryImage(nextContent.content);
-        } catch (imageErr) {
-          console.warn(`Initial seed image generation failed for ${channelId}, using fallback:`, imageErr);
-          imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
-        }
-
-        block = await storage.createBlock({
-          channelId,
-          ...nextContent,
-          imageUrl
-        });
-      } catch (err) {
-        console.error("Failed initial seed:", err);
-      // Fallback for robust error handling
-        block = await storage.createBlock({
-          channelId,
-          title: "System Reboot",
-          content: "The story system encountered an anomaly and is attempting to reboot.",
-          imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-          optionA: { label: "Reboot", description: "Attempt a system reboot." },
-          optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
-        });
-      }
+    const active = await storage.getActiveSession(channelId);
+    if (active) {
+      state[ channelId ].activeSession = active;
+      state[ channelId ].currentBlock = await storage.getCurrentBlock(channelId);
+      state[ channelId ].decisionEndsAt = computeDecisionEndsAt(state[ channelId ]);
+      state[ channelId ].initialTimeToDecision = Math.max(0, state[ channelId ].decisionEndsAt - Date.now());
+      pregenerateOption(channelId, state[ channelId ], 'A');
+      pregenerateOption(channelId, state[ channelId ], 'B');
     }
-    state[channelId].currentBlock = block;
-    state[ channelId ].turnsToNextChoice = getRandomTurns();
-    state[ channelId ].decisionEndsAt = computeDecisionEndsAt(state[ channelId ]);
-    state[ channelId ].initialTimeToDecision = Math.max(0, state[ channelId ].decisionEndsAt - Date.now());
-    // Kick off background generation for the initial block
-    pregenerateOption(channelId, state[ channelId ], 'A');
-    pregenerateOption(channelId, state[ channelId ], 'B');
   }
+
+  // Session Endpoints
+  app.get(api.sessions.next.path, async (req, res) => {
+    const rawChannelId = req.query.channelId as string;
+    const channelId = getRealChannelId(rawChannelId) as Channel;
+    // Check active first, then next
+    const active = await storage.getActiveSession(channelId);
+    if (active) return res.json(active);
+    const next = await storage.getNextSession(channelId);
+    res.json(next || null);
+  });
+
+  app.post(api.sessions.reminder.path, async (req, res) => {
+    const { sessionId } = req.body;
+    const sessionList = await storage.listSessions();
+    const session = sessionList.find(s => s.id === sessionId);
+    if (!session) return res.status(404).json({ message: "Session not found" });
+
+    const ics = generateICS(session);
+    res.setHeader('Content-Type', 'text/calendar');
+    res.setHeader('Content-Disposition', `attachment; filename="session-${sessionId}.ics"`);
+    res.send(ics);
+  });
+
+  // Admin Endpoints
+  app.get(api.admin.sessions.list.path, async (req, res) => {
+    const sessions = await storage.listSessions();
+    res.json(sessions);
+  });
+
+  app.post(api.admin.sessions.create.path, async (req, res) => {
+    const { channelId, title, description, scheduledStart, scheduledEnd } = req.body;
+    const session = await storage.createSession({
+      channelId,
+      title,
+      description,
+      scheduledStart: new Date(scheduledStart),
+      scheduledEnd: new Date(scheduledEnd)
+    });
+    res.status(201).json(session);
+  });
+
+  app.patch(api.admin.sessions.cancel.path, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const session = await storage.cancelSession(id);
+    res.json(session);
+  });
+
+  app.post('/api/debug/sessions/resolve', async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (st && st.activeSession) {
+      console.log(`[Debug] Forcing resolution for channel ${channelId}`);
+      st.activeSession.scheduledEnd = new Date();
+      res.json({ success: true, message: "Resolution triggered" });
+    } else {
+      res.status(404).json({ success: false, message: "No active session for this channel" });
+    }
+  });
 
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
     const rawChannelId = req.query.channelId as string;
     const channelId = getRealChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
-    if (!channelState || !channelState.currentBlock) {
-      return res.status(404).json({ message: "No block found" });
+    if (!channelState || !channelState.activeSession || !channelState.currentBlock) {
+      return res.status(404).json({ message: "No active session" });
     }
     
     const now = Date.now();
@@ -193,7 +275,7 @@ export async function registerRoutes(
     const channelState = state[channelId];
 
     // Send initial state on connect
-    if (channelState && channelState.currentBlock) {
+    if (channelState && channelState.activeSession && channelState.currentBlock) {
       const connectNow = Date.now();
       ws.send(JSON.stringify({
         type: 'SYNC_STATE',
@@ -207,6 +289,15 @@ export async function registerRoutes(
           turnsToNextChoice: channelState.turnsToNextChoice
         }
       }));
+    } else {
+      // If no active session, send session status info
+      (async () => {
+        const next = await storage.getNextSession(channelId);
+        ws.send(JSON.stringify({
+          type: 'SESSION_STATUS',
+          payload: { status: 'scheduled', session: next || null }
+        }));
+      })();
     }
 
     ws.on('message', async (data) => {
@@ -269,6 +360,51 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
     const st = state[ channelId ];
     if (!st) continue;
 
+    // Session Lifecycle Management
+    if (!st.activeSession) {
+      const next = await storage.getNextSession(channelId);
+      if (next && now >= next.scheduledStart.getTime()) {
+        await startSessionForChannel(channelId, next, broadcast);
+      }
+      continue; // Skip game loop if no session is active
+    } else if (st.currentPhase !== 'resolution' && now >= st.activeSession.scheduledEnd.getTime()) {
+      // Trigger resolution phase instead of abrupt end
+      console.log(`[Session] Session "${st.activeSession.title}" for channel ${channelId} reaching scheduled end. Entering resolution.`);
+      st.currentPhase = 'resolution';
+      st.phaseEndsAt = now + NARRATIVE_TURN_MS;
+      st.turnsToNextChoice = 0;
+      st.decisionEndsAt = st.phaseEndsAt;
+      st.initialTimeToDecision = 0;
+
+      if (st.currentBlock) {
+        try {
+          const previousContext = `Previous event: ${st.currentBlock.content}`;
+          const nextContent = await generateStoryBlock(channelId, previousContext, true);
+          let imageUrl;
+          try {
+            imageUrl = await generateStoryImage(nextContent.content);
+          } catch (err) {
+            imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+          }
+          st.currentBlock = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+          console.log(`[GameLoop] ${channelId}: Resolution block generated: ${st.currentBlock.id}`);
+        } catch (err) {
+          console.error("Failed to generate resolution block:", err);
+        }
+      }
+    } else if (st.currentPhase === 'resolution' && now >= st.phaseEndsAt) {
+      console.log(`[Session] Ending session "${st.activeSession.title}" for channel ${channelId} after resolution.`);
+      await storage.updateSessionStatus(st.activeSession.id, 'completed');
+      const finishedSession = st.activeSession;
+      st.activeSession = undefined;
+      broadcast(channelId, {
+        type: 'SESSION_STATUS',
+        payload: { status: 'completed', session: finishedSession }
+      });
+      continue;
+    }
+
+    // Normal Game Loop (only runs if activeSession exists)
     if (now >= st.phaseEndsAt) {
       if (st.currentPhase === 'reading') {
         if (st.turnsToNextChoice > 0) {
@@ -276,10 +412,11 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.turnsToNextChoice--;
           st.phaseEndsAt = now + NARRATIVE_TURN_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
-          // CRITICAL FIX: Update initialTimeToDecision so the progress bar is accurate for the current narrative sequence
-          st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
+          // Progress bar logic: Do NOT update initialTimeToDecision during narrative turns.
+          // This ensures the progress bar counts down smoothly from the start of the reading sequence
+          // until the decision phase begins.
 
-          console.log(`[GameLoop] ${channelId}: Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Total decision cycle time: ${st.initialTimeToDecision / 1000}s`);
+          console.log(`[GameLoop] ${channelId}: Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`);
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {

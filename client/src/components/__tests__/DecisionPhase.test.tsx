@@ -78,10 +78,9 @@ describe('DecisionPhase', () => {
 
     // timeToDecision = 165s = 2:45
     expect(screen.getByText('Next choice in 2:45')).toBeInTheDocument();
-    expect(screen.getByText('Narrative Evolution')).toBeInTheDocument();
   });
 
-  it('displays "Decision Active" during voting phase with turnsToNextChoice 0', () => {
+  it('displays "Decision" during voting phase with turnsToNextChoice 0', () => {
     render(
       <DecisionPhase
         phase="voting"
@@ -95,7 +94,25 @@ describe('DecisionPhase', () => {
       />
     );
 
-    expect(screen.getByText('Decision Active')).toBeInTheDocument();
+    expect(screen.getByText('Decision')).toBeInTheDocument();
+  });
+
+  it('displays "Session Ending" during resolution phase', () => {
+    render(
+      <DecisionPhase
+        phase="resolution"
+        timeRemaining={ 40 }
+        timeToDecision={ 40 }
+        initialTimeToDecision={ 0 }
+        turnsToNextChoice={ 0 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    expect(screen.getByText('Session Ending')).toBeInTheDocument();
+    expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
 
   it('progress bar uses timeToDecision, not timeRemaining', () => {

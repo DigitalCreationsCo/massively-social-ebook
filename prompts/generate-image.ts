@@ -1,1 +1,0 @@
-export const generateImageInstructions = ({ description }: { description: string; }) => `${description} Post-modern style. Hi-res stock footage.`;
