@@ -135,9 +135,9 @@ describe('DecisionPhase', () => {
     expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
 
-  it('progress bar fills up from 0% to 100% as timeToDecision decreases', () => {
+  it('progress bar empties from 100% to 0% as timeToDecision decreases', () => {
     // Start of cycle: timeToDecision = initialTimeToDecision = 100
-    // progress = 100 - (100 / 100 * 100) = 0%
+    // progress = (100 / 100 * 100) = 100%
     const { rerender } = render(
       <DecisionPhase
         phase="reading"
@@ -152,10 +152,10 @@ describe('DecisionPhase', () => {
     );
 
     let bar = screen.getByRole('progressbar');
-    expect(bar).toHaveAttribute('aria-valuenow', '0');
+    expect(bar).toHaveAttribute('aria-valuenow', '100');
 
     // Halfway: timeToDecision = 50
-    // progress = 100 - (50 / 100 * 100) = 50%
+    // progress = (50 / 100 * 100) = 50%
     rerender(
       <DecisionPhase
         phase="reading"
@@ -171,7 +171,7 @@ describe('DecisionPhase', () => {
     expect(bar).toHaveAttribute('aria-valuenow', '50');
 
     // End: timeToDecision = 0
-    // progress = 100 - (0 / 100 * 100) = 100%
+    // progress = (0 / 100 * 100) = 0%
     rerender(
       <DecisionPhase
         phase="reading"
@@ -184,6 +184,6 @@ describe('DecisionPhase', () => {
         voteResults={ mockVoteResults }
       />
     );
-    expect(bar).toHaveAttribute('aria-valuenow', '100');
+    expect(bar).toHaveAttribute('aria-valuenow', '0');
   });
 });
