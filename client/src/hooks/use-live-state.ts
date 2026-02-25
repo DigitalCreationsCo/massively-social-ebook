@@ -24,6 +24,7 @@ export interface StoryState {
   phase: Phase;
   timeRemaining: number;
   timeToNextDecision: number;
+  initialTimeToNextDecision: number;
   turnsToNextChoice: number;
 }
 
@@ -62,6 +63,7 @@ export function useLiveState(channelId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
   const [ localTimeToDecision, setLocalTimeToDecision ] = useState(0);
+  const [ localInitialTimeToDecision, setLocalInitialTimeToDecision ] = useState(0);
   const [ localTurnsToNextChoice, setLocalTurnsToNextChoice ] = useState(0);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
@@ -93,7 +95,10 @@ export function useLiveState(channelId: string) {
     if (currentBlock?.timeToNextDecision !== undefined) {
       setLocalTimeToDecision(Math.floor(currentBlock.timeToNextDecision / 1000));
     }
-  }, [ currentBlock?.timeRemaining, currentBlock?.timeToNextDecision, currentBlock?.phase, currentBlock?.id ]);
+    if (currentBlock?.initialTimeToNextDecision !== undefined) {
+      setLocalInitialTimeToDecision(Math.floor(currentBlock.initialTimeToNextDecision / 1000));
+    }
+  }, [ currentBlock?.timeRemaining, currentBlock?.timeToNextDecision, currentBlock?.initialTimeToNextDecision, currentBlock?.phase, currentBlock?.id ]);
 
   // Local countdown interval for both timers
   useEffect(() => {
@@ -147,6 +152,9 @@ export function useLiveState(channelId: string) {
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeToNextDecision !== undefined) {
               setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
+            }
+            if (payload.initialTimeToNextDecision !== undefined) {
+              setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
             }
           } 
           else if (message.type === 'CHAT_MESSAGE') {
@@ -231,6 +239,7 @@ export function useLiveState(channelId: string) {
     currentBlock,
     localTimeRemaining,
     localTimeToDecision,
+    localInitialTimeToDecision,
     localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,

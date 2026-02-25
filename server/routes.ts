@@ -26,6 +26,7 @@ interface ChannelState {
   currentPhase: 'reading' | 'voting';
   phaseEndsAt: number;
   decisionEndsAt: number;
+  initialTimeToDecision: number;
   currentBlock: Block | undefined;
   nextBlockA?: PendingBlock;
   nextBlockB?: PendingBlock;
@@ -39,8 +40,8 @@ export function computeDecisionEndsAt(st: ChannelState): number {
 }
 
 export const state: Record<Channel, ChannelState> = {
-  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, currentBlock: undefined, turnsToNextChoice: 3 },
-  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, currentBlock: undefined, turnsToNextChoice: 3 }
+  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, initialTimeToDecision: 0, currentBlock: undefined, turnsToNextChoice: 3 },
+  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, initialTimeToDecision: 0, currentBlock: undefined, turnsToNextChoice: 3 }
 };
 
 function getRandomTurns() {
@@ -129,6 +130,7 @@ export async function registerRoutes(
     state[channelId].currentBlock = block;
     state[ channelId ].turnsToNextChoice = getRandomTurns();
     state[ channelId ].decisionEndsAt = computeDecisionEndsAt(state[ channelId ]);
+    state[ channelId ].initialTimeToDecision = Math.max(0, state[ channelId ].decisionEndsAt - Date.now());
     // Kick off background generation for the initial block
     pregenerateOption(channelId, state[ channelId ], 'A');
     pregenerateOption(channelId, state[ channelId ], 'B');
@@ -150,6 +152,7 @@ export async function registerRoutes(
       phase: channelState.currentPhase,
       timeRemaining: Math.max(0, channelState.phaseEndsAt - now),
       timeToNextDecision: Math.max(0, channelState.decisionEndsAt - now),
+      initialTimeToNextDecision: channelState.initialTimeToDecision,
       turnsToNextChoice: channelState.turnsToNextChoice
     });
   });
@@ -200,6 +203,7 @@ export async function registerRoutes(
           phase: channelState.currentPhase,
           timeRemaining: Math.max(0, channelState.phaseEndsAt - connectNow),
           timeToNextDecision: Math.max(0, channelState.decisionEndsAt - connectNow),
+          initialTimeToNextDecision: channelState.initialTimeToDecision,
           turnsToNextChoice: channelState.turnsToNextChoice
         }
       }));
@@ -318,6 +322,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.phaseEndsAt = now + POST_VOTE_READING_MS;
         st.turnsToNextChoice = getRandomTurns();
         st.decisionEndsAt = computeDecisionEndsAt(st);
+        st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);
@@ -382,6 +387,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             phase: st.currentPhase,
             timeRemaining: Math.max(0, st.phaseEndsAt - now),
             timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
+            initialTimeToNextDecision: st.initialTimeToDecision,
             turnsToNextChoice: st.turnsToNextChoice
           }
         });
@@ -397,6 +403,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             phase: st.currentPhase,
             timeRemaining: Math.max(0, st.phaseEndsAt - now),
             timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
+            initialTimeToNextDecision: st.initialTimeToDecision,
             turnsToNextChoice: st.turnsToNextChoice
           }
         });

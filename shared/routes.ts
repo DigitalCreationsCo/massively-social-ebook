@@ -44,7 +44,10 @@ export const api = {
           imageUrl: z.string().nullable(),
           createdAt: z.string(),
           phase: z.enum(['reading', 'voting']),
-          timeRemaining: z.number()
+          timeRemaining: z.number(),
+          timeToNextDecision: z.number(),
+          initialTimeToNextDecision: z.number(),
+          turnsToNextChoice: z.number()
         }),
       }
     }

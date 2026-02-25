@@ -7,6 +7,7 @@ interface DecisionPhaseProps {
   phase?: 'reading' | 'voting';
   timeRemaining: number;
   timeToDecision: number;
+  initialTimeToDecision: number;
   turnsToNextChoice: number;
   hasVoted: boolean;
   onVote: (choice: 'A' | 'B') => void;
@@ -26,10 +27,11 @@ export function DecisionPhase({
   optionA,
   optionB,
   voteResults,
-  selectedChoice
+  selectedChoice,
+  initialTimeToDecision
 }: DecisionPhaseProps) {
   // Progress bar represents time to next decision, not next storyblock
-  const maxDecisionTime = phase === 'voting' ? 40 : Math.max(timeToDecision, 1);
+  const maxDecisionTime = phase === 'voting' ? 40 : Math.max(initialTimeToDecision, 1);
   const progressPercent = Math.min(100, Math.max(0, (timeToDecision / maxDecisionTime) * 100));
 
   // Calculate vote percentages
