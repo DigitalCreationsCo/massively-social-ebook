@@ -130,7 +130,9 @@ export function useLiveState(channelId: string) {
   // WebSocket Connection
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?channelId=${obfId}`;
+    const wsUrl = import.meta.env.VITE_WS_URL 
+      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${obfId}`
+      : `${protocol}//${window.location.host}/ws?channelId=${obfId}`;
     
     const connect = () => {
       const socket = new WebSocket(wsUrl);
