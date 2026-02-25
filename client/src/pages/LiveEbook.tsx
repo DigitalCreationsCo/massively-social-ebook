@@ -127,6 +127,7 @@ export default function LiveEbook() {
           phase={ currentBlock?.phase }
           timeRemaining={ localTimeRemaining }
           timeToDecision={ localTimeToDecision }
+          initialTimeToDecision={ localInitialTimeToDecision }
           turnsToNextChoice={ localTurnsToNextChoice }
           hasVoted={ hasVotedCurrent }
           onVote={ submitVote }

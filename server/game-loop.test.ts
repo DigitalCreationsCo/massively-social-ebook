@@ -27,6 +27,7 @@ describe('computeDecisionEndsAt', () => {
             currentPhase: 'voting' as const,
             phaseEndsAt: 5000,
             decisionEndsAt: 0,
+            initialTimeToDecision: 0,
             currentBlock: undefined,
             turnsToNextChoice: 2,
         };
@@ -38,6 +39,7 @@ describe('computeDecisionEndsAt', () => {
             currentPhase: 'reading' as const,
             phaseEndsAt: 10000,
             decisionEndsAt: 0,
+            initialTimeToDecision: 0,
             currentBlock: undefined,
             turnsToNextChoice: 3,
         };
@@ -49,6 +51,7 @@ describe('computeDecisionEndsAt', () => {
             currentPhase: 'reading' as const,
             phaseEndsAt: 10000,
             decisionEndsAt: 0,
+            initialTimeToDecision: 0,
             currentBlock: undefined,
             turnsToNextChoice: 0,
         };
@@ -67,6 +70,7 @@ describe('handleGameLoopTick', () => {
             currentPhase: 'reading',
             phaseEndsAt: now + 1000,
             decisionEndsAt: now + 1000 + 2 * NARRATIVE_TURN_MS,
+            initialTimeToDecision: 2 * NARRATIVE_TURN_MS + 1000,
             currentBlock: { id: 1, content: 'Test content', title: 'Test', channelId: 'scifi', createdAt: new Date() } as any,
             turnsToNextChoice: 2,
         };
@@ -198,6 +202,7 @@ describe('handleGameLoopTick', () => {
             payload: expect.objectContaining({
                 timeRemaining: 5000,
                 timeToNextDecision: 5000 + 2 * NARRATIVE_TURN_MS,
+                initialTimeToNextDecision: 2 * NARRATIVE_TURN_MS + 1000,
             })
         }));
     });
