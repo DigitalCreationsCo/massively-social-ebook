@@ -6,7 +6,9 @@ import { generateStoryBlock, generateStoryImage } from "./ai";
 import { api } from "@shared/routes";
 import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/schema";
 import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
-import { generateICS } from "./ics";
+import { trackUserEmail } from "./analytics";
+import { CalendarService } from "./calendar";
+import { isAdmin } from "./middleware/auth";
 
 interface PendingBlock {
   promise: Promise<{
@@ -169,24 +171,36 @@ export async function registerRoutes(
   });
 
   app.post(api.sessions.reminder.path, async (req, res) => {
-    const { sessionId } = req.body;
+    const { sessionId, email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
     const sessionList = await storage.listSessions();
     const session = sessionList.find(s => s.id === sessionId);
     if (!session) return res.status(404).json({ message: "Session not found" });
 
-    const ics = generateICS(session);
-    res.setHeader('Content-Type', 'text/calendar');
-    res.setHeader('Content-Disposition', `attachment; filename="session-${sessionId}.ics"`);
-    res.send(ics);
+    // 1. Capture for Analytics/CRM
+    await trackUserEmail(email, 'session_reminder');
+
+    // 2. Add to Calendar (Google + Outlook)
+    try {
+      await Promise.all([
+        CalendarService.addToGoogle(email, session),
+        CalendarService.addToOutlook(email, session)
+      ]);
+      res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
+    } catch (err) {
+      console.error("[Calendar] Failed to schedule reminders:", err);
+      res.status(500).json({ message: "Failed to schedule calendar reminders" });
+    }
   });
 
   // Admin Endpoints
-  app.get(api.admin.sessions.list.path, async (req, res) => {
+  app.get(api.admin.sessions.list.path, isAdmin, async (req, res) => {
     const sessions = await storage.listSessions();
     res.json(sessions);
   });
 
-  app.post(api.admin.sessions.create.path, async (req, res) => {
+  app.post(api.admin.sessions.create.path, isAdmin, async (req, res) => {
     const { channelId, title, description, scheduledStart, scheduledEnd } = req.body;
     const session = await storage.createSession({
       channelId,
@@ -198,13 +212,13 @@ export async function registerRoutes(
     res.status(201).json(session);
   });
 
-  app.patch(api.admin.sessions.cancel.path, async (req, res) => {
+  app.patch(api.admin.sessions.cancel.path, isAdmin, async (req, res) => {
     const id = parseInt(req.params.id);
     const session = await storage.cancelSession(id);
     res.json(session);
   });
 
-  app.post('/api/debug/sessions/resolve', async (req, res) => {
+  app.post('/api/debug/sessions/resolve', isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
@@ -269,6 +283,17 @@ export async function registerRoutes(
     // Determine channel from URL query string if possible, default to mystery
     const url = new URL(req.url || '', `http://${req.headers.host}`);
     const rawChannelId = url.searchParams.get('channelId');
+    const debug = url.searchParams.get('debug') === 'true';
+    const token = url.searchParams.get('token');
+
+    if (debug) {
+      if (token !== process.env.ADMIN_TOKEN && (process.env.NODE_ENV === 'production' || token !== 'dev-token')) {
+        console.warn(`[WS] Unauthorized debug access attempt for channel ${rawChannelId}`);
+        ws.close(4001, "Unauthorized focus");
+        return;
+      }
+    }
+
     const channelId = getRealChannelId(rawChannelId) as Channel;
     clientChannels.set(ws, channelId);
 

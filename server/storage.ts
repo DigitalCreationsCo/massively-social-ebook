@@ -12,7 +12,10 @@ import {
   type InsertChat,
   type Session,
   type InsertSession,
-  type SessionStatus
+  type SessionStatus,
+  type User,
+  type InsertUser,
+  users
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql } from "drizzle-orm";
 export interface IStorage {
@@ -31,6 +34,9 @@ export interface IStorage {
   updateSessionStatus(id: number, status: SessionStatus): Promise<Session>;
   listSessions(channelId?: string, status?: SessionStatus): Promise<Session[]>;
   cancelSession(id: number): Promise<Session>;
+  // User methods
+  getUsers(): Promise<User[]>;
+  createUser(user: InsertUser): Promise<User>;
 }
 export class DatabaseStorage implements IStorage {
   async getCurrentBlock(channelId: string): Promise<Block | undefined> {
@@ -187,6 +193,17 @@ export class DatabaseStorage implements IStorage {
   async cancelSession(id: number): Promise<Session> {
     console.log(`[Storage] Cancelling session ${id}`);
     return this.updateSessionStatus(id, 'cancelled');
+  }
+
+  // ─── User Methods ──────────────────────────────────────────────────
+
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const [ newUser ] = await db.insert(users).values(user).returning();
+    return newUser;
   }
 }
 export const storage = new DatabaseStorage();

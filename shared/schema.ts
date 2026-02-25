@@ -39,11 +39,18 @@ export const sessions = pgTable("sessions", {
   status: text("status").notNull().default('scheduled'), // scheduled | active | completed | cancelled
   createdAt: timestamp("created_at").defaultNow(),
 });
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").unique(),
+  pushToken: text("push_token"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true });
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 
 export type Block = typeof blocks.$inferSelect;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
@@ -56,6 +63,9 @@ export type InsertChat = z.infer<typeof insertChatSchema>;
 
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<typeof insertSessionSchema>;
+
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
 
 export const WS_EVENTS = {
   SYNC_STATE: 'sync_state',
