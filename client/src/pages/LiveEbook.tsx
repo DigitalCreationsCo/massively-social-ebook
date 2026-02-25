@@ -4,6 +4,7 @@ import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
 import { DecisionPhase } from '@/components/DecisionPhase';
 import { LiveChat } from '@/components/LiveChat';
+import { PushToggle } from "@/components/pwa/PushToggle";
 import { DebugTools } from '@/components/DebugTools';
 import { Loader2, WifiOff, Users, Radio } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -119,12 +120,19 @@ export default function LiveEbook() {
       </div> */}
 
         {/* Live user count from v0 */ }
-        <div className="flex items-center gap-1.5 text-muted-foreground">
+        <div className="flex items-center gap-4">
+          <PushToggle />
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <Users className="size-3.5" />
+            <span className="text-xs font-mono tabular-nums">
+              { viewerCount.toLocaleString() }
+            </span>
+          </div>
+        </div>
           <Users className="size-3.5" />
           <span className="text-xs font-mono tabular-nums">
             { viewerCount.toLocaleString() }
           </span>
-        </div>
       </header>
 
       {/* Pane 1: Cinematic Visuals & Narrative */ }

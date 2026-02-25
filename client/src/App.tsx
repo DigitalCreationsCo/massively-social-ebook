@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
+import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
 
@@ -24,6 +25,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <UpdatePrompt />
         <Router />
       </TooltipProvider>
     </QueryClientProvider>
