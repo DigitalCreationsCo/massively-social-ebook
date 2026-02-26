@@ -227,6 +227,90 @@ export async function registerRoutes(
     res.json(session);
   });
 
+  app.post('/api/debug/sessions/start', isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (st.activeSession) {
+      return res.status(400).json({ success: false, message: "A session is already active for this channel" });
+    }
+
+    // Find next scheduled, or create dummy
+    let session = await storage.getNextSession(channelId);
+    if (!session) {
+      session = await storage.createSession({
+        channelId,
+        title: `Debug Session ${new Date().toISOString()}`,
+        description: "Manually triggered debug session",
+        scheduledStart: new Date(),
+        scheduledEnd: new Date(Date.now() + 3600000) // 1 hour
+      });
+    }
+
+    await startSessionForChannel(channelId, session, (cid, msg) => {
+      // Broadcast helper inside registerRoutes can be used if we closure it, but we can just use the local broadcast
+      const payload = JSON.stringify(msg);
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN && clientChannels.get(client) === cid) {
+          client.send(payload);
+        }
+      });
+    });
+
+    res.json({ success: true, message: "Session started", session });
+  });
+
+  app.post('/api/debug/sessions/skip', isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    console.log(`[Debug] Skipping phase for channel ${channelId}`);
+    st.phaseEndsAt = Date.now(); // Trigger immediate transition on next tick
+    res.json({ success: true, message: "Phase skip triggered" });
+  });
+
+  app.post('/api/debug/sessions/tally', isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    if (st.currentPhase !== 'voting') {
+      return res.status(400).json({ success: false, message: "Not in voting phase" });
+    }
+
+    console.log(`[Debug] Forcing tally for channel ${channelId}`);
+    st.phaseEndsAt = Date.now(); // Trigger end of voting phase
+    res.json({ success: true, message: "Tally forced" });
+  });
+
+  app.post('/api/debug/sessions/narrative', isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    if (st.turnsToNextChoice <= 0) {
+      return res.status(400).json({ success: false, message: "Already at decision phase" });
+    }
+
+    console.log(`[Debug] Forcing narrative turn for channel ${channelId}`);
+    st.phaseEndsAt = Date.now(); // Trigger next turn
+    res.json({ success: true, message: "Narrative turn forced" });
+  });
+
   app.post('/api/debug/sessions/resolve', isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
@@ -235,6 +319,7 @@ export async function registerRoutes(
     if (st && st.activeSession) {
       console.log(`[Debug] Forcing resolution for channel ${channelId}`);
       st.activeSession.scheduledEnd = new Date();
+      st.phaseEndsAt = Date.now(); // Trigger immediately
       res.json({ success: true, message: "Resolution triggered" });
     } else {
       res.status(404).json({ success: false, message: "No active session for this channel" });

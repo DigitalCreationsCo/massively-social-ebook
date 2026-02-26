@@ -70,9 +70,8 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText('The Great Convergence')).toBeInTheDocument();
-        expect(screen.getByText('A grand meeting of worlds.')).toBeInTheDocument();
-        expect(screen.getByText(/Claim My 25/i)).toBeInTheDocument();
+        expect(screen.getByText(/The next story starts soon/i)).toBeInTheDocument();
+        expect(screen.getByText(/Remind me/i)).toBeInTheDocument();
     });
 
     it('renders empty state when no session is scheduled', () => {
@@ -83,7 +82,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/No sessions currently scheduled/i)).toBeInTheDocument();
+        expect(screen.getByText(/The library is currently silent/i)).toBeInTheDocument();
     });
 
     it('redirects to root when session becomes active via effect', () => {
@@ -114,19 +113,21 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        // Mock successful fetch and blob
+        // Mock successful fetch
         (global.fetch as any).mockResolvedValue({
-            ok: true,
-            blob: () => Promise.resolve(new Blob([ 'ics content' ], { type: 'text/calendar' }))
+            ok: true
         });
 
-        // Mock URL.createObjectURL and revokeObjectURL
-        global.URL.createObjectURL = vi.fn(() => 'blob:url');
-        global.URL.revokeObjectURL = vi.fn();
-
         render(<UpcomingSession />);
-        const button = screen.getByText(/Claim My 25/i);
+        const button = screen.getByText(/Remind me/i);
         fireEvent.click(button);
+
+        // Fill email and submit
+        const emailInput = screen.getByLabelText(/Universal Address/i);
+        fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+
+        const confirmButton = screen.getByText(/Confirm Reminder/i);
+        fireEvent.click(confirmButton);
 
         await waitFor(() => {
             expect(global.fetch).toHaveBeenCalled();
@@ -137,7 +138,7 @@ describe('UpcomingSession Component', () => {
         }, { timeout: 2000 });
 
         expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
-            title: "Calendar event downloaded"
+            title: "Calendar Sync Triggered"
         }));
     });
 });
