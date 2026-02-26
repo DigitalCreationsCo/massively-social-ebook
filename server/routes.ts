@@ -8,7 +8,7 @@ import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/sch
 import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
 import { trackUserEmail } from "./analytics";
 import { CalendarService } from "./calendar";
-import { isAdmin } from "./middleware/auth";
+import { isAdmin, isDevOnly } from "./middleware/auth";
 
 interface PendingBlock {
   promise: Promise<{
@@ -227,7 +227,7 @@ export async function registerRoutes(
     res.json(session);
   });
 
-  app.post('/api/debug/sessions/start', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/start', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
@@ -261,7 +261,7 @@ export async function registerRoutes(
     res.json({ success: true, message: "Session started", session });
   });
 
-  app.post('/api/debug/sessions/skip', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/skip', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
@@ -275,7 +275,7 @@ export async function registerRoutes(
     res.json({ success: true, message: "Phase skip triggered" });
   });
 
-  app.post('/api/debug/sessions/tally', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/tally', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
@@ -293,7 +293,7 @@ export async function registerRoutes(
     res.json({ success: true, message: "Tally forced" });
   });
 
-  app.post('/api/debug/sessions/narrative', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/narrative', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
@@ -311,7 +311,7 @@ export async function registerRoutes(
     res.json({ success: true, message: "Narrative turn forced" });
   });
 
-  app.post('/api/debug/sessions/resolve', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/resolve', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];

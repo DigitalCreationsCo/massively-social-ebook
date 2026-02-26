@@ -59,6 +59,21 @@ describe('Debug Tools API', () => {
                 .send({ channelId: 'mystery' });
             expect(res.status).toBe(401);
         });
+
+        it('rejects requests in production environment', async () => {
+            const originalEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            try {
+                const res = await request(app)
+                    .post('/api/debug/sessions/skip')
+                    .set('x-admin-token', ADMIN_TOKEN)
+                    .send({ channelId: 'mystery' });
+                expect(res.status).toBe(403);
+                expect(res.body.message).toContain('disabled in production');
+            } finally {
+                process.env.NODE_ENV = originalEnv;
+            }
+        });
     });
 
     describe('Endpoints', () => {

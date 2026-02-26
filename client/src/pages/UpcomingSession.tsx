@@ -290,7 +290,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             </div>
 
             {/* Preview Section */ }
-            <section id="preview" className="w-full max-w-6xl px-6 pt-32 pb-12 space-y-32 min-h-screen">
+            <section id="preview" className="flex items-center w-full max-w-6xl px-6 mt-32 space-y-32 min-h-screen">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-start">
                     {/* Mockup Display */ }
                     <div className="lg:col-span-8 space-y-8">

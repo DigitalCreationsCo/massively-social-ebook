@@ -28,7 +28,7 @@ function App() {
         <Toaster />
         <UpdatePrompt />
         <Router />
-        <DebugTools channelId="m2w4k" />
+        { import.meta.env.DEV && <DebugTools channelId="m2w4k" /> }
       </TooltipProvider>
     </QueryClientProvider>
   );
