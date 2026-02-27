@@ -82,17 +82,35 @@ export async function generateStoryImage(description: string): Promise<string> {
   const prompt = createImageInstructions({ description });
 
   try {
-    const response = await ai.models.generateImages({
-      model: lmParamsGoogle.imagenModel,
-      prompt: prompt,
+    // const response = await ai.models.generateImages({
+    //   model: 'lmParamsGoogle.imagenModel',
+    //   prompt: prompt,
+    //   config: {
+    //     numberOfImages: 1,
+    //     aspectRatio: "16:9",
+    //     outputMimeType: "image/jpeg",
+    //   }
+    // });
+
+    // const base64Image = response.generatedImages?.[ 0 ]?.image?.imageBytes;
+
+    // if (!base64Image) {
+    //   throw new Error("No image data returned.");
+    // }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: prompt,
       config: {
-        numberOfImages: 1,
-        aspectRatio: "16:9",
-        outputMimeType: "image/jpeg",
+        responseModalities: [ "image" ],
+        candidateCount: 1,
+        imageConfig: {
+          aspectRatio: "16:9",
+        }
       }
     });
 
-    const base64Image = response.generatedImages?.[ 0 ]?.image?.imageBytes;
+    const base64Image = response.candidates?.[ 0 ]?.content?.parts?.[ 0 ]?.inlineData?.data;
 
     if (!base64Image) {
       throw new Error("No image data returned.");

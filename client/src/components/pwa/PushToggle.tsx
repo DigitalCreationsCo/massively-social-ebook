@@ -11,14 +11,16 @@ export function PushToggle() {
   
   if (isSubscribed) {
     return (
-      <button 
-        disabled 
+      <>
+        {/* <button
+        disabled
         className="flex items-center gap-2 text-sm text-green-500 font-medium px-3 py-1.5 border border-green-500/20 bg-green-500/10 rounded-full"
       >
         <Bell className="w-4 h-4" />
         <span>Updates On</span>
-      </button>
-    );
+      </button> */}
+      </>
+    )
   }
 
   return (

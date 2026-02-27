@@ -45,12 +45,29 @@ export const users = pgTable("users", {
   pushToken: text("push_token"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const notificationLogs = pgTable("notification_logs", {
+  id: serial("id").primaryKey(),
+  type: text("type").notNull(), // '5_min_warning', 'weekly_brief'
+  targetId: text("target_id").notNull(), // session_id or user_id
+  sentAt: timestamp("sent_at").defaultNow(),
+  status: text("status").notNull(), // 'sent', 'failed', 'skipped'
+});
+
 
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true });
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({ updatedAt: true });
+export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({ id: true, sentAt: true });
+
 
 export type Block = typeof blocks.$inferSelect;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
@@ -66,6 +83,12 @@ export type InsertSession = z.infer<typeof insertSessionSchema>;
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type SystemSetting = typeof systemSettings.$inferSelect;
+export type InsertSystemSetting = z.infer<typeof insertSystemSettingsSchema>;
+
+export type NotificationLog = typeof notificationLogs.$inferSelect;
+export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
+
 
 export const WS_EVENTS = {
   SYNC_STATE: 'sync_state',

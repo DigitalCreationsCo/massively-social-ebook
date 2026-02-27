@@ -4,7 +4,7 @@ import { sendEmail, sendPushNotification } from './notifications';
 import { type Session } from '@shared/schema';
 
 const CURSOR_KEY = 'notification_cursor';
-const LOOP_INTERVAL_MS = 10 * 1000; // 10 seconds
+const LOOP_INTERVAL_MS = 30 * 1000; // 30 seconds
 
 type EventType = 'SESSION_WARNING_5MIN' | 'WEEKLY_BRIEF' | 'DAILY_SEEDING';
 

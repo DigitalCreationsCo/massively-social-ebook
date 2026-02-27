@@ -6,8 +6,9 @@ export const createStoryBlockInstructions = ({ previous, ragContext, isResolutio
     const instructions = [
         `As a brilliant best-selling novelist, produce a block of sentences of 30 words max to progress the story. ${contextSection}`,
         "Deliberate and slow pace. Each block is its own stanza, related to the previous block, and part of a larger story.",
+        "Blocks come in turns of 40 seconds. Give the reader something to chew on while they wait for the next block. It can be a curious detail, or an anticipation of what's to come.",
         isResolution
-            ? "THIS IS THE SESSION RESOLUTION. End the story block with an intriguing, high-stakes cliffhanger that leaves readers wanting more. DO NOT provide any user options (optionA, optionB) in your response."
+            ? "This story is resolving. DO NOT provide any user options (optionA, optionB) in your response."
             : "Reader choices are for character actions and reactions. The reader decides the story's direction, your job is to describe the story with great writing.",
         "Use quotes for dialogues sometimes. Keep dialogues short and sweet. Watch-and-waiting atmosphere. The reader stays intrigued.",
         "Writing Rules:",

@@ -128,10 +128,6 @@ export default function LiveEbook() {
             </span>
           </div>
         </div>
-          <Users className="size-3.5" />
-          <span className="text-xs font-mono tabular-nums">
-            { viewerCount.toLocaleString() }
-          </span>
       </header>
 
       {/* Pane 1: Cinematic Visuals & Narrative */ }

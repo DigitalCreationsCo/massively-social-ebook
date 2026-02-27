@@ -9,6 +9,7 @@ import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from
 import { trackUserEmail } from "./analytics";
 import { CalendarService } from "./calendar";
 import { isAdmin, isDevOnly } from "./middleware/auth";
+import { logger } from "./logger";
 
 interface PendingBlock {
   promise: Promise<{
@@ -66,12 +67,12 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
       try {
         imageUrl = await generateStoryImage(nextContent.content);
       } catch (imageErr) {
-        console.warn(`Image generation failed for ${channelId}, using fallback:`, imageErr);
+        logger.warn(`Image generation failed for ${channelId}, using fallback`, "ai", imageErr);
         imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
       }
       return { ...nextContent, imageUrl };
     } catch (err) {
-      console.error(`Failed to pregenerate option ${option} for ${channelId}:`, err);
+      logger.error(`Failed to pregenerate option ${option} for ${channelId}`, "routes", err instanceof Error ? err : new Error(String(err)));
       // Fallback
       return {
         title: "Temporal Distortion",
@@ -91,7 +92,7 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
 }
 
 async function startSessionForChannel(channelId: Channel, session: Session, broadcast: (channelId: Channel, message: WsMessage) => void) {
-  console.log(`[Session] Starting session "${session.title}" for channel ${channelId}`);
+  logger.info(`Starting session "${session.title}" for channel ${channelId}`, "session");
   const st = state[ channelId ];
   st.activeSession = session;
   
@@ -198,6 +199,7 @@ export async function registerRoutes(
         user = await storage.createUser({ email });
       }
     } catch (err) {
+      logger.error("Failed to persist user", "storage", err instanceof Error ? err : new Error(String(err)));
       console.error("Failed to persist user:", err);
       // Continue anyway to attempt calendar add
     }
@@ -220,6 +222,7 @@ export async function registerRoutes(
         ]);
         res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
       } catch (err) {
+        logger.error("Failed to schedule reminders", "calendar", err instanceof Error ? err : new Error(String(err)));
         console.error("[Calendar] Failed to schedule reminders:", err);
         // Still return success if user was saved, but calendar failed
         res.json({ success: true, message: "You're on the list! (Calendar invites failed)" });
