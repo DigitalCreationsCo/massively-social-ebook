@@ -27,6 +27,30 @@ export function escapeICSText(text: string): string {
 }
 
 /**
+ * Folds a long line according to RFC 5545 specifications.
+ * Lines longer than 75 octets should be folded.
+ */
+export function foldLine(line: string): string {
+  const MAX_LENGTH = 75;
+  if (line.length <= MAX_LENGTH) {
+    return line;
+  }
+
+  let result = '';
+  let currentLine = line;
+
+  while (currentLine.length > MAX_LENGTH) {
+    // Take first 75 chars
+    result += currentLine.substring(0, MAX_LENGTH) + '\r\n ';
+    // Remaining chars
+    currentLine = currentLine.substring(MAX_LENGTH);
+  }
+  
+  result += currentLine;
+  return result;
+}
+
+ /**
  * Generates a valid iCalendar (.ics) file content for a session.
  * Uses VEVENT with DTSTART, DTEND, SUMMARY, DESCRIPTION, and a 15-minute VALARM reminder.
  *
@@ -40,7 +64,7 @@ export function generateICS(session: Session, baseUrl?: string): string {
   const dtStart = formatICSDate(session.scheduledStart);
   const dtEnd = formatICSDate(session.scheduledEnd);
   const dtStamp = formatICSDate(now);
-  const summary = escapeICSText(session.title);
+  const summary = escapeICSText(`The 25th Chapter: ${session.title}`);
   const description = escapeICSText(
     session.description || `Live story session on the ${session.channelId} channel.`
   );
@@ -48,7 +72,7 @@ export function generateICS(session: Session, baseUrl?: string): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//MassivelySocialEbook//EN',
+    'PRODID:-//The 25th Chapter//NONSGML v1.0//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'BEGIN:VEVENT',
@@ -75,5 +99,5 @@ export function generateICS(session: Session, baseUrl?: string): string {
 
   lines.push('END:VEVENT', 'END:VCALENDAR');
 
-  return lines.join('\r\n') + '\r\n';
+  return lines.map(foldLine).join('\r\n') + '\r\n';
 }

@@ -3,6 +3,7 @@ import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import 'isomorphic-fetch';
 import { type Session } from "@shared/schema";
+import { generateICS } from './ics';
 
 /**
  * Service for production-ready calendar API integrations.
@@ -123,5 +124,11 @@ export class CalendarService {
             console.error('[Calendar] Outlook API Error:', err);
             throw err;
         }
+    }
+    /**
+     * Generates an ICS file content for a session.
+     */
+    static generateIcs(session: Session): string {
+        return generateICS(session, process.env.APP_URL || 'http://localhost:3000');
     }
 }

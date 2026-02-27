@@ -33,7 +33,7 @@ describe('ICS Generator', () => {
       expect(ics).toContain('BEGIN:VCALENDAR');
       expect(ics).toContain('VERSION:2.0');
       expect(ics).toContain('BEGIN:VEVENT');
-      expect(ics).toContain('SUMMARY:Project Exodus: Breach');
+      expect(ics).toContain('SUMMARY:The 25th Chapter: Project Exodus: Breach');
       expect(ics).toContain('DESCRIPTION:The crew discovers a rift in the hull.');
       expect(ics).toContain('DTSTART:20260601T180000Z');
       expect(ics).toContain('DTEND:20260601T200000Z');
@@ -58,7 +58,7 @@ describe('ICS Generator', () => {
 
       const ics = generateICS(mockSession);
       // SUMMARY should escape semicolons/commas
-      expect(ics).toContain('SUMMARY:Rainy Alley\\; "The Shadow"\\, Part 1');
+      expect(ics).toContain('SUMMARY:The 25th Chapter: Rainy Alley\\; "The Shadow"\\, Part 1');
       expect(ics).toContain('DESCRIPTION:Line 1\\nLine 2');
     });
   });
