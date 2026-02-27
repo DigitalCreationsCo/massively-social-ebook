@@ -1,7 +1,20 @@
-import cron from 'node-cron';
 import { storage } from './storage';
-import { CHANNELS, type Channel } from '@shared/channels';
+import { CHANNELS } from '@shared/channels';
 import { sendEmail, sendPushNotification } from './notifications';
+import { type Session } from '@shared/schema';
+
+const CURSOR_KEY = 'notification_cursor';
+const LOOP_INTERVAL_MS = 10 * 1000; // 10 seconds
+
+type EventType = 'SESSION_WARNING_5MIN' | 'WEEKLY_BRIEF' | 'DAILY_SEEDING';
+
+interface ScheduledEvent {
+  type: EventType;
+  targetId: string; // session ID or 'global'
+  scheduledTime: number;
+  expirationTime: number;
+  payload?: any;
+}
 
 /**
  * Automatically schedules daily sessions for all channels.
@@ -9,29 +22,167 @@ import { sendEmail, sendPushNotification } from './notifications';
  * Each session lasts 25 minutes.
  */
 export function startRecurringScheduler() {
-    console.log('[Scheduler] Initializing recurring session scheduler...');
+    console.log('[Scheduler] Starting deterministic stateless window loop...');
 
-    // 1. Session Seeding: Run every day at 00:01
-    cron.schedule('1 0 * * *', async () => {
-        console.log('[Scheduler] Running daily session seeding...');
-        await seedDailySessions();
-    });
-
-    // 2. Weekly Email Briefing: Every Sunday at 15:00 (3:00 PM)
-    cron.schedule('0 15 * * 0', async () => {
-        console.log('[Scheduler] Running weekly Sunday briefing...');
-        await dispatchWeeklyBriefing();
-    });
-
-    // 3. 5-Minute Warning (Push Notifications): Every minute
-    cron.schedule('* * * * *', async () => {
-        await checkAndSendPushWarnings();
-    });
-
-    // Also run on startup to ensure we have sessions for today
+    // Initial seeding on startup (idempotent)
     seedDailySessions().catch(err => {
         console.error('[Scheduler] Initial seeding failed:', err);
     });
+
+    setInterval(runNotificationLoop, LOOP_INTERVAL_MS);
+}
+
+async function runNotificationLoop() {
+    try {
+        const now = Date.now();
+
+        // 1. Get cursor
+        let lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
+        
+        // If first run (no cursor), initialize to now and wait for next tick
+        if (!lastProcessedStr) {
+            await storage.setSystemSetting(CURSOR_KEY, now.toString());
+            return;
+        }
+
+        let lastProcessed = parseInt(lastProcessedStr, 10);
+
+        // 2. Define window (lastProcessed, now]
+        // If now <= lastProcessed, nothing to do (clock skew or fast loop)
+        if (now <= lastProcessed) return;
+
+        const events = await getEventsInWindow(lastProcessed, now);
+
+        // 3. Process events
+        for (const event of events) {
+            await processEvent(event, now);
+        }
+
+        // 4. Update cursor
+        await storage.setSystemSetting(CURSOR_KEY, now.toString());
+
+    } catch (err) {
+        console.error('[Scheduler] Error in notification loop:', err);
+    }
+}
+
+async function getEventsInWindow(start: number, end: number): Promise<ScheduledEvent[]> {
+    const events: ScheduledEvent[] = [];
+
+    // A. Session Warnings (Start - 5min)
+    // We need sessions where (Start - 5min) is in (start, end]
+    // => Start is in (start + 5min, end + 5min]
+    const allSessions = await storage.listSessions(undefined, 'scheduled');
+
+    for (const session of allSessions) {
+        const sessionStart = new Date(session.scheduledStart).getTime();
+        const warningTime = sessionStart - 5 * 60 * 1000;
+
+        if (warningTime > start && warningTime <= end) {
+            events.push({
+                type: 'SESSION_WARNING_5MIN',
+                targetId: session.id.toString(),
+                scheduledTime: warningTime,
+                expirationTime: sessionStart, // Expire when session starts
+                payload: session
+            });
+        }
+    }
+
+    // B. Weekly Briefing (Sunday 15:00)
+    let nextBriefing = getNextWeeklyBriefingTime(start);
+    while (nextBriefing <= end) {
+        events.push({
+            type: 'WEEKLY_BRIEF',
+            targetId: 'global_weekly_' + nextBriefing,
+            scheduledTime: nextBriefing,
+            expirationTime: nextBriefing + 24 * 60 * 60 * 1000 // Valid for 24 hours
+        });
+        nextBriefing = getNextWeeklyBriefingTime(nextBriefing);
+    }
+
+    // C. Daily Seeding (Daily 00:01)
+    let nextSeeding = getNextDailySeedingTime(start);
+    while (nextSeeding <= end) {
+        events.push({
+            type: 'DAILY_SEEDING',
+            targetId: 'global_seeding_' + nextSeeding,
+            scheduledTime: nextSeeding,
+            expirationTime: nextSeeding + 1 * 60 * 60 * 1000 // Valid for 1 hour
+        });
+        nextSeeding = getNextDailySeedingTime(nextSeeding);
+    }
+
+    return events;
+}
+
+function getNextWeeklyBriefingTime(after: number): number {
+    const date = new Date(after);
+    const target = new Date(date);
+    target.setHours(15, 0, 0, 0);
+
+    // Adjust to Sunday
+    const day = target.getDay();
+    const diff = 0 - day; // 0 is Sunday
+    target.setDate(target.getDate() + diff);
+
+    // If target is before or equal to 'after', add 7 days
+    if (target.getTime() <= after) {
+        target.setDate(target.getDate() + 7);
+    }
+    return target.getTime();
+}
+
+function getNextDailySeedingTime(after: number): number {
+    const target = new Date(after);
+    target.setHours(0, 1, 0, 0);
+
+    if (target.getTime() <= after) {
+        target.setDate(target.getDate() + 1);
+    }
+    return target.getTime();
+}
+
+async function processEvent(event: ScheduledEvent, now: number) {
+    // Check expiration
+    if (now >= event.expirationTime) {
+        console.log(`[Scheduler] Event ${event.type} expired. Skipped.`);
+        await storage.createNotificationLog({
+            type: event.type,
+            targetId: event.targetId,
+            status: 'skipped'
+        });
+        return;
+    }
+
+    // Check idempotency via logs
+    const existing = await storage.getNotificationLog(event.type, event.targetId);
+    if (existing && existing.status === 'sent') {
+        return; // Already sent
+    }
+
+    try {
+        if (event.type === 'SESSION_WARNING_5MIN') {
+            await sendPushWarningsForSession(event.payload);
+        } else if (event.type === 'WEEKLY_BRIEF') {
+            await dispatchWeeklyBriefing();
+        } else if (event.type === 'DAILY_SEEDING') {
+            await seedDailySessions();
+        }
+
+        await storage.createNotificationLog({
+            type: event.type,
+            targetId: event.targetId,
+            status: 'sent'
+        });
+    } catch (err) {
+        console.error(`[Scheduler] Failed to process event ${event.type}:`, err);
+        await storage.createNotificationLog({
+            type: event.type,
+            targetId: event.targetId,
+            status: 'failed'
+        });
+    }
 }
 
 export async function seedDailySessions() {
@@ -117,12 +268,24 @@ export async function dispatchWeeklyBriefing() {
     }
 }
 
-export async function checkAndSendPushWarnings() {
-    const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
+async function sendPushWarningsForSession(session: Session) {
+    console.log(`[Scheduler] Sending 5-minute warning for session: ${session.title}`);
+    const users = await storage.getUsers();
+    const title = "🔔 5 Minutes to Go-Time";
+    const body = `Today's chapter is about to begin. Claim your seat now for your daily 25.`;
 
-    // We want to find sessions starting between 4m 30s and 5m 30s from now
-    // to avoid missing a pulse or sending multiple times (though minute cron should be fine)
+    for (const user of users) {
+        if (user.pushToken) {
+            await sendPushNotification(user.pushToken, title, body);
+        }
+    }
+}
+
+// Kept for compatibility if imported elsewhere, but now unused by the scheduler loop directly
+export async function checkAndSendPushWarnings() {
+    // This function is deprecated in favor of the event loop
+    // But we can keep it as a manual trigger if needed
+    const now = new Date();
     const allSessions = await storage.listSessions();
     const startingSoon = allSessions.filter(s => {
         const start = new Date(s.scheduledStart).getTime();
@@ -130,19 +293,7 @@ export async function checkAndSendPushWarnings() {
         return diff > 4 * 60 * 1000 && diff <= 5 * 60 * 1000 && s.status === 'scheduled';
     });
 
-    if (startingSoon.length === 0) return;
-
-    const users = await storage.getUsers();
-
     for (const session of startingSoon) {
-        console.log(`[Scheduler] Sending 5-minute warning for session: ${session.title}`);
-        const title = "🔔 5 Minutes to Go-Time";
-        const body = `Today's chapter is about to begin. Claim your seat now for your daily 25.`;
-
-        for (const user of users) {
-            if (user.pushToken) {
-                await sendPushNotification(user.pushToken, title, body);
-            }
-        }
+        await sendPushWarningsForSession(session);
     }
 }
