@@ -200,7 +200,7 @@ export async function registerRoutes(
       }
     } catch (err) {
       logger.error("Failed to persist user", "storage", err instanceof Error ? err : new Error(String(err)));
-      console.error("Failed to persist user:", err);
+      // Already logged above
       // Continue anyway to attempt calendar add
     }
 
@@ -223,7 +223,7 @@ export async function registerRoutes(
         res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
       } catch (err) {
         logger.error("Failed to schedule reminders", "calendar", err instanceof Error ? err : new Error(String(err)));
-        console.error("[Calendar] Failed to schedule reminders:", err);
+        // Already logged above
         // Still return success if user was saved, but calendar failed
         res.json({ success: true, message: "You're on the list! (Calendar invites failed)" });
       }
@@ -234,7 +234,7 @@ export async function registerRoutes(
   });
   app.post('/api/notifications/subscribe', async (req, res) => {
     const { email, subscription } = req.body;
-    console.log('[Notifications] New subscription:', email, subscription);
+    logger.info(`New subscription: ${email}`, "notifications", { subscription });
 
     if (email) {
       try {
@@ -246,7 +246,8 @@ export async function registerRoutes(
           await storage.createUser({ email, pushToken: token });
         }
       } catch (err) {
-        console.error("Failed to persist subscription user:", err);
+
+        logger.error("Failed to persist subscription user", "storage", err instanceof Error ? err : new Error(String(err)));
       }
     }
 
@@ -320,7 +321,7 @@ export async function registerRoutes(
       return res.status(404).json({ success: false, message: "No active session" });
     }
 
-    console.log(`[Debug] Skipping phase for channel ${channelId}`);
+    logger.debug(`Skipping phase for channel ${channelId}`, "debug");
     st.phaseEndsAt = Date.now(); // Trigger immediate transition on next tick
     res.json({ success: true, message: "Phase skip triggered" });
   });
@@ -338,7 +339,7 @@ export async function registerRoutes(
       return res.status(400).json({ success: false, message: "Not in voting phase" });
     }
 
-    console.log(`[Debug] Forcing tally for channel ${channelId}`);
+    logger.debug(`Forcing tally for channel ${channelId}`, "debug");
     st.phaseEndsAt = Date.now(); // Trigger end of voting phase
     res.json({ success: true, message: "Tally forced" });
   });
@@ -356,7 +357,7 @@ export async function registerRoutes(
       return res.status(400).json({ success: false, message: "Already at decision phase" });
     }
 
-    console.log(`[Debug] Forcing narrative turn for channel ${channelId}`);
+    logger.debug(`Forcing narrative turn for channel ${channelId}`, "debug");
     st.phaseEndsAt = Date.now(); // Trigger next turn
     res.json({ success: true, message: "Narrative turn forced" });
   });
@@ -367,7 +368,7 @@ export async function registerRoutes(
     const st = state[ channelId ];
 
     if (st && st.activeSession) {
-      console.log(`[Debug] Forcing resolution for channel ${channelId}`);
+      logger.debug(`Forcing resolution for channel ${channelId}`, "debug");
       st.activeSession.scheduledEnd = new Date();
       st.phaseEndsAt = Date.now(); // Trigger immediately
       res.json({ success: true, message: "Resolution triggered" });
@@ -432,7 +433,7 @@ export async function registerRoutes(
 
     if (debug) {
       if (token !== process.env.ADMIN_TOKEN && (process.env.NODE_ENV === 'production' || token !== 'dev-token')) {
-        console.warn(`[WS] Unauthorized debug access attempt for channel ${rawChannelId}`);
+        logger.warn(`Unauthorized debug access attempt for channel ${rawChannelId}`, "ws");
         ws.close(4001, "Unauthorized focus");
         return;
       }
@@ -507,7 +508,8 @@ export async function registerRoutes(
           }
         }
       } catch (err) {
-        console.error("WS message error", err);
+        logger.error("WS message error", "ws", err instanceof Error ? err : new Error(String(err)));
+        // Already logged above
       }
     });
 
@@ -538,7 +540,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
       continue; // Skip game loop if no session is active
     } else if (st.currentPhase !== 'resolution' && now >= st.activeSession.scheduledEnd.getTime()) {
       // Trigger resolution phase instead of abrupt end
-      console.log(`[Session] Session "${st.activeSession.title}" for channel ${channelId} reaching scheduled end. Entering resolution.`);
+      logger.info(`Session "${st.activeSession.title}" for channel ${channelId} reaching scheduled end. Entering resolution.`, "session");
       st.currentPhase = 'resolution';
       st.phaseEndsAt = now + NARRATIVE_TURN_MS;
       st.turnsToNextChoice = 0;
@@ -556,13 +558,14 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
           }
           st.currentBlock = await storage.createBlock({ channelId, ...nextContent, imageUrl });
-          console.log(`[GameLoop] ${channelId}: Resolution block generated: ${st.currentBlock.id}`);
+          logger.info(`Resolution block generated: ${st.currentBlock.id}`, "gameloop");
         } catch (err) {
-          console.error("Failed to generate resolution block:", err);
+          logger.error("Failed to generate resolution block", "gameloop", err instanceof Error ? err : new Error(String(err)));
+        // Already logged above
         }
       }
     } else if (st.currentPhase === 'resolution' && now >= st.phaseEndsAt) {
-      console.log(`[Session] Ending session "${st.activeSession.title}" for channel ${channelId} after resolution.`);
+      logger.info(`Ending session "${st.activeSession.title}" for channel ${channelId} after resolution.`, "session");
       await storage.updateSessionStatus(st.activeSession.id, 'completed');
       const finishedSession = st.activeSession;
       st.activeSession = undefined;
@@ -585,7 +588,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           // This ensures the progress bar counts down smoothly from the start of the reading sequence
           // until the decision phase begins.
 
-          console.log(`[GameLoop] ${channelId}: Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`);
+          logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
@@ -620,9 +623,10 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
 
               pregenerateOption(channelId, st, 'A');
               pregenerateOption(channelId, st, 'B');
-              console.log(`[GameLoop] ${channelId}: Advanced story to block ${st.currentBlock.id}`);
+              logger.info(`Advanced story to block ${st.currentBlock.id}`, "gameloop");
             } catch (err) {
-              console.error("Failed to advance narrative:", err);
+              logger.error("Failed to advance narrative", "gameloop", err instanceof Error ? err : new Error(String(err)));
+              // Already logged above, removing duplicate
             }
           }
         } else {
@@ -631,7 +635,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.phaseEndsAt = now + VOTING_PHASE_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
           st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-          console.log(`[GameLoop] ${channelId}: ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`);
+          logger.info(`ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`, "gameloop");
         }
       } else {
         // Voting phase ended: tally votes and generate next block
@@ -640,7 +644,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.turnsToNextChoice = getRandomTurns();
         st.decisionEndsAt = computeDecisionEndsAt(st);
         st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-        console.log(`[GameLoop] ${channelId}: VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`);
+        logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`, "gameloop");
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);
@@ -665,7 +669,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
               try {
                 imageUrl = await generateStoryImage(nextContent.content);
               } catch (imageErr) {
-                console.warn(`Game loop image generation failed for ${channelId}, using fallback:`, imageErr);
+                logger.warn(`Game loop image generation failed for ${channelId}, using fallback`, "gameloop", imageErr);
+                // Already logged above
                 imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
               }
               nextData = { ...nextContent, imageUrl };
@@ -683,7 +688,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             pregenerateOption(channelId, st, 'A');
             pregenerateOption(channelId, st, 'B');
           } catch (err) {
-            console.error("Failed to adopt next block:", err);
+            logger.error("Failed to adopt next block", "gameloop", err instanceof Error ? err : new Error(String(err)));
+            // Already logged above
             // Fallback
             st.currentBlock = await storage.createBlock({
               channelId,

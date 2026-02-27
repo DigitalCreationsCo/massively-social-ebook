@@ -1,6 +1,4 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
 import { createImageInstructions } from "../prompts/image-instructions";
 import { buildRAGContext } from "./rag";
@@ -82,22 +80,6 @@ export async function generateStoryImage(description: string): Promise<string> {
   const prompt = createImageInstructions({ description });
 
   try {
-    // const response = await ai.models.generateImages({
-    //   model: 'lmParamsGoogle.imagenModel',
-    //   prompt: prompt,
-    //   config: {
-    //     numberOfImages: 1,
-    //     aspectRatio: "16:9",
-    //     outputMimeType: "image/jpeg",
-    //   }
-    // });
-
-    // const base64Image = response.generatedImages?.[ 0 ]?.image?.imageBytes;
-
-    // if (!base64Image) {
-    //   throw new Error("No image data returned.");
-    // }
-
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: prompt,
@@ -116,19 +98,10 @@ export async function generateStoryImage(description: string): Promise<string> {
       throw new Error("No image data returned.");
     }
 
-    const filename = `img_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-    const filepath = path.join(process.cwd(), "client", "public", "images", filename);
-
-    // Ensure the directory exists
-    await fs.mkdir(path.dirname(filepath), { recursive: true });
-
-    // Write the base64 data to a file
-    await fs.writeFile(filepath, Buffer.from(base64Image, 'base64'));
-
-    // Return the web-accessible URL
-    return `/images/${filename}`;
+    // Return data URL directly (no filesystem write)
+    return `data:image/jpeg;base64,${base64Image}`;
   } catch (err) {
     console.warn("Failed to generate image, using fallback:", err);
-    return `/images/img_1771936309521_ieycq2.jpg`;
+    return "/images/img_1771936309521_ieycq2.jpg";
   }
 }

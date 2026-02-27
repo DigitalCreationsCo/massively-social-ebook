@@ -65,9 +65,15 @@ function log(
   message: string,
   source?: string,
   context?: Record<string, unknown>,
-  error?: Error
+  error?: unknown
 ): void {
-  const entry = formatLogEntry(level, message, source, context, error);
+  const entry = formatLogEntry(
+    level,
+    message,
+    source,
+    context,
+    error instanceof Error ? error : error ? new Error(String(error)) : undefined
+  );
   const jsonLine = JSON.stringify(entry);
 
   // Always output structured JSON to stdout
@@ -86,14 +92,14 @@ export const logger = {
     log("info", message, source, context);
   },
 
-  warn(message: string, source?: string, context?: Record<string, unknown>): void {
-    log("warn", message, source, context);
+  warn(message: string, source?: string, error?: unknown, context?: Record<string, unknown>): void {
+    log("warn", message, source, context, error);
   },
 
   error(
     message: string,
     source?: string,
-    error?: Error,
+    error?: unknown,
     context?: Record<string, unknown>
   ): void {
     log("error", message, source, context, error);
@@ -121,7 +127,7 @@ export function createRequestLogger() {
       if (res.statusCode >= 500) {
         logger.error("Request failed", "express", undefined, context);
       } else if (res.statusCode >= 400) {
-        logger.warn("Request error", "express", context);
+        logger.warn("Request error", "express", undefined, context);
       } else {
         logger.info("Request", "express", context);
       }

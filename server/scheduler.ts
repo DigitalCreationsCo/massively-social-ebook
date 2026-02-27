@@ -2,6 +2,7 @@ import { storage } from './storage';
 import { CHANNELS } from '@shared/channels';
 import { sendEmail, sendPushNotification } from './notifications';
 import { type Session } from '@shared/schema';
+import { logger } from './logger';
 
 const CURSOR_KEY = 'notification_cursor';
 const LOOP_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -22,11 +23,11 @@ interface ScheduledEvent {
  * Each session lasts 25 minutes.
  */
 export function startRecurringScheduler() {
-    console.log('[Scheduler] Starting deterministic stateless window loop...');
+    logger.info('Starting deterministic stateless window loop', 'scheduler');
 
     // Initial seeding on startup (idempotent)
     seedDailySessions().catch(err => {
-        console.error('[Scheduler] Initial seeding failed:', err);
+        logger.error('Initial seeding failed', 'scheduler', err instanceof Error ? err : new Error(String(err)));
     });
 
     setInterval(runNotificationLoop, LOOP_INTERVAL_MS);
@@ -62,7 +63,7 @@ async function runNotificationLoop() {
         await storage.setSystemSetting(CURSOR_KEY, now.toString());
 
     } catch (err) {
-        console.error('[Scheduler] Error in notification loop:', err);
+        logger.error('Error in notification loop', 'scheduler', err instanceof Error ? err : new Error(String(err)));
     }
 }
 
@@ -146,7 +147,7 @@ function getNextDailySeedingTime(after: number): number {
 async function processEvent(event: ScheduledEvent, now: number) {
     // Check expiration
     if (now >= event.expirationTime) {
-        console.log(`[Scheduler] Event ${event.type} expired. Skipped.`);
+        logger.debug(`Event ${event.type} expired. Skipped.`, 'scheduler');
         await storage.createNotificationLog({
             type: event.type,
             targetId: event.targetId,
@@ -176,7 +177,7 @@ async function processEvent(event: ScheduledEvent, now: number) {
             status: 'sent'
         });
     } catch (err) {
-        console.error(`[Scheduler] Failed to process event ${event.type}:`, err);
+        logger.error(`Failed to process event ${event.type}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
         await storage.createNotificationLog({
             type: event.type,
             targetId: event.targetId,
@@ -199,7 +200,7 @@ export async function seedDailySessions() {
         });
 
         if (todaySessions.length === 0) {
-            console.log(`[Scheduler] Seeding sessions for ${channelId} for ${now.toDateString()}`);
+            logger.debug(`Seeding sessions for ${channelId} for ${now.toDateString()}`, 'scheduler');
             
             // Schedule one session for tonight
             // Sci-fi at 19:00, Mystery at 20:00
@@ -225,12 +226,12 @@ export async function seedDailySessions() {
                     scheduledStart: start,
                     scheduledEnd: end
                 });
-                console.log(`[Scheduler] Created session: ${title} at ${start.toLocaleTimeString()}`);
+                logger.info(`Created session: ${title} at ${start.toLocaleTimeString()}`, 'scheduler');
             } catch (err) {
-                console.error(`[Scheduler] Failed to create session for ${channelId}:`, err);
+                logger.error(`Failed to create session for ${channelId}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
             }
         } else {
-            console.log(`[Scheduler] Sessions already exist for ${channelId} today.`);
+            logger.debug(`Sessions already exist for ${channelId} today.`, 'scheduler');
         }
     }
 }
@@ -250,7 +251,7 @@ export async function dispatchWeeklyBriefing() {
     });
 
     if (upcoming.length === 0) {
-        console.log('[Scheduler] No upcoming sessions for weekly briefing.');
+        logger.debug('No upcoming sessions for weekly briefing.', 'scheduler');
         return;
     }
 
@@ -269,7 +270,7 @@ export async function dispatchWeeklyBriefing() {
 }
 
 async function sendPushWarningsForSession(session: Session) {
-    console.log(`[Scheduler] Sending 5-minute warning for session: ${session.title}`);
+    logger.info(`Sending 5-minute warning for session: ${session.title}`, 'scheduler');
     const users = await storage.getUsers();
     const title = "🔔 5 Minutes to Go-Time";
     const body = `Today's chapter is about to begin. Claim your seat now for your daily 25.`;
