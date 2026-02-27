@@ -170,36 +170,83 @@ export async function registerRoutes(
     res.json(next || null);
   });
 
+  app.get('/api/sessions/:id/ics', async (req, res) => {
+    const id = parseInt(req.params.id);
+    const sessions = await storage.listSessions();
+    const session = sessions.find(s => s.id === id);
+
+    if (!session) return res.status(404).send('Session not found');
+
+    const icsContent = CalendarService.generateIcs(session);
+    
+    res.setHeader('Content-Type', 'text/calendar');
+    res.setHeader('Content-Disposition', `attachment; filename="session-${id}.ics"`);
+    res.send(icsContent);
+  });
+
   app.post(api.sessions.reminder.path, async (req, res) => {
     const { sessionId, email } = req.body;
     if (!email) return res.status(400).json({ message: "Email is required" });
 
-    const sessionList = await storage.listSessions();
-    const session = sessionList.find(s => s.id === sessionId);
-    if (!session) return res.status(404).json({ message: "Session not found" });
+    // 1. Persist User (Lead Capture) FIRST - We capture leads even if no session exists
+    let user;
+    try {
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        user = existing;
+      } else {
+        user = await storage.createUser({ email });
+      }
+    } catch (err) {
+      console.error("Failed to persist user:", err);
+      // Continue anyway to attempt calendar add
+    }
 
-    // 1. Capture for Analytics/CRM
+    // 2. Capture for Analytics/CRM
     await trackUserEmail(email, 'session_reminder');
 
-    // 2. Add to Calendar (Google + Outlook)
-    try {
-      await Promise.all([
-        CalendarService.addToGoogle(email, session),
-        CalendarService.addToOutlook(email, session)
-      ]);
-      res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
-    } catch (err) {
-      console.error("[Calendar] Failed to schedule reminders:", err);
-      res.status(500).json({ message: "Failed to schedule calendar reminders" });
+    // 3. Try to add to Calendar if session exists
+    let session = undefined;
+    if (sessionId) {
+      const sessionList = await storage.listSessions();
+      session = sessionList.find(s => s.id === sessionId);
+    }
+
+    if (session) {
+      try {
+        await Promise.all([
+          CalendarService.addToGoogle(email, session),
+          CalendarService.addToOutlook(email, session)
+        ]);
+        res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
+      } catch (err) {
+        console.error("[Calendar] Failed to schedule reminders:", err);
+        // Still return success if user was saved, but calendar failed
+        res.json({ success: true, message: "You're on the list! (Calendar invites failed)" });
+      }
+    } else {
+      // No session found, but user is saved as 'Global Interest'
+      res.json({ success: true, message: "We'll notify you when the next session is scheduled." });
     }
   });
   app.post('/api/notifications/subscribe', async (req, res) => {
-    const subscription = req.body;
-    console.log('[Notifications] New subscription:', subscription);
-    // In a real app, save this to the 'users' table or a 'subscriptions' table.
-    // Since I don't want to change the schema extensively, I'll just log it.
-    // If 'users' table has 'pushToken', I could try to update it if I knew the user ID or email.
-    // But for now, just success.
+    const { email, subscription } = req.body;
+    console.log('[Notifications] New subscription:', email, subscription);
+
+    if (email) {
+      try {
+        let user = await storage.getUserByEmail(email);
+        const token = JSON.stringify(subscription);
+        if (user) {
+          await storage.updateUserPushToken(email, token);
+        } else {
+          await storage.createUser({ email, pushToken: token });
+        }
+      } catch (err) {
+        console.error("Failed to persist subscription user:", err);
+      }
+    }
+
     res.json({ success: true });
   });
 

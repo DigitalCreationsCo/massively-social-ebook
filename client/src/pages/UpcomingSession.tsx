@@ -70,29 +70,32 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
 
     const handleReminder = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!nextSession || !email) return;
+        if (!email) return;
         setReminding(true);
         try {
             const res = await fetch(api.sessions.reminder.path, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sessionId: nextSession.id,
+                    sessionId: nextSession?.id, // Will be undefined if no session
                     email
                 })
             });
 
-            if (!res.ok) throw new Error("Failed to schedule reminder");
+            // Even if 404 (no session), we might have saved the user as 'Global Interest'
+            // So we treat 404 as success too, or check for success in body
+            if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
 
             toast({
-                title: "Calendar Sync Triggered",
-                description: "We've sent a request to add this to your Google and Outlook calendars.",
+                title: "You're on the list!",
+                description: "We'll notify you when the next session is scheduled.",
             });
             setIsDialogOpen(false);
+            setEmail("");
         } catch (err) {
             toast({
                 title: "Error",
-                description: "Could not schedule calendar reminder.",
+                description: "Could not subscribe. Please try again.",
                 variant: "destructive"
             });
         } finally {
@@ -146,8 +149,8 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
     if (isLoading || sessionStatus === 'loading') {
         return (
             <div className="h-screen w-full bg-black flex flex-col items-center justify-center text-primary">
-                <Loader2 className="w-10 h-10 animate-spin mb-4" />
-                <p className="font-serif tracking-widest text-sm text-white/60 uppercase">Checking schedule...</p>
+                <Loader2 className="w-10 h-10 animate-spin mb-4 text-white/60" />
+                <p className="font-serif tracking-widest text-sm text-white/60">Loading...</p>
             </div>
         );
     }
@@ -157,13 +160,13 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             <div className="h-screen w-full bg-black flex flex-col items-center justify-center p-6 text-center">
                 <div className="max-w-md space-y-6">
                     <BookOpen className="w-16 h-16 text-primary mx-auto animate-pulse" />
-                    <h1 className="text-4xl font-serif text-white tracking-tight">Active Now</h1>
-                    <p className="text-white/60 font-serif italic">The tome is open and the story is unfolding.</p>
+                    <h1 className="text-4xl font-serif text-white tracking-tight">The Room Is Open</h1>
+                    <p className="text-white/60 font-serif">Starting...</p>
                     <Button
                         onClick={ () => setLocation('/') }
                         className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-sans uppercase tracking-widest py-6"
                     >
-                        Enter the Story
+                        Join
                     </Button>
                 </div>
             </div>
@@ -185,30 +188,25 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
                         <CardHeader className="text-center pb-0 pt-12">
-                            { isScheduled ? (
-                                <>
+
                                     <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
-                                        The next story starts soon
+                                The next story starts soon.
                                     </CardTitle>
                                     <CardDescription className="text-white/80 font-sans text-lg">
-                                        <>Join {
-                                            isToday(new Date(nextSession.scheduledStart)) ? "today" :
+                                { isScheduled && (
+                                    <>
+                                        Join { isToday(new Date(nextSession.scheduledStart)) ? "today" :
                                                 isTomorrow(new Date(nextSession.scheduledStart)) ? "tomorrow" :
                                                     format(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
-                                        } at <span>{ format(new Date(nextSession.scheduledStart), "h:mm a") }</span></>
-                                    </CardDescription>
-                                </>
-                            ) : (
-                                    <CardDescription className="text-white/80 font-sans text-lg">
-                                        The next story will be scheduled soon.
-                                    </CardDescription>
-                            ) }
+                                        } at <span>{ format(new Date(nextSession.scheduledStart), "h:mm a") }</span>
+                                    </>
+                                ) }
+                            </CardDescription>
                         </CardHeader>
 
                         <CardContent className="space-y-10 pt-8 pb-12 px-8">
-                            { isScheduled ? (
                                 <div className="space-y-10">
-                                    <div className="space-y-4">
+                                { nextSession && (<div className="space-y-4">
                                         <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
                                         <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
                                             <h2 className="text-2xl font-serif text-white text-center mb-4 leading-tight">{ nextSession.title }</h2>
@@ -217,7 +215,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                                 {/* description: { nextSession.description } */ }
                                             </p>
                                         </div>
-                                    </div>
+                                </div>) }
 
                                     <div className="space-y-4">
                                         <Dialog open={ isDialogOpen } onOpenChange={ setIsDialogOpen }>
@@ -231,8 +229,8 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                             <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
                                                 <DialogHeader>
                                                     <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
-                                                    <DialogDescription className="text-white/60 font-serif text-base">
-                                                        Enter your email address to receive an invitation before this session starts.
+                                                <DialogDescription className="text-white/60 font-sans text-sm">
+                                                    Enter your email address to receive an invitation to the next session.
                                                     </DialogDescription>
                                                 </DialogHeader>
                                                 <form onSubmit={ handleReminder } className="space-y-6 py-6">
@@ -245,14 +243,14 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                                             required
                                                             value={ email }
                                                             onChange={ (e) => setEmail(e.target.value) }
-                                                            className="bg-white/5 border-white/10 focus:border-primary/50 h-14 text-lg"
+                                                        className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
                                                         />
                                                     </div>
                                                     <DialogFooter>
                                                         <Button
                                                             type="submit"
-                                                            disabled={ reminding }
-                                                            className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg tracking-widest shadow-lg"
+                                                        disabled={ reminding }
+                                                        className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
                                                         >
                                                             {/* { reminding ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Bell className="w-5 h-5 mr-3" /> } */ }
                                                             Confirm
@@ -263,22 +261,16 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                         </Dialog>
 
                                         <Button 
-                                            variant="ghost"
-                                            className="w-full text-white/40 hover:text-white hover:bg-white/5 font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
+                                        variant="secondary"
+                                        className="w-full font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
                                             onClick={ () => {
                                                 document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
                                             } }
                                         >
                                             Preview chapter
-                                        </Button>
-                                    </div>
+                                    </Button>
                                 </div>
-                            ) : (
-                                <div className="py-20 text-center space-y-6 grayscale opacity-30">
-                                    <p className="text-white/60 font-sans text-xl">The next story will be scheduled soon.</p>
-                                </div>
-                            ) }
-
+                            </div>
                             <div className="pt-8 border-t border-white/5 text-center">
                                 <p className="text-[10px] text-white/20 uppercase tracking-[0.5em]">
                                     The 25th Chapter
@@ -290,7 +282,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             </div>
 
             {/* Preview Section */ }
-            <section id="preview" className="flex items-center w-full max-w-6xl px-6 mt-32 space-y-32 min-h-screen">
+            <section id="preview" className="flex items-center w-full max-w-6xl px-6 mt-16 space-y-32 min-h-screen">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-start">
                     {/* Mockup Display */ }
                     <div className="lg:col-span-8 space-y-8">
@@ -338,12 +330,13 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                             <div className="space-y-3">
                                 <h3 className="text-lg font-serif text-white">How do decisions work?</h3>
                                 <p className="text-white/50 font-sans text-sm leading-relaxed">
-                                    Readers decide on key plot points with a community vote. The path with the most support becomes part of the story.
+                                    Readers decide on key plot points with a community vote. The path with the most votes becomes part of the story.
                                 </p>
                             </div>
                         </div>
 
                         <Button
+                            variant="secondary"
                             className="w-full bg-white/10 hover:bg-white/20 text-white font-serif tracking-widest py-6 border border-white/10"
                             onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
                         >
