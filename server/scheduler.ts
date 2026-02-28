@@ -3,6 +3,7 @@ import { CHANNELS } from '@shared/channels';
 import { sendEmail, sendPushNotification } from './notifications';
 import { type Session } from '@shared/schema';
 import { logger } from './logger';
+import { getMSTDateString, createMSTDate, formatMST } from '@shared/date';
 
 const CURSOR_KEY = 'notification_cursor';
 const LOOP_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -188,32 +189,31 @@ async function processEvent(event: ScheduledEvent, now: number) {
 
 export async function seedDailySessions() {
     const now = new Date();
+    const mstNowStr = getMSTDateString(now);
     
     for (const channelId of CHANNELS) {
         // Check if we already have sessions scheduled for today
         const existing = await storage.listSessions(channelId, 'scheduled');
         const todaySessions = existing.filter(s => {
-            const start = new Date(s.scheduledStart);
-            return start.getFullYear() === now.getFullYear() &&
-                   start.getMonth() === now.getMonth() &&
-                   start.getDate() === now.getDate();
+            const startStr = getMSTDateString(s.scheduledStart);
+            return startStr === mstNowStr;
         });
 
         if (todaySessions.length === 0) {
-            logger.debug(`Seeding sessions for ${channelId} for ${now.toDateString()}`, 'scheduler');
+            logger.debug(`Seeding sessions for ${channelId} for ${mstNowStr} (MST)`, 'scheduler');
             
             // Schedule one session for tonight
-            // Sci-fi at 19:00, Mystery at 20:00
+            // Sci-fi at 19:00, Mystery at 20:00 (Mountain Time)
             const hour = channelId === 'scifi' ? 19 : 20;
-            const start = new Date(now);
-            start.setHours(hour, 0, 0, 0);
+            const start = createMSTDate(now, hour, 0, 0);
             
             const end = new Date(start.getTime() + 25 * 60 * 1000); // 25 minutes later
 
+            // Extract the day part of the MST date string for the title
+            const dayOfMonth = mstNowStr.split('-')[2];
             const title = channelId === 'scifi' 
-                ? `Galactic Horizon: Entry ${now.getDate()}`
-                : `Midnight Alibi: Case ${now.getDate()}`;
-            
+                ? `Galactic Horizon: Entry ${dayOfMonth}`
+                : `Midnight Alibi: Case ${dayOfMonth}`;
             const description = channelId === 'scifi'
                 ? "The journey across the stars continues. What awaits the crew in the deep void?"
                 : "A new mystery unfolds in the heart of the foggy city. Can you spot the clues?";
@@ -226,7 +226,7 @@ export async function seedDailySessions() {
                     scheduledStart: start,
                     scheduledEnd: end
                 });
-                logger.info(`Created session: ${title} at ${start.toLocaleTimeString()}`, 'scheduler');
+                logger.info(`Created session: ${title} at ${formatMST(start, "yyyy-MM-dd'T'HH:mm:ssXXX")} MST`, 'scheduler');
             } catch (err) {
                 logger.error(`Failed to create session for ${channelId}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
             }
@@ -256,7 +256,7 @@ export async function dispatchWeeklyBriefing() {
     }
 
     const scheduleList = upcoming
-        .map(s => `- ${s.title}: ${new Date(s.scheduledStart).toLocaleString()}`)
+        .map(s => `- ${s.title}: ${formatMST(s.scheduledStart, "EEEE, MMMM do 'at' h:mm a")} MST`)
         .join('\n');
 
     const subject = "Your Weekly 25th Chapter Schedule";

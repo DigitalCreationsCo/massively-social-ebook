@@ -4,7 +4,7 @@ import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Bell, Loader2, BookOpen, Mail } from "lucide-react";
-import { format, isToday, isTomorrow } from "date-fns";
+import { formatMST, isTodayMST, isTomorrowMST } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
@@ -195,10 +195,10 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                     <CardDescription className="text-white/80 font-sans text-lg">
                                 { isScheduled && (
                                     <>
-                                        Join { isToday(new Date(nextSession.scheduledStart)) ? "today" :
-                                                isTomorrow(new Date(nextSession.scheduledStart)) ? "tomorrow" :
-                                                    format(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
-                                        } at <span>{ format(new Date(nextSession.scheduledStart), "h:mm a") }</span>
+                                        Join { isTodayMST(new Date(nextSession.scheduledStart)) ? "today" :
+                                                isTomorrowMST(new Date(nextSession.scheduledStart)) ? "tomorrow" :
+                                                    formatMST(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
+                                        } at <span>{ formatMST(new Date(nextSession.scheduledStart), "h:mm a") } MST</span>
                                     </>
                                 ) }
                             </CardDescription>

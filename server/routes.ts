@@ -11,6 +11,7 @@ import { CalendarService } from "./calendar";
 import { isAdmin, isDevOnly } from "./middleware/auth";
 import { logger } from "./logger";
 
+import { formatMST } from "@shared/date";
 interface PendingBlock {
   promise: Promise<{
     title: string;
@@ -273,7 +274,7 @@ export async function registerRoutes(
   });
 
   app.patch(api.admin.sessions.cancel.path, isAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
+    const id = parseInt(String(req.params.id));
     const session = await storage.cancelSession(id);
     res.json(session);
   });
@@ -588,7 +589,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           // This ensures the progress bar counts down smoothly from the start of the reading sequence
           // until the decision phase begins.
 
-          logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
+          logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
@@ -635,7 +636,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.phaseEndsAt = now + VOTING_PHASE_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
           st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-          logger.info(`ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`, "gameloop");
+          logger.info(`ENTERING VOTING PHASE. Ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST`, "gameloop");
         }
       } else {
         // Voting phase ended: tally votes and generate next block
@@ -644,7 +645,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.turnsToNextChoice = getRandomTurns();
         st.decisionEndsAt = computeDecisionEndsAt(st);
         st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-        logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`, "gameloop");
+        logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${formatMST(st.decisionEndsAt, "h:mm:ss a")} MST`, "gameloop");
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);

@@ -35,7 +35,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/Checking schedule/i)).toBeInTheDocument();
+        expect(screen.getByText(/Loading\.\.\./i)).toBeInTheDocument();
     });
 
     it('renders "Active Now" when sessionStatus is active', () => {
@@ -51,8 +51,8 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/Active Now/i)).toBeInTheDocument();
-        expect(screen.getByText(/Enter the Story/i)).toBeInTheDocument();
+        expect(screen.getByText(/The Room Is Open/i)).toBeInTheDocument();
+        expect(screen.getByText(/Join/i)).toBeInTheDocument();
     });
 
     it('renders session details when sessionStatus is scheduled', () => {
@@ -82,7 +82,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/The library is currently silent/i)).toBeInTheDocument();
+        expect(screen.getByText(/The next story starts soon/i)).toBeInTheDocument();
     });
 
     it('redirects to root when session becomes active via effect', () => {
@@ -123,10 +123,10 @@ describe('UpcomingSession Component', () => {
         fireEvent.click(button);
 
         // Fill email and submit
-        const emailInput = screen.getByLabelText(/Universal Address/i);
+        const emailInput = screen.getByLabelText(/Email Address/i);
         fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
 
-        const confirmButton = screen.getByText(/Confirm Reminder/i);
+        const confirmButton = screen.getByText("Confirm");
         fireEvent.click(confirmButton);
 
         await waitFor(() => {
@@ -138,7 +138,7 @@ describe('UpcomingSession Component', () => {
         }, { timeout: 2000 });
 
         expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
-            title: "Calendar Sync Triggered"
+            title: "You're on the list!"
         }));
     });
 });

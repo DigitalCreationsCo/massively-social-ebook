@@ -54,6 +54,6 @@ describe('Admin Security Middleware', () => {
 
     it('blocks access to debug endpoint without a token', async () => {
         const response = await request(app).post('/api/debug/sessions/resolve');
-        expect(response.status).toBe(401);
+        expect(response.status).toBe(403); // isDevOnly in production returns 403
     });
 });

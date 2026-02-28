@@ -80,7 +80,7 @@ describe('SessionScheduler', () => {
         startRecurringScheduler();
         
         // Advance time to trigger interval
-        await vi.advanceTimersByTimeAsync(11000); // 11s > 10s interval
+        await vi.advanceTimersByTimeAsync(31000); // 31s > 30s interval
 
         expect(mockedStorage.getSystemSetting).toHaveBeenCalledWith('notification_cursor');
         expect(mockedStorage.setSystemSetting).toHaveBeenCalledWith('notification_cursor', expect.any(String));

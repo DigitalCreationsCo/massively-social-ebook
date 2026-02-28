@@ -17,7 +17,6 @@ import {
   type InsertUser,
   users,
   systemSettings,
-  systemSettings,
   notificationLogs,
   type InsertNotificationLog,
   type NotificationLog,
