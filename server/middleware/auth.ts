@@ -9,3 +9,10 @@ export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
 
   res.status(401).json({ message: "Unauthorized: Admin token required" });
 };
+
+export const isDevOnly = (_req: Request, res: Response, next: NextFunction) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ message: "Forbidden: Debugging tools are disabled in production" });
+  }
+  next();
+};

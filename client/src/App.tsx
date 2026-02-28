@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
+import { DebugTools } from "@/components/DebugTools";
 
 function Router() {
   return (
@@ -27,6 +28,7 @@ function App() {
         <Toaster />
         <UpdatePrompt />
         <Router />
+        { import.meta.env.DEV && <DebugTools channelId="m2w4k" /> }
       </TooltipProvider>
     </QueryClientProvider>
   );

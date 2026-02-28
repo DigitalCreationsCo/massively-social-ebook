@@ -70,12 +70,12 @@ export function DecisionPhase({
             ) }
           </div>
         </div>
-        { !isDecisionAvailable && phase !== 'resolution' && totalSecondsToChoice > 0 && (
+        {/* { !isDecisionAvailable && phase !== 'resolution' && totalSecondsToChoice > 0 && (
           <motion.div className="flex items-center gap-2 text-xs font-mono text-primary/80 tracking-widest uppercase">
             <Timer className="w-4 h-4 text-white/40" />
             Next choice in { timeStr }
           </motion.div>
-        ) }
+        ) } */}
       </div>
 
       {/* Voting Area */}
@@ -146,16 +146,18 @@ export function DecisionPhase({
 
       {/* Progress Bar */ }
       <div className="w-full h-1.5 bg-white/10 overflow-hidden">
-        <motion.div
-          role="progressbar"
-          aria-valuenow={ Math.round(progressPercent) }
-          aria-valuemin={ 0 }
-          aria-valuemax={ 100 }
-          className={ cn("h-full", phase === 'reading' ? "bg-white/30" : "bg-primary") }
+        { phase !== 'resolution' && (
+          <motion.div
+            role="progressbar"
+            aria-valuenow={ Math.round(progressPercent) }
+            aria-valuemin={ 0 }
+            aria-valuemax={ 100 }
+            className={ cn("h-full", phase === 'reading' ? "bg-white/30" : "bg-primary") }
           initial={ { width: `${progressPercent}%` } }
           animate={ { width: `${progressPercent}%` } }
           transition={ { ease: "linear", duration: 1 } }
         />
+        ) }
       </div>
 
     </div>

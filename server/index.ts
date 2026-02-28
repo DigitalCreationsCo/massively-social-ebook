@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./scheduler";
+import { logger, createRequestLogger } from "./logger";
 
 const app = express();
 const httpServer = createServer(app);
@@ -23,7 +24,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-  app.use((req, res, next) => {
+app.use((req, res, next) => {
   const allowedOrigins = [process.env.CLIENT_ORIGIN, "http://localhost:5000"];
   const origin = req.headers.origin || "";
   
@@ -40,44 +41,9 @@ app.use(express.urlencoded({ extended: false }));
   } else {
     next();
   }
-  });
-
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
 });
+
+app.use(createRequestLogger());
 
 (async () => {
   await registerRoutes(httpServer, app);
@@ -87,7 +53,12 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    logger.error(
+      "Internal Server Error",
+      "express",
+      err instanceof Error ? err : new Error(String(err)),
+      { status, message }
+    );
 
     if (res.headersSent) {
       return next(err);
@@ -118,7 +89,8 @@ app.use((req, res, next) => {
       // reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      logger.info(`Server starting on port ${port}`, "server");
+      logger.info(`🚀 serving on port ${port}`, "server");
     },
   );
 })();

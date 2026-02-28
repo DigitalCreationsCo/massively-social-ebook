@@ -1,17 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 
 vi.mock('@google/genai', () => ({
     GoogleGenAI: class { },
     Type: { OBJECT: 'object', STRING: 'string' }
-}));
-
-vi.mock('node:fs/promises', () => ({
-    default: {
-        mkdir: vi.fn(),
-        writeFile: vi.fn()
-    }
 }));
 
 // Mock the RAG module so AI tests remain isolated
@@ -102,34 +93,107 @@ describe('AI Generators', () => {
             const calledPrompt = (ai.models.generateContent as any).mock.calls[ 0 ][ 0 ].contents;
             expect(calledPrompt).toContain('Story So Far');
         });
+
+        it('should remove options when isResolution is true', async () => {
+            (ai.models.generateContent as any).mockResolvedValueOnce({
+                text: JSON.stringify({
+                    title: 'Resolution Title',
+                    content: 'Resolution content.',
+                    optionA: { label: 'A', description: 'desc A' },
+                    optionB: { label: 'B', description: 'desc B' },
+                })
+            });
+
+            const result = await generateStoryBlock('scifi', 'Previous', true);
+
+            expect(result.optionA).toBeUndefined();
+            expect(result.optionB).toBeUndefined();
+            expect(result.title).toBe('Resolution Title');
+        });
     });
 
     describe('generateStoryImage', () => {
-        it('should generate an image and save it locally', async () => {
-            (ai.models.generateImages as any).mockResolvedValueOnce({
-                generatedImages: [ {
-                    image: {
-                        imageBytes: 'YmFzZTY0dGVzdGk=' // base64 for "base64testi"
+        it('should generate an image and return data URL', async () => {
+            const base64Image = 'YmFzZTY0dGVzdGk='; // base64 for "base64testi"
+            
+            (ai.models.generateContent as any).mockResolvedValueOnce({
+                candidates: [{
+                    content: {
+                        parts: [{
+                            inlineData: {
+                                data: base64Image
+                            }
+                        }]
                     }
-                } ]
+                }]
             });
 
-            const url = await generateStoryImage('A test image description');
+            const result = await generateStoryImage('A test image description');
 
-            expect(ai.models.generateImages).toHaveBeenCalledTimes(1);
-            expect(url).toMatch(/^\/images\/img_\d+_[a-z0-9]+\.jpg$/);
-
-            expect(fs.mkdir).toHaveBeenCalledWith(expect.stringContaining(path.join('client', 'public', 'images')), { recursive: true });
-            expect(fs.writeFile).toHaveBeenCalledTimes(1);
+            expect(ai.models.generateContent).toHaveBeenCalledTimes(1);
+            expect(ai.models.generateContent).toHaveBeenCalledWith({
+                model: 'gemini-2.5-flash-image',
+                contents: expect.any(String),
+                config: {
+                    responseModalities: ["image"],
+                    candidateCount: 1,
+                    imageConfig: {
+                        aspectRatio: "16:9",
+                    }
+                }
+            });
+            expect(result).toBe(`data:image/jpeg;base64,${base64Image}`);
         });
 
         it('should return fallback image if no image data is returned', async () => {
-            (ai.models.generateImages as any).mockResolvedValueOnce({
-                generatedImages: []
+            (ai.models.generateContent as any).mockResolvedValueOnce({
+                candidates: [{
+                    content: {
+                        parts: []
+                    }
+                }]
             });
 
             const url = await generateStoryImage('A test image description');
             expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+        });
+
+        it('should return fallback image if candidates is undefined', async () => {
+            (ai.models.generateContent as any).mockResolvedValueOnce({});
+
+            const url = await generateStoryImage('A test image description');
+            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+        });
+
+        it('should return fallback image if content is undefined', async () => {
+            (ai.models.generateContent as any).mockResolvedValueOnce({
+                candidates: [{}]
+            });
+
+            const url = await generateStoryImage('A test image description');
+            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+        });
+
+        it('should return fallback image on API error', async () => {
+            (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
+
+            const url = await generateStoryImage('A test image description');
+            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+        });
+
+        it('should log warning on fallback', async () => {
+            const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            
+            (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
+
+            await generateStoryImage('A test image description');
+
+            expect(consoleWarnSpy).toHaveBeenCalledWith(
+                'Failed to generate image, using fallback:',
+                expect.any(Error)
+            );
+            
+            consoleWarnSpy.mockRestore();
         });
     });
 });

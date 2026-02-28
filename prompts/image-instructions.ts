@@ -1,1 +1,1 @@
-export const createImageInstructions = ({ description }: { description: string; }) => `${description} Post-modern style. Hi-res stock footage.`;
+export const createImageInstructions = ({ description }: { description: string; }) => `${description} Post-modern style. Cinematic, high resolution, stock footage. Image must be grounded in reality: no overlays, no artifacts. No text.`;

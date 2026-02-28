@@ -15,7 +15,12 @@ import {
   type SessionStatus,
   type User,
   type InsertUser,
-  users
+  users,
+  systemSettings,
+  systemSettings,
+  notificationLogs,
+  type InsertNotificationLog,
+  type NotificationLog,
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql } from "drizzle-orm";
 export interface IStorage {
@@ -37,6 +42,12 @@ export interface IStorage {
   // User methods
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  updateUserPushToken(email: string, token: string): Promise<User>;
+  getSystemSetting(key: string): Promise<string | undefined>;
+  setSystemSetting(key: string, value: string): Promise<void>;
+  createNotificationLog(log: InsertNotificationLog): Promise<void>;
+  getNotificationLog(type: string, targetId: string): Promise<NotificationLog | undefined>;
 }
 export class DatabaseStorage implements IStorage {
   async getCurrentBlock(channelId: string): Promise<Block | undefined> {
@@ -205,5 +216,54 @@ export class DatabaseStorage implements IStorage {
     const [ newUser ] = await db.insert(users).values(user).returning();
     return newUser;
   }
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async updateUserPushToken(email: string, token: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ pushToken: token })
+      .where(eq(users.email, email))
+      .returning();
+    return user;
+  }
+  // ─── System Settings & Notification Logs ───────────────────────────
+
+  async getSystemSetting(key: string): Promise<string | undefined> {
+    const [setting] = await db
+      .select()
+      .from(systemSettings)
+      .where(eq(systemSettings.key, key));
+    return setting?.value;
+  }
+
+  async setSystemSetting(key: string, value: string): Promise<void> {
+    await db
+      .insert(systemSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({
+        target: systemSettings.key,
+        set: { value, updatedAt: new Date() },
+      });
+  }
+
+  async createNotificationLog(log: InsertNotificationLog): Promise<void> {
+    await db.insert(notificationLogs).values(log);
+  }
+
+  async getNotificationLog(type: string, targetId: string): Promise<NotificationLog | undefined> {
+    const [log] = await db
+      .select()
+      .from(notificationLogs)
+      .where(and(
+        eq(notificationLogs.type, type),
+        eq(notificationLogs.targetId, targetId)
+      ))
+      .limit(1);
+    return log;
+  }
 }
+
 export const storage = new DatabaseStorage();

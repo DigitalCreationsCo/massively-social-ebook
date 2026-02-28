@@ -8,7 +8,8 @@ import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/sch
 import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
 import { trackUserEmail } from "./analytics";
 import { CalendarService } from "./calendar";
-import { isAdmin } from "./middleware/auth";
+import { isAdmin, isDevOnly } from "./middleware/auth";
+import { logger } from "./logger";
 
 interface PendingBlock {
   promise: Promise<{
@@ -66,12 +67,12 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
       try {
         imageUrl = await generateStoryImage(nextContent.content);
       } catch (imageErr) {
-        console.warn(`Image generation failed for ${channelId}, using fallback:`, imageErr);
+        logger.warn(`Image generation failed for ${channelId}, using fallback`, "ai", imageErr);
         imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
       }
       return { ...nextContent, imageUrl };
     } catch (err) {
-      console.error(`Failed to pregenerate option ${option} for ${channelId}:`, err);
+      logger.error(`Failed to pregenerate option ${option} for ${channelId}`, "routes", err instanceof Error ? err : new Error(String(err)));
       // Fallback
       return {
         title: "Temporal Distortion",
@@ -91,7 +92,7 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
 }
 
 async function startSessionForChannel(channelId: Channel, session: Session, broadcast: (channelId: Channel, message: WsMessage) => void) {
-  console.log(`[Session] Starting session "${session.title}" for channel ${channelId}`);
+  logger.info(`Starting session "${session.title}" for channel ${channelId}`, "session");
   const st = state[ channelId ];
   st.activeSession = session;
   
@@ -170,36 +171,86 @@ export async function registerRoutes(
     res.json(next || null);
   });
 
+  app.get('/api/sessions/:id/ics', async (req, res) => {
+    const id = parseInt(req.params.id);
+    const sessions = await storage.listSessions();
+    const session = sessions.find(s => s.id === id);
+
+    if (!session) return res.status(404).send('Session not found');
+
+    const icsContent = CalendarService.generateIcs(session);
+    
+    res.setHeader('Content-Type', 'text/calendar');
+    res.setHeader('Content-Disposition', `attachment; filename="session-${id}.ics"`);
+    res.send(icsContent);
+  });
+
   app.post(api.sessions.reminder.path, async (req, res) => {
     const { sessionId, email } = req.body;
     if (!email) return res.status(400).json({ message: "Email is required" });
 
-    const sessionList = await storage.listSessions();
-    const session = sessionList.find(s => s.id === sessionId);
-    if (!session) return res.status(404).json({ message: "Session not found" });
+    // 1. Persist User (Lead Capture) FIRST - We capture leads even if no session exists
+    let user;
+    try {
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        user = existing;
+      } else {
+        user = await storage.createUser({ email });
+      }
+    } catch (err) {
+      logger.error("Failed to persist user", "storage", err instanceof Error ? err : new Error(String(err)));
+      // Already logged above
+      // Continue anyway to attempt calendar add
+    }
 
-    // 1. Capture for Analytics/CRM
+    // 2. Capture for Analytics/CRM
     await trackUserEmail(email, 'session_reminder');
 
-    // 2. Add to Calendar (Google + Outlook)
-    try {
-      await Promise.all([
-        CalendarService.addToGoogle(email, session),
-        CalendarService.addToOutlook(email, session)
-      ]);
-      res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
-    } catch (err) {
-      console.error("[Calendar] Failed to schedule reminders:", err);
-      res.status(500).json({ message: "Failed to schedule calendar reminders" });
+    // 3. Try to add to Calendar if session exists
+    let session = undefined;
+    if (sessionId) {
+      const sessionList = await storage.listSessions();
+      session = sessionList.find(s => s.id === sessionId);
+    }
+
+    if (session) {
+      try {
+        await Promise.all([
+          CalendarService.addToGoogle(email, session),
+          CalendarService.addToOutlook(email, session)
+        ]);
+        res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
+      } catch (err) {
+        logger.error("Failed to schedule reminders", "calendar", err instanceof Error ? err : new Error(String(err)));
+        // Already logged above
+        // Still return success if user was saved, but calendar failed
+        res.json({ success: true, message: "You're on the list! (Calendar invites failed)" });
+      }
+    } else {
+      // No session found, but user is saved as 'Global Interest'
+      res.json({ success: true, message: "We'll notify you when the next session is scheduled." });
     }
   });
   app.post('/api/notifications/subscribe', async (req, res) => {
-    const subscription = req.body;
-    console.log('[Notifications] New subscription:', subscription);
-    // In a real app, save this to the 'users' table or a 'subscriptions' table.
-    // Since I don't want to change the schema extensively, I'll just log it.
-    // If 'users' table has 'pushToken', I could try to update it if I knew the user ID or email.
-    // But for now, just success.
+    const { email, subscription } = req.body;
+    logger.info(`New subscription: ${email}`, "notifications", { subscription });
+
+    if (email) {
+      try {
+        let user = await storage.getUserByEmail(email);
+        const token = JSON.stringify(subscription);
+        if (user) {
+          await storage.updateUserPushToken(email, token);
+        } else {
+          await storage.createUser({ email, pushToken: token });
+        }
+      } catch (err) {
+
+        logger.error("Failed to persist subscription user", "storage", err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+
     res.json({ success: true });
   });
 
@@ -227,14 +278,99 @@ export async function registerRoutes(
     res.json(session);
   });
 
-  app.post('/api/debug/sessions/resolve', isAdmin, async (req, res) => {
+  app.post('/api/debug/sessions/start', isDevOnly, isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (st.activeSession) {
+      return res.status(400).json({ success: false, message: "A session is already active for this channel" });
+    }
+
+    // Find next scheduled, or create dummy
+    let session = await storage.getNextSession(channelId);
+    if (!session) {
+      session = await storage.createSession({
+        channelId,
+        title: `Debug Session ${new Date().toISOString()}`,
+        description: "Manually triggered debug session",
+        scheduledStart: new Date(),
+        scheduledEnd: new Date(Date.now() + 3600000) // 1 hour
+      });
+    }
+
+    await startSessionForChannel(channelId, session, (cid, msg) => {
+      // Broadcast helper inside registerRoutes can be used if we closure it, but we can just use the local broadcast
+      const payload = JSON.stringify(msg);
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN && clientChannels.get(client) === cid) {
+          client.send(payload);
+        }
+      });
+    });
+
+    res.json({ success: true, message: "Session started", session });
+  });
+
+  app.post('/api/debug/sessions/skip', isDevOnly, isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    logger.debug(`Skipping phase for channel ${channelId}`, "debug");
+    st.phaseEndsAt = Date.now(); // Trigger immediate transition on next tick
+    res.json({ success: true, message: "Phase skip triggered" });
+  });
+
+  app.post('/api/debug/sessions/tally', isDevOnly, isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    if (st.currentPhase !== 'voting') {
+      return res.status(400).json({ success: false, message: "Not in voting phase" });
+    }
+
+    logger.debug(`Forcing tally for channel ${channelId}`, "debug");
+    st.phaseEndsAt = Date.now(); // Trigger end of voting phase
+    res.json({ success: true, message: "Tally forced" });
+  });
+
+  app.post('/api/debug/sessions/narrative', isDevOnly, isAdmin, async (req, res) => {
+    const { channelId: obfId } = req.body;
+    const channelId = getRealChannelId(obfId) as Channel;
+    const st = state[ channelId ];
+
+    if (!st.activeSession) {
+      return res.status(404).json({ success: false, message: "No active session" });
+    }
+
+    if (st.turnsToNextChoice <= 0) {
+      return res.status(400).json({ success: false, message: "Already at decision phase" });
+    }
+
+    logger.debug(`Forcing narrative turn for channel ${channelId}`, "debug");
+    st.phaseEndsAt = Date.now(); // Trigger next turn
+    res.json({ success: true, message: "Narrative turn forced" });
+  });
+
+  app.post('/api/debug/sessions/resolve', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
     const channelId = getRealChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (st && st.activeSession) {
-      console.log(`[Debug] Forcing resolution for channel ${channelId}`);
+      logger.debug(`Forcing resolution for channel ${channelId}`, "debug");
       st.activeSession.scheduledEnd = new Date();
+      st.phaseEndsAt = Date.now(); // Trigger immediately
       res.json({ success: true, message: "Resolution triggered" });
     } else {
       res.status(404).json({ success: false, message: "No active session for this channel" });
@@ -297,7 +433,7 @@ export async function registerRoutes(
 
     if (debug) {
       if (token !== process.env.ADMIN_TOKEN && (process.env.NODE_ENV === 'production' || token !== 'dev-token')) {
-        console.warn(`[WS] Unauthorized debug access attempt for channel ${rawChannelId}`);
+        logger.warn(`Unauthorized debug access attempt for channel ${rawChannelId}`, "ws");
         ws.close(4001, "Unauthorized focus");
         return;
       }
@@ -372,7 +508,8 @@ export async function registerRoutes(
           }
         }
       } catch (err) {
-        console.error("WS message error", err);
+        logger.error("WS message error", "ws", err instanceof Error ? err : new Error(String(err)));
+        // Already logged above
       }
     });
 
@@ -403,7 +540,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
       continue; // Skip game loop if no session is active
     } else if (st.currentPhase !== 'resolution' && now >= st.activeSession.scheduledEnd.getTime()) {
       // Trigger resolution phase instead of abrupt end
-      console.log(`[Session] Session "${st.activeSession.title}" for channel ${channelId} reaching scheduled end. Entering resolution.`);
+      logger.info(`Session "${st.activeSession.title}" for channel ${channelId} reaching scheduled end. Entering resolution.`, "session");
       st.currentPhase = 'resolution';
       st.phaseEndsAt = now + NARRATIVE_TURN_MS;
       st.turnsToNextChoice = 0;
@@ -421,13 +558,14 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
           }
           st.currentBlock = await storage.createBlock({ channelId, ...nextContent, imageUrl });
-          console.log(`[GameLoop] ${channelId}: Resolution block generated: ${st.currentBlock.id}`);
+          logger.info(`Resolution block generated: ${st.currentBlock.id}`, "gameloop");
         } catch (err) {
-          console.error("Failed to generate resolution block:", err);
+          logger.error("Failed to generate resolution block", "gameloop", err instanceof Error ? err : new Error(String(err)));
+        // Already logged above
         }
       }
     } else if (st.currentPhase === 'resolution' && now >= st.phaseEndsAt) {
-      console.log(`[Session] Ending session "${st.activeSession.title}" for channel ${channelId} after resolution.`);
+      logger.info(`Ending session "${st.activeSession.title}" for channel ${channelId} after resolution.`, "session");
       await storage.updateSessionStatus(st.activeSession.id, 'completed');
       const finishedSession = st.activeSession;
       st.activeSession = undefined;
@@ -450,7 +588,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           // This ensures the progress bar counts down smoothly from the start of the reading sequence
           // until the decision phase begins.
 
-          console.log(`[GameLoop] ${channelId}: Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`);
+          logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
 
           // Advance story using option A as default for narrative progression
           if (st.currentBlock) {
@@ -485,9 +623,10 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
 
               pregenerateOption(channelId, st, 'A');
               pregenerateOption(channelId, st, 'B');
-              console.log(`[GameLoop] ${channelId}: Advanced story to block ${st.currentBlock.id}`);
+              logger.info(`Advanced story to block ${st.currentBlock.id}`, "gameloop");
             } catch (err) {
-              console.error("Failed to advance narrative:", err);
+              logger.error("Failed to advance narrative", "gameloop", err instanceof Error ? err : new Error(String(err)));
+              // Already logged above, removing duplicate
             }
           }
         } else {
@@ -496,7 +635,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
           st.phaseEndsAt = now + VOTING_PHASE_MS;
           st.decisionEndsAt = computeDecisionEndsAt(st);
           st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-          console.log(`[GameLoop] ${channelId}: ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`);
+          logger.info(`ENTERING VOTING PHASE. Ends at: ${new Date(st.phaseEndsAt).toLocaleTimeString()}`, "gameloop");
         }
       } else {
         // Voting phase ended: tally votes and generate next block
@@ -505,7 +644,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.turnsToNextChoice = getRandomTurns();
         st.decisionEndsAt = computeDecisionEndsAt(st);
         st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-        console.log(`[GameLoop] ${channelId}: VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`);
+        logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${new Date(st.decisionEndsAt).toLocaleTimeString()}`, "gameloop");
 
         if (st.currentBlock) {
           const votes = await storage.getVotesForBlock(st.currentBlock.id);
@@ -530,7 +669,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
               try {
                 imageUrl = await generateStoryImage(nextContent.content);
               } catch (imageErr) {
-                console.warn(`Game loop image generation failed for ${channelId}, using fallback:`, imageErr);
+                logger.warn(`Game loop image generation failed for ${channelId}, using fallback`, "gameloop", imageErr);
+                // Already logged above
                 imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
               }
               nextData = { ...nextContent, imageUrl };
@@ -548,7 +688,8 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             pregenerateOption(channelId, st, 'A');
             pregenerateOption(channelId, st, 'B');
           } catch (err) {
-            console.error("Failed to adopt next block:", err);
+            logger.error("Failed to adopt next block", "gameloop", err instanceof Error ? err : new Error(String(err)));
+            // Already logged above
             // Fallback
             st.currentBlock = await storage.createBlock({
               channelId,

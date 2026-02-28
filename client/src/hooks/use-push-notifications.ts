@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useToast } from "@/hooks/use-toast";
+import type { Session } from "@shared/schema";
 
 // Helper to convert VAPID key
 function urlBase64ToUint8Array(base64String: string) {
@@ -91,10 +92,50 @@ export function usePushNotifications() {
       }
     }
   }, []);
+  const scheduleLocalReminders = useCallback((session: Session) => {
+    if (!('Notification' in window)) {
+      console.log('This browser does not support desktop notification');
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      console.log('Notifications not granted for local reminders');
+      return;
+    }
+
+    const start = new Date(session.scheduledStart).getTime();
+    const now = Date.now();
+    
+    // 15 minute warning
+    const timeUntil15 = start - (15 * 60 * 1000) - now;
+    if (timeUntil15 > 0) {
+      setTimeout(() => {
+        new Notification("Upcoming Session", {
+          body: `${session.title} starts in 15 minutes.`,
+          icon: '/favicon.png',
+          tag: `session-${session.id}-15m`
+        });
+      }, timeUntil15);
+    }
+
+    // 5 minute warning
+    const timeUntil5 = start - (5 * 60 * 1000) - now;
+    if (timeUntil5 > 0) {
+      setTimeout(() => {
+        new Notification("Get Ready!", {
+          body: `${session.title} starts in 5 minutes.`,
+          icon: '/favicon.png',
+          tag: `session-${session.id}-5m`
+        });
+      }, timeUntil5);
+    }
+    
+    console.log(`Scheduled local reminders for session ${session.id}`);
+  }, []);
 
   useEffect(() => {
     checkSubscription();
   }, [checkSubscription]);
 
-  return { isSubscribed, isLoading, subscribeUser };
+  return { isSubscribed, isLoading, subscribeUser, scheduleLocalReminders };
 }
