@@ -36,7 +36,10 @@ export default function LiveEbook() {
     voteResults,
     viewerCount,
     mostRecentMessage,
-    sessionStatus
+    sessionStatus,
+    macroPhase,
+    reactions,
+    submitReaction
   } = useLiveState(selectedChannel);
 
   const [ _, setLocation ] = useLocation();
@@ -71,53 +74,6 @@ export default function LiveEbook() {
 
       {/* Header bar from v0 */ }
       <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-end px-5 pt-4 pb-2">
-        {/* Channel selector */ }
-        {/* <div className="flex items-center gap-2">
-        <div className="relative">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={ () => setShowChannelSelector(!showChannelSelector) }
-            className="text-xs font-mono tracking-wider text-foreground border-border bg-background/50 backdrop-blur-sm h-7"
-          >
-            { CHANNELS.find(c => c.id === selectedChannel)?.name }
-          </Button>
-
-          <AnimatePresence>
-            { showChannelSelector && (
-              <motion.div
-                initial={ { opacity: 0, y: -10 } }
-                animate={ { opacity: 1, y: 0 } }
-                exit={ { opacity: 0, y: -10 } }
-                className="absolute top-full left-0 mt-2 bg-background/95 backdrop-blur-md border border-border rounded-lg shadow-lg overflow-hidden z-50"
-              >
-                { CHANNELS.map((channel) => (
-                  <button
-                    key={ channel.id }
-                    onClick={ () => {
-                      setSelectedChannel(channel.id);
-                      setShowChannelSelector(false);
-                    } }
-                    className={ `w-full text-left px-4 py-2 text-sm hover:bg-primary/10 transition-colors ${selectedChannel === channel.id ? 'bg-primary/20 text-primary' : 'text-foreground'
-                      }` }
-                  >
-                    <div className="font-medium">{ channel.name }</div>
-                    <div className="text-xs text-muted-foreground">{ channel.description }</div>
-                  </button>
-                )) }
-              </motion.div>
-            ) }
-          </AnimatePresence>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
-          <Badge variant="outline" className="text-[10px] font-mono tracking-wider text-foreground border-border bg-background/50 backdrop-blur-sm">
-            LIVE
-          </Badge>
-        </div>
-      </div> */}
-
         {/* Live user count from v0 */ }
         <div className="flex items-center gap-4">
           <PushToggle />
@@ -132,33 +88,64 @@ export default function LiveEbook() {
 
       {/* Pane 1: Cinematic Visuals & Narrative */ }
       <section className="relative flex-1 min-h-[40vh] overflow-hidden">
-        <Storyblock block={ currentBlock } />
+        {macroPhase === 'gathering' ? (
+           <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-black z-10">
+             <motion.div 
+               initial={{ opacity: 0 }} 
+               animate={{ opacity: 1 }} 
+               className="space-y-6 max-w-md"
+             >
+               <h1 className="font-serif text-3xl md:text-4xl text-white/90 tracking-widest uppercase">The Gathering</h1>
+               <p className="text-white/60 font-mono text-sm">
+                 The session has begun. Readers are arriving from around the world.
+                 <br/>
+                 The story will start in a few moments.
+               </p>
+               <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto" />
+               <p className="text-xs text-white/40 font-mono animate-pulse">
+                 Introduce yourself in the chat below.
+               </p>
+             </motion.div>
+           </div>
+        ) : (
+           <Storyblock 
+             block={ currentBlock } 
+             reactions={reactions} 
+             onReaction={submitReaction} 
+           />
+        )}
       </section>
 
-      {/* Pane 2: Decision / Timer Area */ }
+      {/* Pane 2: Decision / Timer Area */}
       <section className="z-20 shrink-0 bg-black/80 backdrop-blur-2xl shadow-[0_-20px_40px_rgba(0,0,0,0.8)]">
-        <DecisionPhase
-          phase={ currentBlock?.phase }
-          timeRemaining={ localTimeRemaining }
-          timeToDecision={ localTimeToDecision }
-          initialTimeToDecision={ localInitialTimeToDecision }
-          turnsToNextChoice={ localTurnsToNextChoice }
-          hasVoted={ hasVotedCurrent }
-          onVote={ submitVote }
-          optionA={ currentBlock?.optionA }
-          optionB={ currentBlock?.optionB }
-          voteResults={ voteResults }
-          selectedChoice={ hasVotedCurrent ? (sessionStorage.getItem(`voted_${selectedChannel}_${currentBlock?.id}`) as 'A' | 'B') : null }
-        />
+        {macroPhase === 'gathering' ? (
+           <div className="h-16 flex items-center justify-center border-t border-white/10">
+              <span className="font-mono text-xs text-white/50 tracking-widest">AWAITING SIGNAL...</span>
+           </div>
+        ) : (
+          <DecisionPhase
+            phase={ currentBlock?.phase }
+            timeRemaining={ localTimeRemaining }
+            timeToDecision={ localTimeToDecision }
+            initialTimeToDecision={ localInitialTimeToDecision }
+            turnsToNextChoice={ localTurnsToNextChoice }
+            hasVoted={ hasVotedCurrent }
+            onVote={ submitVote }
+            optionA={ currentBlock?.optionA }
+            optionB={ currentBlock?.optionB }
+            voteResults={ voteResults }
+            selectedChoice={ hasVotedCurrent ? (sessionStorage.getItem(`voted_${selectedChannel}_${currentBlock?.id}`) as 'A' | 'B') : null }
+          />
+        )}
       </section>
 
-      {/* Chat panel */ }
+      {/* Chat panel */}
       <LiveChat
         history={ chatHistory }
         mostRecentMessage={ mostRecentMessage }
         username={ username }
         onSend={ submitChat }
-        isOpen={ chatOpen }
+        isOpen={ chatOpen || macroPhase === 'gathering' || macroPhase === 'afterparty' }
         onToggle={ handleToggleChat }
       />
     </main >

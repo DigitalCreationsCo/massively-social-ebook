@@ -127,7 +127,11 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
 
   st.currentBlock = block;
   st.currentPhase = 'reading';
-  st.phaseEndsAt = Date.now() + POST_VOTE_READING_MS;
+  
+  // Add 3-minute gathering phase delay to the initial reading phase
+  const GATHERING_DELAY_MS = 3 * 60 * 1000; 
+  st.phaseEndsAt = Date.now() + GATHERING_DELAY_MS + POST_VOTE_READING_MS;
+  
   st.turnsToNextChoice = getRandomTurns();
   st.decisionEndsAt = computeDecisionEndsAt(st);
   st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - Date.now());
@@ -163,7 +167,7 @@ export async function registerRoutes(
 
   // Session Endpoints
   app.get(api.sessions.next.path, async (req, res) => {
-    const rawChannelId = req.query.channelId as string;
+    const rawChannelId = String(req.query.channelId || '');
     const channelId = getRealChannelId(rawChannelId) as Channel;
     // Check active first, then next
     const active = await storage.getActiveSession(channelId);
@@ -380,7 +384,7 @@ export async function registerRoutes(
 
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
-    const rawChannelId = req.query.channelId as string;
+    const rawChannelId = String(req.query.channelId || '');
     const channelId = getRealChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
     if (!channelState || !channelState.activeSession || !channelState.currentBlock) {
@@ -400,7 +404,7 @@ export async function registerRoutes(
   });
 
   app.get(api.chat.history.path, async (req, res) => {
-    const rawChannelId = req.query.channelId as string;
+    const rawChannelId = String(req.query.channelId || '');
     const channelId = getRealChannelId(rawChannelId) as Channel;
     
     let sessionId = state[channelId].activeSession?.id;
@@ -505,6 +509,25 @@ export async function registerRoutes(
                 ...newMsg,
                 createdAt: newMsg.createdAt?.toISOString() ?? new Date().toISOString()
               }
+            });
+          }
+        } else if (message.type === 'SUBMIT_REACTION') {
+          const { blockId, emoji, userId, paragraphIndex } = message.payload as { blockId: number, emoji: string, userId: string, paragraphIndex: number };
+          if (blockId && emoji) {
+            // Create reaction
+            const reaction = await storage.addReaction({
+              channelId: currentChannelId,
+              sessionId: st.activeSession?.id || 0, // Fallback if no session, though likely required
+              blockId,
+              userId: userId || 'anon',
+              emoji,
+              paragraphIndex: paragraphIndex || 0
+            });
+            
+            // Broadcast immediately to all clients in channel
+            broadcast(currentChannelId, {
+              type: 'REACTION_RECEIVED',
+              payload: reaction
             });
           }
         } else if (message.type === 'SUBMIT_VOTE') {

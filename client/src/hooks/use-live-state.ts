@@ -4,9 +4,10 @@ import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
 import { getObfuscatedChannelId } from '@shared/channels';
-import type { Session } from '@shared/schema';
+import type { Session, Reaction } from '@shared/schema';
 
 export type Phase = 'reading' | 'voting' | 'resolution';
+export type MacroPhase = 'waiting' | 'gathering' | 'reading' | 'afterparty';
 export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
 
 export interface VoteOption {
@@ -69,6 +70,8 @@ export function useLiveState(channelId: string) {
   const [ localTurnsToNextChoice, setLocalTurnsToNextChoice ] = useState(0);
   const [ sessionStatus, setSessionStatus ] = useState<SessionStatus | 'loading'>('loading');
   const [ activeSession, setActiveSession ] = useState<Session | null>(null);
+  const [ macroPhase, setMacroPhase ] = useState<MacroPhase>('waiting');
+  const [ reactions, setReactions ] = useState<Reaction[]>([]);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
@@ -127,6 +130,28 @@ export function useLiveState(channelId: string) {
     return () => clearInterval(interval);
   }, []);
 
+  // Calculate Macro Phase
+  useEffect(() => {
+    if (!activeSession) {
+        setMacroPhase('waiting');
+        return;
+    }
+    const updatePhase = () => {
+        const now = Date.now();
+        const start = new Date(activeSession.scheduledStart).getTime();
+        const diff = now - start;
+        
+        if (diff < 0) setMacroPhase('waiting');
+        else if (diff < 3 * 60 * 1000) setMacroPhase('gathering'); // 0-3 mins
+        else if (diff < 23 * 60 * 1000) setMacroPhase('reading'); // 3-23 mins
+        else setMacroPhase('afterparty'); // 23+ mins
+    };
+    
+    updatePhase();
+    const interval = setInterval(updatePhase, 1000);
+    return () => clearInterval(interval);
+  }, [activeSession]);
+
   // WebSocket Connection
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -174,6 +199,10 @@ export function useLiveState(channelId: string) {
           else if (message.type === 'VOTE_UPDATE') {
             const payload = message.payload as VoteResults;
             setVoteResults(payload);
+          }
+          else if (message.type === 'REACTION_RECEIVED') {
+             const payload = message.payload as Reaction;
+             setReactions(prev => [...prev, payload]);
           }
           else if (message.type === 'SESSION_STATUS') {
             const payload = message.payload as { status: SessionStatus, session: Session | null; };
@@ -243,6 +272,27 @@ export function useLiveState(channelId: string) {
     });
   }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, obfId ]);
 
+  const submitReaction = useCallback((blockId: number, emoji: string, paragraphIndex: number) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      
+      wsRef.current.send(JSON.stringify({
+          type: 'SUBMIT_REACTION',
+          payload: { blockId, emoji, userId: username, paragraphIndex }
+      }));
+
+      // Optimistic update
+      setReactions(prev => [...prev, {
+          id: Date.now(), // Temporary ID
+          channelId: obfId,
+          sessionId: activeSession?.id || 0,
+          blockId,
+          userId: username,
+          emoji,
+          paragraphIndex,
+          createdAt: new Date().toISOString()
+      }]);
+  }, [username, obfId, activeSession]);
+
   const hasVotedCurrent = sessionStorage.getItem(`voted_${obfId}_${currentBlock?.id}`) !== null;
 
   // Get most recent chat message
@@ -261,10 +311,13 @@ export function useLiveState(channelId: string) {
     hasVotedCurrent,
     submitChat,
     submitVote,
+    submitReaction,
     voteResults,
+    reactions,
     viewerCount,
     mostRecentMessage,
     sessionStatus,
-    activeSession
+    activeSession,
+    macroPhase
   };
 }

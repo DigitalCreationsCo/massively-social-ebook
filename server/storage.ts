@@ -3,6 +3,7 @@ import {
   blocks,
   votes,
   chat,
+  reactions,
   sessions,
   type Block,
   type InsertBlock,
@@ -10,6 +11,8 @@ import {
   type InsertVote,
   type ChatMessage,
   type InsertChat,
+  type Reaction,
+  type InsertReaction,
   type Session,
   type InsertSession,
   type SessionStatus,
@@ -22,12 +25,15 @@ import {
   type NotificationLog,
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql } from "drizzle-orm";
+
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
   createBlock(block: InsertBlock): Promise<Block>;
   createVote(vote: InsertVote): Promise<Vote>;
   getRecentChat(channelId: string, sessionId: number | undefined, limit?: number): Promise<ChatMessage[]>;
   createChat(msg: InsertChat): Promise<ChatMessage>;
+  addReaction(reaction: InsertReaction): Promise<Reaction>;
+  getReactionsForBlock(blockId: number): Promise<Reaction[]>;
   getRandomImage(channelId: string): Promise<string | null>;
   getBlockCount(channelId: string): Promise<number>;
   getBlocksBySequence(channelId: string, indices: number[]): Promise<Block[]>;
@@ -48,6 +54,7 @@ export interface IStorage {
   createNotificationLog(log: InsertNotificationLog): Promise<void>;
   getNotificationLog(type: string, targetId: string): Promise<NotificationLog | undefined>;
 }
+
 export class DatabaseStorage implements IStorage {
   async getCurrentBlock(channelId: string): Promise<Block | undefined> {
     const [block] = await db.select().from(blocks).where(eq(blocks.channelId, channelId)).orderBy(desc(blocks.id)).limit(1);
@@ -82,6 +89,16 @@ export class DatabaseStorage implements IStorage {
     const [newMsg] = await db.insert(chat).values(msg).returning();
     return newMsg;
   }
+
+  async addReaction(reaction: InsertReaction): Promise<Reaction> {
+    const [newReaction] = await db.insert(reactions).values(reaction).returning();
+    return newReaction;
+  }
+
+  async getReactionsForBlock(blockId: number): Promise<Reaction[]> {
+    return await db.select().from(reactions).where(eq(reactions.blockId, blockId));
+  }
+
   async getRandomImage(channelId: string): Promise<string | null> {
     const allWithImages = await db.select({ imageUrl: blocks.imageUrl })
       .from(blocks)

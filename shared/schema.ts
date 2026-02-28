@@ -1,7 +1,8 @@
 import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-  export const blocks = pgTable("blocks", {
+
+export const blocks = pgTable("blocks", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull(),
   title: text("title"),
@@ -11,6 +12,7 @@ import { z } from "zod";
   optionB: jsonb("option_b"), // { label: string, description: string }
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 export const votes = pgTable("votes", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull(),
@@ -19,12 +21,24 @@ export const votes = pgTable("votes", {
   choice: text("choice").notNull(), // 'A' or 'B'
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 export const chat = pgTable("chat", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull(),
   username: text("username").notNull(),
   text: text("text").notNull(),
   sessionId: integer("session_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const reactions = pgTable("reactions", {
+  id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull(),
+  sessionId: integer("session_id").notNull(),
+  blockId: integer("block_id").notNull(),
+  userId: text("user_id").notNull(),
+  emoji: text("emoji").notNull(),
+  paragraphIndex: integer("paragraph_index").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -40,12 +54,14 @@ export const sessions = pgTable("sessions", {
   status: text("status").notNull().default('scheduled'), // scheduled | active | completed | cancelled
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").unique(),
   pushToken: text("push_token"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -64,6 +80,7 @@ export const notificationLogs = pgTable("notification_logs", {
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true });
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
+export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({ updatedAt: true });
@@ -79,11 +96,15 @@ export type InsertVote = z.infer<typeof insertVoteSchema>;
 export type ChatMessage = typeof chat.$inferSelect;
 export type InsertChat = z.infer<typeof insertChatSchema>;
 
+export type Reaction = typeof reactions.$inferSelect;
+export type InsertReaction = z.infer<typeof insertReactionSchema>;
+
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<typeof insertSessionSchema>;
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+
 export type SystemSetting = typeof systemSettings.$inferSelect;
 export type InsertSystemSetting = z.infer<typeof insertSystemSettingsSchema>;
 
@@ -97,6 +118,8 @@ export const WS_EVENTS = {
   VOTE_UPDATE: 'vote_update',
   SUBMIT_CHAT: 'submit_chat',
   SUBMIT_VOTE: 'submit_vote',
+  SUBMIT_REACTION: 'submit_reaction',
+  REACTION_RECEIVED: 'reaction_received',
   SESSION_STATUS: 'session_status'
 } as const;
 

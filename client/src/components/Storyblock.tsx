@@ -1,12 +1,41 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import type { StoryState } from '@/hooks/use-live-state';
-import { BookOpen } from 'lucide-react';
+import type { Reaction } from '@shared/schema';
+import { BookOpen, Heart } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 interface StoryblockProps {
   block?: StoryState;
+  reactions?: Reaction[];
+  onReaction?: (blockId: number, emoji: string, paragraphIndex: number) => void;
 }
 
-export function Storyblock({ block }: StoryblockProps) {
+const ReactionParticle = ({ emoji, id }: { emoji: string; id: number }) => (
+  <motion.div
+    layoutId={`reaction-${id}`}
+    initial={{ opacity: 0, y: 10, scale: 0.5, x: 0 }}
+    animate={{ 
+      opacity: [0, 1, 0], 
+      y: -100, 
+      scale: [0.5, 1.5, 1],
+      x: (Math.random() - 0.5) * 40
+    }}
+    transition={{ duration: 2, ease: "easeOut" }}
+    className="absolute bottom-0 text-2xl pointer-events-none select-none z-50"
+    style={{ left: `${50 + (Math.random() - 0.5) * 20}%` }}
+  >
+    {emoji}
+  </motion.div>
+);
+
+export function Storyblock({ block, reactions = [], onReaction }: StoryblockProps) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (!block) {
     return (
       <div className="absolute inset-0 flex items-center justify-end bg-black">
@@ -61,9 +90,39 @@ export function Storyblock({ block }: StoryblockProps) {
                   {block.title}
                 </h2>
               ) }
-              <p className="font-serif text-xl sm:text-2xl md:text-3xl leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap">
-                {block.content}
-              </p>
+              
+              <div className="space-y-6">
+                {block.content.split('\n').filter(Boolean).map((paragraph, idx) => (
+                  <div 
+                    key={`${block.id}-${idx}`}
+                    className="relative group cursor-pointer"
+                    onClick={() => onReaction?.(block.id, '❤️', idx)}
+                  >
+                    <p className="font-serif text-xl sm:text-2xl md:text-3xl leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap transition-opacity duration-300 group-hover:opacity-80">
+                      {paragraph}
+                    </p>
+                    
+                    {/* Interaction Hint */}
+                    <div className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <Heart className="w-5 h-5 text-white/50 animate-pulse" />
+                    </div>
+
+                    {/* Active Reactions */}
+                    <AnimatePresence>
+                      {reactions
+                        .filter(r => 
+                          r.blockId === block.id && 
+                          r.paragraphIndex === idx && 
+                          (now - new Date(r.createdAt).getTime() < 3000)
+                        )
+                        .map(r => (
+                          <ReactionParticle key={r.id} emoji={r.emoji} id={r.id} />
+                        ))
+                      }
+                    </AnimatePresence>
+                  </div>
+                ))}
+              </div>
             </motion.div>
           </div>
         </motion.div>
