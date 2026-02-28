@@ -24,6 +24,7 @@ export const chat = pgTable("chat", {
   channelId: text("channel_id").notNull(),
   username: text("username").notNull(),
   text: text("text").notNull(),
+  sessionId: integer("session_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

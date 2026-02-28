@@ -26,7 +26,7 @@ export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
   createBlock(block: InsertBlock): Promise<Block>;
   createVote(vote: InsertVote): Promise<Vote>;
-  getRecentChat(channelId: string, limit?: number): Promise<ChatMessage[]>;
+  getRecentChat(channelId: string, sessionId: number | undefined, limit?: number): Promise<ChatMessage[]>;
   createChat(msg: InsertChat): Promise<ChatMessage>;
   getRandomImage(channelId: string): Promise<string | null>;
   getBlockCount(channelId: string): Promise<number>;
@@ -65,8 +65,18 @@ export class DatabaseStorage implements IStorage {
     return newVote;
   }
 
-  async getRecentChat(channelId: string, limit: number = 50): Promise<ChatMessage[]> {
-    return await db.select().from(chat).where(eq(chat.channelId, channelId)).orderBy(desc(chat.id)).limit(limit);
+  async getRecentChat(channelId: string, sessionId: number | undefined, limit: number = 50): Promise<ChatMessage[]> {
+    if (sessionId !== undefined) {
+      return await db.select().from(chat)
+        .where(and(eq(chat.channelId, channelId), eq(chat.sessionId, sessionId)))
+        .orderBy(desc(chat.id))
+        .limit(limit);
+    }
+    // If no session ID provided, return empty array to enforce session-scoped chat
+    // or return historical chat without session ID (for backward compatibility during migration if needed)
+    // Given the requirement "unique to each session", returning empty seems safer to avoid leaking old chats.
+    // However, if we want to show "lobby" chat... I'll stick to returning empty if no session.
+    return [];
   }
   async createChat(msg: InsertChat): Promise<ChatMessage> {
     const [newMsg] = await db.insert(chat).values(msg).returning();

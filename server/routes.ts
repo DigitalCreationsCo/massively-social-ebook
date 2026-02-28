@@ -402,7 +402,14 @@ export async function registerRoutes(
   app.get(api.chat.history.path, async (req, res) => {
     const rawChannelId = req.query.channelId as string;
     const channelId = getRealChannelId(rawChannelId) as Channel;
-    const messages = await storage.getRecentChat(channelId, 50);
+    
+    let sessionId = state[channelId].activeSession?.id;
+    if (!sessionId) {
+      const nextSession = await storage.getNextSession(channelId);
+      sessionId = nextSession?.id;
+    }
+
+    const messages = await storage.getRecentChat(channelId, sessionId, 50);
     // Reverse so newest is at the bottom
     res.json(messages.reverse().map(m => ({
       ...m,
@@ -480,7 +487,18 @@ export async function registerRoutes(
         if (message.type === 'SUBMIT_CHAT') {
           const { username, text } = message.payload as { username: string, text: string };
           if (username && text) {
-            const newMsg = await storage.createChat({ channelId: currentChannelId, username, text });
+            let sessionId = st.activeSession?.id;
+            if (!sessionId) {
+              const nextSession = await storage.getNextSession(currentChannelId);
+              sessionId = nextSession?.id;
+            }
+            
+            // If still no session ID (no upcoming session), we might want to skip or allow global chat?
+            // Requirement says "unique to each session". If no session, no chat?
+            // Or maybe just create chat without session ID (which will be filtered out by getRecentChat if we follow logic)?
+            // I'll create it anyway, but it won't show up in history if sessionId is required for history retrieval.
+            
+            const newMsg = await storage.createChat({ channelId: currentChannelId, username, text, sessionId });
             broadcast(currentChannelId, {
               type: 'CHAT_MESSAGE',
               payload: {
