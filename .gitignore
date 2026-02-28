@@ -6,4 +6,8 @@ vite.config.ts.*
 *.tar.gz
 coverage
 client/coverage
+<<<<<<< HEAD
 logs
+=======
+.env
+>>>>>>> 747279297e9aa1301eef198579f57f4faac3649d
