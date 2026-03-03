@@ -65,6 +65,7 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 | `GEMINI_API_KEY` | **Yes** | Google AI API key for Gemini text and Imagen image generation |
 | `DATABASE_URL` | **Yes** | PostgreSQL connection string |
 | `PORT` | No | Server port (default: `5000`) |
+| `VITE_MIXPANEL_TOKEN` | No | Token for Mixpanel analytics (optional) |
 
 Create a `.env` file from the example:
 

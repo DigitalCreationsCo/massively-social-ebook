@@ -5,6 +5,7 @@ import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
 import { getObfuscatedChannelId } from '@shared/channels';
 import type { Session, Reaction } from '@shared/schema';
+import { trackEvent, identifyUser } from '@/lib/analytics';
 
 export type Phase = 'reading' | 'voting' | 'resolution';
 export type MacroPhase = 'waiting' | 'gathering' | 'reading' | 'afterparty';
@@ -61,6 +62,10 @@ export function useLiveState(channelId: string) {
     sessionStorage.setItem('reader_name', newName);
     return newName;
   });
+  useEffect(() => {
+    identifyUser(username);
+  }, [username]);
+
 
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -240,6 +245,8 @@ export function useLiveState(channelId: string) {
     };
     queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, obfId ], (old = []) => [ ...old, tempMsg ]);
 
+    trackEvent('Chat Message Sent', { channel: obfId });
+
     wsRef.current.send(JSON.stringify({
       type: 'SUBMIT_CHAT',
       payload: { username, text }
@@ -258,6 +265,8 @@ export function useLiveState(channelId: string) {
       type: 'SUBMIT_VOTE',
       payload: { choice, userId: username }
     }));
+    trackEvent('Vote Cast', { channel: obfId, choice, blockId: currentBlock?.id });
+
     
     // Update local vote results optimistically
     setVoteResults(prev => ({
@@ -275,8 +284,9 @@ export function useLiveState(channelId: string) {
   const submitReaction = useCallback((blockId: number, emoji: string, paragraphIndex: number) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       
+      trackEvent('Reaction Sent', { channel: obfId, emoji, blockId });
+      
       wsRef.current.send(JSON.stringify({
-          type: 'SUBMIT_REACTION',
           payload: { blockId, emoji, userId: username, paragraphIndex }
       }));
 
