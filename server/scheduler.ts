@@ -189,52 +189,69 @@ async function processEvent(event: ScheduledEvent, now: number) {
 
 export async function seedDailySessions() {
     const now = new Date();
-    const mstNowStr = getMSTDateString(now);
-    
+
     for (const channelId of CHANNELS) {
-        // Check if we already have sessions scheduled for today
-        const existing = await storage.listSessions(channelId, 'scheduled');
-        const todaySessions = existing.filter(s => {
-            const startStr = getMSTDateString(s.scheduledStart);
-            return startStr === mstNowStr;
-        });
+        // Sci-fi at 19:00, Mystery at 20:00 (Mountain Time)
+        const hour = channelId === 'scifi' ? 19 : 20;
+        const durationMs = 25 * 60 * 1000; // 25 minutes
+        
+        // 1. Determine base target slot (the immediate next one)
+        let baseTargetStart = createMSTDate(now, hour, 0, 0);
+        const baseTargetEnd = new Date(baseTargetStart.getTime() + durationMs);
 
-        if (todaySessions.length === 0) {
-            logger.debug(`Seeding sessions for ${channelId} for ${mstNowStr} (MST)`, 'scheduler');
-            
-            // Schedule one session for tonight
-            // Sci-fi at 19:00, Mystery at 20:00 (Mountain Time)
-            const hour = channelId === 'scifi' ? 19 : 20;
-            const start = createMSTDate(now, hour, 0, 0);
-            
-            const end = new Date(start.getTime() + 25 * 60 * 1000); // 25 minutes later
+        // If today's slot has passed, the "next" slot starts tomorrow
+        if (now > baseTargetEnd) {
+            const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            baseTargetStart = createMSTDate(tomorrow, hour, 0, 0);
+        }
 
-            // Extract the day part of the MST date string for the title
-            const dayOfMonth = mstNowStr.split('-')[2];
-            const title = channelId === 'scifi' 
-                ? `Galactic Horizon: Entry ${dayOfMonth}`
-                : `Midnight Alibi: Case ${dayOfMonth}`;
-            const description = channelId === 'scifi'
-                ? "The journey across the stars continues. What awaits the crew in the deep void?"
-                : "A new mystery unfolds in the heart of the foggy city. Can you spot the clues?";
+        // 2. Ensure both "Next" (i=0) and "Following" (i=1) sessions exist
+        for (let i = 0; i < 2; i++) {
+            const targetStart = new Date(baseTargetStart.getTime() + i * 24 * 60 * 60 * 1000);
+            const targetDateStr = getMSTDateString(targetStart);
 
-            try {
-                await storage.createSession({
-                    channelId,
-                    title,
-                    description,
-                    scheduledStart: start,
-                    scheduledEnd: end
-                });
-                logger.info(`Created session: ${title} at ${formatMST(start, "yyyy-MM-dd'T'HH:mm:ssXXX")} MST`, 'scheduler');
-            } catch (err) {
-                logger.error(`Failed to create session for ${channelId}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+            // Check existence (idempotent)
+            // Check ALL sessions (scheduled, active, completed) to avoid duplicates
+            // Optimization: We could cache this list outside the loop but it's fine for now
+            const existing = await storage.listSessions(channelId);
+            const sessionExists = existing.some(s => {
+                const sDate = getMSTDateString(s.scheduledStart);
+                return sDate === targetDateStr;
+            });
+
+            if (!sessionExists) {
+                logger.info(`Seeding session for ${channelId} at ${formatMST(targetStart, "yyyy-MM-dd'T'HH:mm:ssXXX")} MST (Offset: ${i} days)`, 'scheduler');
+                
+                const end = new Date(targetStart.getTime() + durationMs);
+                const dayOfMonth = targetDateStr.split('-')[2];
+                
+                const title = channelId === 'scifi' 
+                    ? `Galactic Horizon: Entry ${dayOfMonth}`
+                    : `Midnight Alibi: Case ${dayOfMonth}`;
+                
+                const description = channelId === 'scifi'
+                    ? "The journey across the stars continues. What awaits the crew in the deep void?"
+                    : "A new mystery unfolds in the heart of the foggy city. Can you spot the clues?";
+
+                try {
+                    await storage.createSession({
+                        channelId,
+                        title,
+                        description,
+                        scheduledStart: targetStart,
+                        scheduledEnd: end
+                    });
+                    logger.info(`Created session: ${title}`, 'scheduler');
+                } catch (err) {
+                    logger.error(`Failed to create session for ${channelId}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+                }
+            } else {
+                 logger.debug(`Session already exists for ${channelId} on ${targetDateStr}`, 'scheduler');
             }
-        } else {
-            logger.debug(`Sessions already exist for ${channelId} today.`, 'scheduler');
         }
     }
 }
+
 
 export async function dispatchWeeklyBriefing() {
     const users = await storage.getUsers();
