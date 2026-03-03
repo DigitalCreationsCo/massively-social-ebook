@@ -86,9 +86,13 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             // So we treat 404 as success too, or check for success in body
             if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
 
+            const message = await res.json();
+            const description = message.message?.split(". ")[ 1 ] ?? message.message?.split(". ")[ 0 ] ?? `You'll receive an email with the next session schedule.`;
+            const title = message.message?.split(". ")[ 1 ] ? message.message?.split(". ")[ 0 ] : `You're on the list.`; 
+
             toast({
-                title: "You're on the list!",
-                description: "We'll notify you when the next session is scheduled.",
+                title,
+                description,
             });
             setIsDialogOpen(false);
             setEmail("");
@@ -117,7 +121,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
         "@context": "https://schema.org",
         "@type": "Event",
         "name": "The 25th Chapter: Daily Live Story",
-        "description": "A 25-minute synchronous social reading session. Join a global community to read today's featured story together.",
+        "description": "Your Daily 25-minute read. Join a global community to read today's featured story together.",
         "image": "https://yourdomain.com/path-to-cinematic-cover.jpg",
         "startDate": schemaParams.startDate,
         "endDate": schemaParams.endDate,
@@ -195,8 +199,8 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                     <CardDescription className="text-white/80 font-sans text-lg">
                                 { isScheduled && (
                                     <>
-                                        Join { isTodayMST(new Date(nextSession.scheduledStart)) ? "today" :
-                                                isTomorrowMST(new Date(nextSession.scheduledStart)) ? "tomorrow" :
+                                        { isTodayMST(new Date(nextSession.scheduledStart)) ? "Today" :
+                                            isTomorrowMST(new Date(nextSession.scheduledStart)) ? "Tomorrow" :
                                                     formatMST(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
                                         } at <span>{ formatMST(new Date(nextSession.scheduledStart), "h:mm a") } MST</span>
                                     </>
@@ -289,16 +293,16 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                         <div className="space-y-4">
                             <h2 className="text-4xl font-serif text-white tracking-tight">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
-                                Join the room, meet readers, experience the story. No scrolling back, no reading ahead. Just you, the community, and the unfolding narrative.
+                                Join the room, meet readers, experience the story. No scrolling back, no reading ahead. Just you, the community, and the unfolding narrative. The next story starts soon.
                             </p>
                         </div>
                         <div className="relative group">
                             <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-50 group-hover:opacity-100 transition duration-1000"></div>
                             <div className="relative rounded-xl overflow-hidden border border-white/10 shadow-3xl bg-zinc-900">
                                 <img
-                                    src="/Users/andresb/.gemini/antigravity/brain/5471c5b2-55e0-4763-9596-12dc57e1e34c/session_mockup_1772142140763.png"
-                                    alt="Live Session Mockup"
-                                    className="w-full aspect-video object-cover"
+                                    src="/preview/2.png"
+                                    alt="The 25th Chapter: 25 minutes. One Story."
+                                    className="w-full h-[75%] object-contain"
                                 />
                             </div>
                         </div>

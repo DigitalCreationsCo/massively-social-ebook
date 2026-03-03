@@ -223,14 +223,14 @@ export async function registerRoutes(
       try {
         await Promise.all([
           CalendarService.addToGoogle(email, session),
-          CalendarService.addToOutlook(email, session)
+          // CalendarService.addToOutlook(email, session)
         ]);
-        res.json({ success: true, message: "Reminders scheduled for Google and Outlook" });
+        res.json({ success: true, message: "You're on the list. Check your email for the notification." });
       } catch (err) {
         logger.error("Failed to schedule reminders", "calendar", err instanceof Error ? err : new Error(String(err)));
         // Already logged above
         // Still return success if user was saved, but calendar failed
-        res.json({ success: true, message: "You're on the list! (Calendar invites failed)" });
+        res.json({ success: true, message: "You're on the list. Check your email for the notification." });
       }
     } else {
       // No session found, but user is saved as 'Global Interest'
