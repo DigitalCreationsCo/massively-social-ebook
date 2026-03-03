@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
+import { trackEvent } from '@/lib/analytics';
 import type { StoryState } from '@/hooks/use-live-state';
 import type { Reaction } from '@shared/schema';
 import { BookOpen, Heart } from 'lucide-react';
@@ -96,7 +97,10 @@ export function Storyblock({ block, reactions = [], onReaction }: StoryblockProp
                   <div 
                     key={`${block.id}-${idx}`}
                     className="relative group cursor-pointer"
-                    onClick={() => onReaction?.(block.id, '❤️', idx)}
+                    onClick={() => {
+                      onReaction?.(block.id, '❤️', idx);
+                      trackEvent('Story Paragraph Clicked', { blockId: block.id, paragraphIndex: idx });
+                    }}
                   >
                     <p className="font-serif text-xl sm:text-2xl md:text-3xl leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap transition-opacity duration-300 group-hover:opacity-80">
                       {paragraph}

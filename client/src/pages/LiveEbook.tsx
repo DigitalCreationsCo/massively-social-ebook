@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { trackEvent } from '@/lib/analytics';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
@@ -51,6 +52,7 @@ export default function LiveEbook() {
 
   const handleToggleChat = () => {
     setChatOpen((prev) => !prev);
+    trackEvent('Live Chat Toggled', { isOpen: !chatOpen, channel: selectedChannel });
   };
 
   if (isLoading) {

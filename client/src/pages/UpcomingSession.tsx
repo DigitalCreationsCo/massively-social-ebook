@@ -8,6 +8,7 @@ import { formatMST, isTodayMST, isTomorrowMST } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
+import { trackEvent } from '@/lib/analytics';
 import {
     Dialog,
     DialogContent,
@@ -72,6 +73,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
         e.preventDefault();
         if (!email) return;
         setReminding(true);
+        trackEvent('Set Reminder Clicked', { channel: channelId, sessionId: nextSession?.id });
         try {
             const res = await fetch(api.sessions.reminder.path, {
                 method: 'POST',
@@ -90,6 +92,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             const description = message.message?.split(". ")[ 1 ] ?? message.message?.split(". ")[ 0 ] ?? `You'll receive an email with the next session schedule.`;
             const title = message.message?.split(". ")[ 1 ] ? message.message?.split(". ")[ 0 ] : `You're on the list.`; 
 
+            trackEvent('Set Reminder Success', { channel: channelId, sessionId: nextSession?.id, email });
             toast({
                 title,
                 description,
@@ -97,6 +100,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
             setIsDialogOpen(false);
             setEmail("");
         } catch (err) {
+            trackEvent('Set Reminder Failed', { channel: channelId, sessionId: nextSession?.id, error: String(err) });
             toast({
                 title: "Error",
                 description: "Could not subscribe. Please try again.",
@@ -268,6 +272,7 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                                         variant="secondary"
                                         className="w-full font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
                                             onClick={ () => {
+                                        trackEvent('Preview Chapter Clicked', { channel: channelId });
                                                 document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
                                             } }
                                         >
@@ -342,7 +347,10 @@ export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: s
                         <Button
                             variant="secondary"
                             className="w-full bg-white/10 hover:bg-white/20 text-white font-serif tracking-widest py-6 border border-white/10"
-                            onClick={ () => window.scrollTo({ top: 0, behavior: 'smooth' }) }
+                            onClick={() => {
+                                trackEvent('Return to Top Clicked');
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
                         >
                             Return to top
                         </Button>

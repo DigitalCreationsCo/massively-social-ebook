@@ -1,4 +1,5 @@
 import React from 'react';
+import { trackEvent } from '@/lib/analytics';
 import { usePWAUpdate } from '../../hooks/use-pwa-update';
 
 export function UpdatePrompt() {
@@ -15,6 +16,7 @@ export function UpdatePrompt() {
           </p>
           <button
             onClick={() => {
+              trackEvent('PWA Hard Refresh Clicked');
               localStorage.removeItem('pwa_hard_update');
               window.location.reload();
             }}
@@ -38,7 +40,10 @@ export function UpdatePrompt() {
             </p>
           </div>
           <button
-            onClick={updateApp}
+            onClick={() => {
+              trackEvent('PWA Update Clicked');
+              updateApp();
+            }}
             className="bg-primary text-primary-foreground text-xs px-3 py-1.5 rounded hover:bg-primary/90 transition-colors whitespace-nowrap"
           >
             Update
