@@ -54,11 +54,15 @@ describe('useLiveState', () => {
         
         // Mock WebSocket
         class MockWebSocket {
+            static CONNECTING = 0;
+            static OPEN = 1;
+            static CLOSING = 2;
+            static CLOSED = 3;
             onopen: any = null;
             onmessage: any = null;
             onclose: any = null;
             onerror: any = null;
-            readyState: number = 1; // OPEN
+            readyState: number = 0; // Starts as CONNECTING
             close = vi.fn();
             send = vi.fn();
 
@@ -230,12 +234,20 @@ describe('useLiveState', () => {
         expect(result.current.macroPhase).toBe('reading');
         
         // Afterparty
+        (ReactQuery.useQuery as any).mockImplementation((options: any) => {
+            if (options.queryKey.includes('/api/blocks/current')) {
+                return { data: { id: 1, content: 'Test', phase: 'resolution' }, isLoading: false };
+            }
+            return { data: [], isLoading: false };
+        });
+        // We have to re-render to get the new useQuery data
+        const { result: r2 } = renderHook(() => useLiveState('scifi'));
         act(() => {
             wsInstance.onmessage({
                 data: JSON.stringify({ type: 'SESSION_STATUS', payload: { status: 'completed', session: { scheduledStart: new Date(now - 30 * 60 * 1000).toISOString(), scheduledEnd: new Date(now - 1 * 60 * 1000).toISOString() } } })
             });
         });
         await act(async () => { vi.advanceTimersByTime(1100); });
-        expect(result.current.macroPhase).toBe('afterparty');
+        expect(r2.current.macroPhase).toBe('afterparty');
     });
 });

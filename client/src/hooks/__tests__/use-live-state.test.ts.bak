@@ -58,12 +58,12 @@ describe('useLiveState', () => {
             onmessage: any = null;
             onclose: any = null;
             onerror: any = null;
-            readyState: number = 0; // CONNECTING
+            readyState: number = 1; // OPEN
             close = vi.fn();
             send = vi.fn();
 
             constructor() {
-                wsInstance = this; // Assign the instance to the outer scope
+                wsInstance = this; setTimeout(() => { this.readyState = 1; if(this.onopen) this.onopen(); }, 0); // Assign the instance to the outer scope
                 setTimeout(() => {
                     this.readyState = 1; // Simulate connection opening
                     if (this.onopen) this.onopen();

@@ -92,7 +92,7 @@ export const createStoryBlockInstructions = ({
 
         // Trope Blacklist
         "NEVER:",
-        "— No 'tapestry of', 'anomaly', 'symphony of', 'dance of light', or baroque decoration.",
+        "— No 'tapestry of', 'anomaly', 'symphony of', 'glyph', 'dust motes', 'dance of light', or baroque decoration.",
         "— No starting with 'Suddenly' or 'In that moment'.",
         "— No characters trembling or gasping at minor events.",
         "— No over-explained reactions. If a gun goes off, don't write 'She realized the danger was real.'",
