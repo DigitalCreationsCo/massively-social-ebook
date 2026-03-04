@@ -99,9 +99,9 @@ export default function LiveEbook() {
              >
                <h1 className="font-serif text-3xl md:text-4xl text-white/90 tracking-widest uppercase">The Gathering</h1>
                <p className="text-white/60 font-mono text-sm">
-                 The session has begun. Readers are arriving from around the world.
+                 The lobby is open. Readers are arriving from around the world.
                  <br/>
-                 The story will start in a few moments.
+                 The story will begin shortly.
                </p>
                <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto" />
                <p className="text-xs text-white/40 font-mono animate-pulse">

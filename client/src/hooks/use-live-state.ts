@@ -185,7 +185,7 @@ export function useLiveState(channelId: string) {
           
           if (message.type === 'SYNC_STATE') {
             const payload = message.payload as StoryState;
-            queryClient.setQueryData([ api.blocks.current.path, obfId ], payload);
+
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeToNextDecision !== undefined) {
               setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
@@ -287,6 +287,7 @@ export function useLiveState(channelId: string) {
       trackEvent('Reaction Sent', { channel: obfId, emoji, blockId });
       
       wsRef.current.send(JSON.stringify({
+          type: 'SUBMIT_REACTION',
           payload: { blockId, emoji, userId: username, paragraphIndex }
       }));
 
@@ -306,7 +307,7 @@ export function useLiveState(channelId: string) {
   const hasVotedCurrent = sessionStorage.getItem(`voted_${obfId}_${currentBlock?.id}`) !== null;
 
   // Get most recent chat message
-  const mostRecentMessage = chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null;
+  const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
 
   return {
     isLoading: blockLoading || chatLoading,

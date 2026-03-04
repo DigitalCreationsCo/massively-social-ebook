@@ -29,7 +29,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={LiveEbook} />
-      <Route path="/upcoming" component={UpcomingSession} />
+      <Route path="/upcoming" component={() => <UpcomingSession />} />
       <Route component={NotFound} />
     </Switch>
   );

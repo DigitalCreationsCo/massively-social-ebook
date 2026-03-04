@@ -6,8 +6,8 @@ import { buildRAGContext } from "./rag";
 export const ai = new GoogleGenAI({});
 
 const lmParamsGoogle = {
-  model: 'gemini-2.5-flash',
-  imagenModel: 'imagen-4.0-generate-001',
+  model: 'gemini-2.5-flash-lite',
+  imageModel: 'gemini-2.5-flash-image',
 };
 
 export interface StoryBlockResult {
@@ -81,7 +81,7 @@ export async function generateStoryImage(description: string): Promise<string> {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: lmParamsGoogle.imageModel,
       contents: prompt,
       config: {
         responseModalities: [ "image" ],

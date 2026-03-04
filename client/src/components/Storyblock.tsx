@@ -117,7 +117,7 @@ export function Storyblock({ block, reactions = [], onReaction }: StoryblockProp
                         .filter(r => 
                           r.blockId === block.id && 
                           r.paragraphIndex === idx && 
-                          (now - new Date(r.createdAt).getTime() < 3000)
+                          (now - new Date(r.createdAt || Date.now()).getTime() < 3000)
                         )
                         .map(r => (
                           <ReactionParticle key={r.id} emoji={r.emoji} id={r.id} />
