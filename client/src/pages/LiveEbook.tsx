@@ -12,12 +12,12 @@ import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const CHANNELS = [
-  { id: 'x7v9z', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
-  { id: 'm2w4k', name: 'Mystery', description: 'Dark alleys and supernatural secrets' }
+  { id: 'scifi', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
+  { id: 'mystery', name: 'Mystery', description: 'Dark alleys and supernatural secrets' }
 ];
 
 export default function LiveEbook() {
-  const [ selectedChannel, setSelectedChannel ] = useState<string>('m2w4k');
+  const [ selectedChannel, setSelectedChannel ] = useState<string>('mystery');
   const [ chatOpen, setChatOpen ] = useState(false);
   const [ showChannelSelector, setShowChannelSelector ] = useState(false);
 

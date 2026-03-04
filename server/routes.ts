@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { generateStoryBlock, generateStoryImage } from "./ai";
 import { api } from "@shared/routes";
 import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/schema";
-import { getRealChannelId, getObfuscatedChannelId, CHANNELS, type Channel } from "@shared/channels";
+import { getChannelId, CHANNELS, type Channel } from "@shared/channels";
 import { trackUserEmail } from "./analytics";
 import { CalendarService } from "./calendar";
 import { isAdmin, isDevOnly } from "./middleware/auth";
@@ -169,7 +169,7 @@ export async function registerRoutes(
   // Session Endpoints
   app.get(api.sessions.next.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
-    const channelId = getRealChannelId(rawChannelId) as Channel;
+    const channelId = getChannelId(rawChannelId) as Channel;
     // Check active first, then next
     const active = await storage.getActiveSession(channelId);
     if (active) return res.json(active);
@@ -286,7 +286,7 @@ export async function registerRoutes(
 
   app.post('/api/debug/sessions/start', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
-    const channelId = getRealChannelId(obfId) as Channel;
+    const channelId = getChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (st.activeSession) {
@@ -320,7 +320,7 @@ export async function registerRoutes(
 
   app.post('/api/debug/sessions/skip', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
-    const channelId = getRealChannelId(obfId) as Channel;
+    const channelId = getChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (!st.activeSession) {
@@ -334,7 +334,7 @@ export async function registerRoutes(
 
   app.post('/api/debug/sessions/tally', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
-    const channelId = getRealChannelId(obfId) as Channel;
+    const channelId = getChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (!st.activeSession) {
@@ -352,7 +352,7 @@ export async function registerRoutes(
 
   app.post('/api/debug/sessions/narrative', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
-    const channelId = getRealChannelId(obfId) as Channel;
+    const channelId = getChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (!st.activeSession) {
@@ -370,7 +370,7 @@ export async function registerRoutes(
 
   app.post('/api/debug/sessions/resolve', isDevOnly, isAdmin, async (req, res) => {
     const { channelId: obfId } = req.body;
-    const channelId = getRealChannelId(obfId) as Channel;
+    const channelId = getChannelId(obfId) as Channel;
     const st = state[ channelId ];
 
     if (st && st.activeSession) {
@@ -386,7 +386,7 @@ export async function registerRoutes(
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
-    const channelId = getRealChannelId(rawChannelId) as Channel;
+    const channelId = getChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
     if (!channelState || !channelState.activeSession || !channelState.currentBlock) {
       return res.status(404).json({ message: "No active session" });
@@ -406,7 +406,7 @@ export async function registerRoutes(
 
   app.get(api.chat.history.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
-    const channelId = getRealChannelId(rawChannelId) as Channel;
+    const channelId = getChannelId(rawChannelId) as Channel;
     
     let sessionId = state[channelId].activeSession?.id;
     if (!sessionId) {
@@ -452,7 +452,7 @@ export async function registerRoutes(
       }
     }
 
-    const channelId = getRealChannelId(rawChannelId) as Channel;
+    const channelId = getChannelId(rawChannelId) as Channel;
     clientChannels.set(ws, channelId);
 
     const channelState = state[channelId];

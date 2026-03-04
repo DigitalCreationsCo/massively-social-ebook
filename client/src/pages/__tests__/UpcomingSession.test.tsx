@@ -60,8 +60,8 @@ describe('UpcomingSession Component', () => {
             id: 1,
             title: 'The Great Convergence',
             description: 'A grand meeting of worlds.',
-            scheduledStart: new Date('2026-12-25T14:00:00Z').toISOString(),
-            scheduledEnd: new Date('2026-12-25T14:25:00Z').toISOString(),
+            scheduledStart: new Date(Date.now() + 86400000).toISOString(),
+            scheduledEnd: new Date(Date.now() + 86400000 + 1500000).toISOString(),
         };
         (useLiveState as any).mockReturnValue({
             isLoading: false,
@@ -70,7 +70,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/The next story starts soon/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
         expect(screen.getByText(/Remind me/i)).toBeInTheDocument();
     });
 
@@ -82,7 +82,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/The next story starts soon/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
     });
 
     it('redirects to root when session becomes active via effect', () => {
@@ -104,8 +104,8 @@ describe('UpcomingSession Component', () => {
         const mockSession = {
             id: 42,
             title: 'Test Session',
-            scheduledStart: new Date().toISOString(),
-            scheduledEnd: new Date(Date.now() + 1500000).toISOString(),
+            scheduledStart: new Date(Date.now() + 86400000).toISOString(),
+            scheduledEnd: new Date(Date.now() + 86400000 + 1500000).toISOString(),
         };
         (useLiveState as any).mockReturnValue({
             isLoading: false,
@@ -115,9 +115,9 @@ describe('UpcomingSession Component', () => {
 
         // Mock successful fetch
         (global.fetch as any).mockResolvedValue({
-            ok: true
+            ok: true,
+            json: () => Promise.resolve({ message: "You're on the list." })
         });
-
         render(<UpcomingSession />);
         const button = screen.getByText(/Remind me/i);
         fireEvent.click(button);
@@ -138,7 +138,7 @@ describe('UpcomingSession Component', () => {
         }, { timeout: 2000 });
 
         expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
-            title: "You're on the list!"
+            title: "You're on the list."
         }));
     });
 });

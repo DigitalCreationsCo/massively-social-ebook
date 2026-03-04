@@ -1,27 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { getRealChannelId, getObfuscatedChannelId, CHANNEL_MAP } from './channels';
+import { getChannelId } from './channels';
 
-describe('Channel Mapping', () => {
-  it('maps obfuscated IDs to real IDs', () => {
-    expect(getRealChannelId('x7v9z')).toBe('scifi');
-    expect(getRealChannelId('m2w4k')).toBe('mystery');
+describe('Channel Validation', () => {
+  it('validates correct channel IDs', () => {
+    expect(getChannelId('scifi')).toBe('scifi');
+    expect(getChannelId('mystery')).toBe('mystery');
   });
 
-  it('maps real IDs to obfuscated IDs', () => {
-    expect(getObfuscatedChannelId('scifi')).toBe('x7v9z');
-    expect(getObfuscatedChannelId('mystery')).toBe('m2w4k');
-  });
-
-  it('handles unknown obfuscated IDs by returning default', () => {
-    expect(getRealChannelId('unknown')).toBe('scifi');
-  });
-
-  it('handles null/undefined obfuscated IDs', () => {
-    expect(getRealChannelId(null)).toBe('scifi');
-    expect(getRealChannelId(undefined)).toBe('scifi');
-  });
-
-  it('handles unknown real IDs by returning default obfuscated', () => {
-    expect(getObfuscatedChannelId('unknown')).toBe('ch_sci');
+  it('defaults invalid IDs to scifi', () => {
+    expect(getChannelId('unknown')).toBe('scifi');
+    expect(getChannelId(null)).toBe('scifi');
+    expect(getChannelId(undefined)).toBe('scifi');
+    expect(getChannelId('')).toBe('scifi');
   });
 });

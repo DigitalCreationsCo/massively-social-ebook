@@ -92,11 +92,12 @@ export const createStoryBlockInstructions = ({
 
         // Trope Blacklist
         "NEVER:",
-        "— No 'tapestry of', 'anomaly', 'symphony of', 'glyph', 'dust motes', 'dance of light', or baroque decoration.",
+        "— No 'tapestry of', 'anomaly', 'symphony of', 'glyph', 'dust motes', 'faint whisper', 'dance of light', or baroque decoration.",
         "— No starting with 'Suddenly' or 'In that moment'.",
         "— No characters trembling or gasping at minor events.",
         "— No over-explained reactions. If a gun goes off, don't write 'She realized the danger was real.'",
         "— No wisdom dispensed by side characters unprompted.",
+        "— No complex, run-on sentences. No 'The icy mist swirled, obscuring the path forward, but the pulse grew stronger, beckoning her' - 'The icy mist swirled, obscuring the path forward.'.",
         "— No purple prose. Every word is load-bearing or it's cut.",
 
         // Format

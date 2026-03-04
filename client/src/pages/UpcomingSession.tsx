@@ -21,7 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function UpcomingSession({ channelId = 'm2w4k' }: { channelId?: string; }) {
+export default function UpcomingSession({ channelId = 'mystery' }: { channelId?: string; }) {
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
     const [ reminding, setReminding ] = useState(false);

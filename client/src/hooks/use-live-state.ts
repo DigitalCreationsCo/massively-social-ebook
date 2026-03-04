@@ -50,11 +50,10 @@ export function useLiveState(channelId: string) {
   
   // Ensure channelId is never undefined or empty
   if (!channelId) {
-    console.warn('[LiveState] Undefined channelId provided, defaulting to x7v9z');
-    channelId = 'x7v9z';
+    console.warn('[LiveState] Undefined channelId provided, defaulting to scifi');
+    channelId = 'scifi';
   }
-  const obfId = channelId; // The input is now expected to be obfuscated ID from the selector
-
+  const normalizedChannelId = channelId;
   const [username] = useState(() => {
     const stored = sessionStorage.getItem('reader_name');
     if (stored) return stored;
@@ -82,18 +81,18 @@ export function useLiveState(channelId: string) {
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
-    queryKey: [ api.blocks.current.path, obfId ],
+    queryKey: [ api.blocks.current.path, normalizedChannelId ],
     queryFn: async () => {
-      const res = await fetch(`${api.blocks.current.path}?channelId=${obfId}`);
+      const res = await fetch(`${api.blocks.current.path}?channelId=${normalizedChannelId}`);
       if (!res.ok) throw new Error('Failed to fetch current block');
       return res.json() as Promise<StoryState>;
     },
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
-    queryKey: [ api.chat.history.path, obfId ],
+    queryKey: [ api.chat.history.path, normalizedChannelId ],
     queryFn: async () => {
-      const res = await fetch(`${api.chat.history.path}?channelId=${obfId}`);
+      const res = await fetch(`${api.chat.history.path}?channelId=${normalizedChannelId}`);
       if (!res.ok) throw new Error('Failed to fetch chat history');
       return res.json() as Promise<ChatMsg[]>;
     },
@@ -167,8 +166,8 @@ export function useLiveState(channelId: string) {
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = import.meta.env.VITE_WS_URL 
-      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${obfId}`
-      : `${protocol}//${window.location.host}/ws?channelId=${obfId}`;
+      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${normalizedChannelId}`
+      : `${protocol}//${window.location.host}/ws?channelId=${normalizedChannelId}`;
     
     const connect = () => {
       const socket = new WebSocket(wsUrl);
@@ -176,8 +175,8 @@ export function useLiveState(channelId: string) {
 
       socket.onopen = () => {
         setWsConnected(true);
-        console.log('[LiveState] Connected to channel:', obfId);
-      };
+        console.log('[LiveState] Connected to channel:', normalizedChannelId);
+        };
 
       socket.onclose = () => {
         setWsConnected(false);
@@ -205,7 +204,7 @@ export function useLiveState(channelId: string) {
           } 
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
-            queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, obfId ], (old = []) => {
+            queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, normalizedChannelId ], (old = []) => {
               if (old.some(m => m.id === payload.id)) return old;
               return [...old, payload];
             });
@@ -224,21 +223,20 @@ export function useLiveState(channelId: string) {
             setActiveSession(payload.session);
             if (payload.status === 'active') {
               // Refetch block if session just started
-              queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, obfId ] });
+              queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, normalizedChannelId ] });
             }
           }
         } catch (err) {
           console.error('[LiveState] Failed to parse WS message:', err);
-        }
       };
     };
-
+    };
     connect();
 
     return () => {
       wsRef.current?.close();
     };
-  }, [ queryClient, obfId ]);
+  }, [ queryClient, normalizedChannelId ]);
 
   const submitChat = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -252,15 +250,15 @@ export function useLiveState(channelId: string) {
       text,
       createdAt: new Date().toISOString()
     };
-    queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, obfId ], (old = []) => [ ...old, tempMsg ]);
+    queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, normalizedChannelId ], (old = []) => [ ...old, tempMsg ]);
 
-    trackEvent('Chat Message Sent', { channel: obfId });
+    trackEvent('Chat Message Sent', { channel: normalizedChannelId });
 
     wsRef.current.send(JSON.stringify({
       type: 'SUBMIT_CHAT',
       payload: { username, text }
     }));
-  }, [ username, queryClient, toast, obfId ]);
+  }, [ username, queryClient, toast, normalizedChannelId ]);
 
   const submitVote = useCallback((choice: 'A' | 'B') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -268,13 +266,13 @@ export function useLiveState(channelId: string) {
       return;
     }
     
-    sessionStorage.setItem(`voted_${obfId}_${currentBlock?.id}`, choice);
+    
+    sessionStorage.setItem(`voted_${normalizedChannelId}_${currentBlock?.id}`, choice);
     
     wsRef.current.send(JSON.stringify({
       type: 'SUBMIT_VOTE',
       payload: { choice, userId: username }
     }));
-    trackEvent('Vote Cast', { channel: obfId, choice, blockId: currentBlock?.id });
 
     
     // Update local vote results optimistically
@@ -288,12 +286,12 @@ export function useLiveState(channelId: string) {
       description: `You chose ${currentBlock?.optionA && choice === 'A' ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
       duration: 2000 
     });
-  }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, obfId ]);
+  }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, normalizedChannelId ]);
 
   const submitReaction = useCallback((blockId: number, emoji: string, paragraphIndex: number) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       
-      trackEvent('Reaction Sent', { channel: obfId, emoji, blockId });
+      trackEvent('Reaction Sent', { channel: normalizedChannelId, emoji, blockId });
       
       wsRef.current.send(JSON.stringify({
           type: 'SUBMIT_REACTION',
@@ -303,17 +301,17 @@ export function useLiveState(channelId: string) {
       // Optimistic update
       setReactions(prev => [...prev, {
           id: Date.now(), // Temporary ID
-          channelId: obfId,
+          channelId: normalizedChannelId,
           sessionId: activeSession?.id || 0,
           blockId,
           userId: username,
           emoji,
           paragraphIndex,
-        createdAt: new Date()
+          createdAt: new Date()
       }]);
-  }, [username, obfId, activeSession]);
+  }, [username, normalizedChannelId, activeSession]);
 
-  const hasVotedCurrent = sessionStorage.getItem(`voted_${obfId}_${currentBlock?.id}`) !== null;
+  const hasVotedCurrent = sessionStorage.getItem(`voted_${normalizedChannelId}_${currentBlock?.id}`) !== null;
 
   // Get most recent chat message
   const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
