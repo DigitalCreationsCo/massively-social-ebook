@@ -42,9 +42,12 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (isOpen && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+      // Small timeout to ensure DOM layout has updated after AnimatePresence
+      setTimeout(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
     }
-  }, [history.length, isOpen]);
+  }, [ history, isOpen ]);
 
   // Focus input when chat opens
   useEffect(() => {
@@ -90,7 +93,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
                 animate={ { opacity: 1, y: 0 } }
                 aria-label="Open chat"
                 onClick={ onToggle }
-              className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm border border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
+              className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm  border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
               >
               { mostRecentMessage ? (
                 <>
@@ -156,12 +159,19 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
           {/* Messages */}
           <ScrollArea className="flex-1 min-h-0">
             <div className="flex flex-col gap-1.5 px-4 py-3">
-              <AnimatePresence initial={false}>
-                {history.length === 0 ? (
-                  <div className="text-center text-white/30 italic text-sm py-8">
-                    Be the first to speak...
-                  </div>
-                ) : (
+              <AnimatePresence initial={ false } mode="popLayout">
+                <>
+                  { history.length === 0 ? (
+                    <motion.div
+                      key="empty"
+                      initial={ { opacity: 0 } }
+                      animate={ { opacity: 1 } }
+                      exit={ { opacity: 0 } }
+                      className="text-center text-white/30 italic text-sm py-8"
+                    >
+                      Be the first to speak...
+                    </motion.div>
+                  ) : (
                   history.map((msg) => {
                     const isMe = msg.username === username;
                     return (
@@ -186,7 +196,9 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
                       </motion.div>
                     )
                   })
-                )}
+                  )
+                  }
+                </>
               </AnimatePresence>
               <div ref={bottomRef} />
             </div>

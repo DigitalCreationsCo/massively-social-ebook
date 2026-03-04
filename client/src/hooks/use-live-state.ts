@@ -146,16 +146,22 @@ export function useLiveState(channelId: string) {
         const start = new Date(activeSession.scheduledStart).getTime();
         const diff = now - start;
         
-        if (diff < 0) setMacroPhase('waiting');
-        else if (diff < 3 * 60 * 1000) setMacroPhase('gathering'); // 0-3 mins
-        else if (diff < 23 * 60 * 1000) setMacroPhase('reading'); // 3-23 mins
-        else setMacroPhase('afterparty'); // 23+ mins
+        if (currentBlock?.phase === 'resolution') {
+            setMacroPhase('afterparty');
+        } else if (diff < -3 * 60 * 1000) {
+            setMacroPhase('waiting');
+        } else if (diff < 0) {
+            setMacroPhase('gathering'); // Before scheduled start
+        } else {
+            setMacroPhase('reading'); // Session is active
+        }
+
     };
     
     updatePhase();
     const interval = setInterval(updatePhase, 1000);
     return () => clearInterval(interval);
-  }, [activeSession]);
+  }, [ activeSession, currentBlock?.phase ]);
 
   // WebSocket Connection
   useEffect(() => {
@@ -187,6 +193,9 @@ export function useLiveState(channelId: string) {
             const payload = message.payload as StoryState;
 
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+            if (payload.timeRemaining !== undefined) {
+              setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
+            }
             if (payload.timeToNextDecision !== undefined) {
               setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
             }
@@ -300,7 +309,7 @@ export function useLiveState(channelId: string) {
           userId: username,
           emoji,
           paragraphIndex,
-          createdAt: new Date().toISOString()
+        createdAt: new Date()
       }]);
   }, [username, obfId, activeSession]);
 

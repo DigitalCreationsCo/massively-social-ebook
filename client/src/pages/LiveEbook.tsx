@@ -46,7 +46,7 @@ export default function LiveEbook() {
   const [ _, setLocation ] = useLocation();
 
   // Redirect to upcoming if no active session
-  if (!isLoading && sessionStatus === 'scheduled') {
+  if (!isLoading && (sessionStatus === 'scheduled' || sessionStatus === 'completed')) {
     setLocation('/upcoming');
   }
 

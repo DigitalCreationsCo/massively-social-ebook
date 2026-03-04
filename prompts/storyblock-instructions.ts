@@ -85,7 +85,7 @@ export const createStoryBlockInstructions = ({
         "1. Show, don't tell. Not 'She was afraid' — 'Her hand found the wall.'",
         "2. Literal over abstract. Not 'her focus sharpened' — 'her eyes narrowed on the door.'",
         "3. Simple language. 'Glow' beats 'luminescence'. Clarity is power.",
-        "4. Active voice. Strong verbs. Cut every passive construction.",
+        "4. Active voice. Strong verbs. Cut every passive construction. Not 'She hauled herself up over the ledge, lungs burning.' - 'She hauled herself up over the ledge. Her lungs burned.'",
         "5. Human characters. They make mistakes. They hesitate. They want things they can't say out loud.",
         "6. Dialogue is subtext. 'Your coffee's getting cold' is more powerful than 'I love you.'",
         "7. Reserve big emotions for big moments. Earn them.",
