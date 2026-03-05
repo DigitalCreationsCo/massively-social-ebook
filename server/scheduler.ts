@@ -192,7 +192,9 @@ export async function seedDailySessions() {
 
     for (const channelId of CHANNELS) {
         // Sci-fi at 19:00, Mystery at 20:00 (Mountain Time)
-        const hour = channelId === 'scifi' ? 19 : 20;
+        // Schedule sessions at staggered times, e.g., 7 PM, 8 PM, etc.
+        const baseHour = 19; // 7 PM MST
+        const hour = baseHour + CHANNELS.indexOf(channelId);
         const durationMs = 25 * 60 * 1000; // 25 minutes
         
         // 1. Determine base target slot (the immediate next one)

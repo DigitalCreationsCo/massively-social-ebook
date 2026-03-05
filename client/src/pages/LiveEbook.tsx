@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { trackEvent } from '@/lib/analytics';
+import { CHANNELS, DEFAULT_CHANNEL } from '@shared/channels';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
@@ -11,13 +11,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const CHANNELS = [
-  { id: 'scifi', name: 'Sci-Fi', description: 'Space exploration and alien encounters' },
-  { id: 'mystery', name: 'Mystery', description: 'Dark alleys and supernatural secrets' }
-];
 
 export default function LiveEbook() {
-  const [ selectedChannel, setSelectedChannel ] = useState<string>('mystery');
+  const [ selectedChannel, setSelectedChannel ] = useState<string>(DEFAULT_CHANNEL);
   const [ chatOpen, setChatOpen ] = useState(false);
   const [ showChannelSelector, setShowChannelSelector ] = useState(false);
 

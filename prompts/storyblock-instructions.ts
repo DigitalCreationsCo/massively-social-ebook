@@ -97,7 +97,8 @@ export const createStoryBlockInstructions = ({
         "— No characters trembling or gasping at minor events.",
         "— No over-explained reactions. If a gun goes off, don't write 'She realized the danger was real.'",
         "— No wisdom dispensed by side characters unprompted.",
-        "— No complex, run-on sentences. No 'The icy mist swirled, obscuring the path forward, but the pulse grew stronger, beckoning her' - 'The icy mist swirled, obscuring the path forward.'.",
+        "— No complex, run-on sentences. Not 'The icy mist swirled, obscuring the path forward, but the pulse grew stronger, beckoning her' - 'The icy mist swirled, obscuring the path forward.'.",
+        "— Simple descriptions are desired. Not 'A tiny, almost invisible inscription was etched into the silver frame.' - 'A small inscription was etched into the silver frame.'.",
         "— No purple prose. Every word is load-bearing or it's cut.",
 
         // Format

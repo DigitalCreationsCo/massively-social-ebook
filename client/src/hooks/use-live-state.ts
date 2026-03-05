@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
-import { getObfuscatedChannelId } from '@shared/channels';
+import { DEFAULT_CHANNEL } from '@shared/channels';
 import type { Session, Reaction } from '@shared/schema';
 import { trackEvent, identifyUser } from '@/lib/analytics';
 
@@ -50,8 +50,8 @@ export function useLiveState(channelId: string) {
   
   // Ensure channelId is never undefined or empty
   if (!channelId) {
-    console.warn('[LiveState] Undefined channelId provided, defaulting to scifi');
-    channelId = 'scifi';
+    console.warn(`[LiveState] Undefined channelId provided, defaulting to ${DEFAULT_CHANNEL}`);
+    channelId = DEFAULT_CHANNEL;
   }
   const normalizedChannelId = channelId;
   const [username] = useState(() => {

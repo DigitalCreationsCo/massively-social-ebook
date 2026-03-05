@@ -46,10 +46,18 @@ export function computeDecisionEndsAt(st: ChannelState): number {
   return st.phaseEndsAt + (st.turnsToNextChoice * NARRATIVE_TURN_MS);
 }
 
-export const state: Record<Channel, ChannelState> = {
-  scifi: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, initialTimeToDecision: 0, currentBlock: undefined, turnsToNextChoice: 3, isProcessing: false },
-  mystery: { currentPhase: 'reading', phaseEndsAt: Date.now() + POST_VOTE_READING_MS, decisionEndsAt: 0, initialTimeToDecision: 0, currentBlock: undefined, turnsToNextChoice: 3, isProcessing: false }
-};
+export const state: Record<Channel, ChannelState> = CHANNELS.reduce((acc, channelId) => {
+  acc[channelId] = {
+    currentPhase: 'reading',
+    phaseEndsAt: Date.now() + POST_VOTE_READING_MS,
+    decisionEndsAt: 0,
+    initialTimeToDecision: 0,
+    currentBlock: undefined,
+    turnsToNextChoice: 3,
+    isProcessing: false
+  };
+  return acc;
+}, {} as Record<Channel, ChannelState>);
 
 function getRandomTurns() {
   return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
@@ -101,9 +109,7 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
   // Seed or resume block
   let block = await storage.getCurrentBlock(channelId);
   if (!block) {
-    const initialPrompt = channelId === 'scifi'
-      ? "We are a crew onboard a spaceship to Mars."
-      : "A detective is following a lead in a rainy alleyway.";
+    const initialPrompt = "A detective is following a lead in a rainy alleyway.";
 
     try {
       const nextContent = await generateStoryBlock(channelId, initialPrompt, false);

@@ -7,10 +7,10 @@ describe('Channel Validation', () => {
     expect(getChannelId('mystery')).toBe('mystery');
   });
 
-  it('defaults invalid IDs to scifi', () => {
-    expect(getChannelId('unknown')).toBe('scifi');
-    expect(getChannelId(null)).toBe('scifi');
-    expect(getChannelId(undefined)).toBe('scifi');
-    expect(getChannelId('')).toBe('scifi');
+  it('defaults invalid IDs to mystery', () => {
+    expect(getChannelId('unknown')).toBe('mystery');
+    expect(getChannelId(null)).toBe('mystery');
+    expect(getChannelId(undefined)).toBe('mystery');
+    expect(getChannelId('')).toBe('mystery');
   });
 });
