@@ -10,6 +10,7 @@ import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
 import { DebugTools } from "@/components/DebugTools";
+import { VersionOverlay } from "@/components/VersionOverlay";
 
 function useAnalyticsHook() {
   const [location] = useLocation();
@@ -43,6 +44,7 @@ function App() {
         <UpdatePrompt />
         <Router />
         {import.meta.env.DEV && <DebugTools channelId="m2w4k" />}
+        <VersionOverlay />
       </TooltipProvider>
     </QueryClientProvider>
   );
