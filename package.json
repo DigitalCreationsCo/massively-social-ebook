@@ -7,12 +7,12 @@
     "dev": "tsx watch -r dotenv/config server/index.ts",
     "build": "tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
-    "prepare": "husky",
     "release": "npm version minor && git push origin production --tags",
     "release:major": "npm version major && git push origin production --tags",
     "check": "tsc",
     "test": "vitest",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "prepare": "husky"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",
