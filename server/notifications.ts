@@ -1,13 +1,8 @@
-import sgMail from '@sendgrid/mail';
+import { Resend } from 'resend';
 import * as admin from 'firebase-admin';
 
-// Initialize SendGrid
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-} else {
-    console.warn('[Notifications] SENDGRID_API_KEY missing, email will be mocked.');
-}
-
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 // Initialize Firebase Admin for Push Notifications
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     try {
@@ -29,28 +24,50 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 /**
  * Sends an email notification using SendGrid.
  */
-export async function sendEmail(to: string, subject: string, body: string) {
-    if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_FROM_EMAIL) {
+export async function sendEmail(
+    to: string, 
+    subject: string, 
+    body: string,
+    attachments?: { filename: string; content: string | Buffer; contentType?: string }[]
+) {
+    if (!process.env.RESEND_API_KEY) {
         console.log(`[Email MOCK] Sending to: ${to}`);
         console.log(`[Email MOCK] Subject: ${subject}`);
         console.log(`[Email MOCK] Body: ${body.substring(0, 50)}...`);
+        if (attachments) {
+            console.log(`[Email MOCK] Attachments: ${attachments.length}`);
+        }
         return { success: true, messageId: `mock-email-${Date.now()}` };
     }
 
-    const msg = {
-        to,
-        from: process.env.SENDGRID_FROM_EMAIL,
-        subject,
-        text: body,
-        html: body.replace(/\n/g, '<br>'),
-    };
-
     try {
-        const [ response ] = await sgMail.send(msg);
-        console.log(`[Email] Sent successfully to ${to}. Message ID: ${response.headers[ 'x-message-id' ]}`);
-        return { success: true, messageId: response.headers[ 'x-message-id' ] };
+        const payload: any = {
+            from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+            to,
+            subject,
+            text: body,
+            html: body.replace(/\n/g, '<br>'),
+        };
+
+        if (attachments) {
+            payload.attachments = attachments.map(att => ({
+                filename: att.filename,
+                content: att.content,
+                contentType: att.contentType
+            }));
+        }
+
+        const { data, error } = await resend.emails.send(payload);
+
+        if (error) {
+            console.error('[Email] Resend Error:', error);
+            throw new Error(error.message);
+        }
+
+        console.log(`[Email] Sent successfully to ${to}. Message ID: ${data?.id}`);
+        return { success: true, messageId: data?.id };
     } catch (err) {
-        console.error('[Email] SendGrid Error:', err);
+        console.error('[Email] Exception caught during sending:', err);
         throw err;
     }
 }

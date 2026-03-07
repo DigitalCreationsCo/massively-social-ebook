@@ -1,3 +1,4 @@
+import { sendEmail } from './notifications';
 import { google } from 'googleapis';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
@@ -10,6 +11,28 @@ import { generateICS } from './ics';
  * Uses Service Accounts and Client Credentials to push events to users.
  */
 export class CalendarService {
+    /**
+     * Sends an email via Resend with the calendar invite (.ics) attached.
+     */
+    static async sendCalendarInviteViaEmail(userEmail: string, session: Session) {
+        try {
+            const icsContent = CalendarService.generateIcs(session);
+            const subject = `Calendar Invite: ${session.title}`;
+            const body = `You are invited to join the story session: ${session.title}\n\n${session.description}\n\nJoin here: ${process.env.APP_URL || 'http://localhost:3000'}`;
+            
+            await sendEmail(userEmail, subject, body, [
+                {
+                    filename: 'invite.ics',
+                    content: Buffer.from(icsContent, 'utf-8'),
+                    contentType: 'text/calendar'
+                }
+            ]);
+            return { success: true, provider: 'email' };
+        } catch (err) {
+            console.error('[Calendar] Error sending email invite:', err);
+            throw err;
+        }
+    }
     /**
      * Invites a user to a Google Calendar event created by the service account.
      */

@@ -4,7 +4,7 @@ import { sendEmail, sendPushNotification } from './notifications';
 import { google } from 'googleapis';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
-import sgMail from '@sendgrid/mail';
+import { Resend } from 'resend';
 import * as admin from 'firebase-admin';
 
 // Mock External SDKs
@@ -40,13 +40,18 @@ vi.mock('@azure/identity', () => ({
     })
 }));
 
-vi.mock('@sendgrid/mail', () => ({
-    default: {
-        setApiKey: vi.fn(),
-        send: vi.fn().mockResolvedValue([ { headers: { 'x-message-id': 'sg_123' } } ])
-    }
-}));
-
+vi.mock('resend', () => {
+    const mockSend = vi.fn().mockResolvedValue({ data: { id: 'resend_123' }, error: null });
+    return {
+        Resend: vi.fn().mockImplementation(function() {
+            return {
+                emails: {
+                    send: mockSend
+                }
+            };
+        })
+    };
+});
 vi.mock('firebase-admin', () => ({
     initializeApp: vi.fn(),
     credential: {
@@ -78,8 +83,8 @@ describe('Production-Ready Integrations', () => {
         process.env.AZURE_CLIENT_SECRET = 'az_secret';
         process.env.AZURE_TENANT_ID = 'az_tenant';
         process.env.AZURE_USER_ID = 'az_user_id';
-        process.env.SENDGRID_API_KEY = 'sg_key';
-        process.env.SENDGRID_FROM_EMAIL = 'from@test.com';
+        process.env.RESEND_API_KEY = 'resend_key';
+        process.env.RESEND_FROM_EMAIL = 'from@test.com';
         process.env.FIREBASE_SERVICE_ACCOUNT = JSON.stringify({ project_id: 'fb-test' });
     });
 
@@ -113,16 +118,17 @@ describe('Production-Ready Integrations', () => {
     });
 
     describe('NotificationService', () => {
-        it('should call SendGrid API', async () => {
+        it('should call Resend API', async () => {
             await sendEmail('user@test.com', 'Sub', 'Body');
-            expect(sgMail.send).toHaveBeenCalledWith(expect.objectContaining({
+            
+            const resendInstance = new Resend('fake_key');
+            expect(resendInstance.emails.send).toHaveBeenCalledWith(expect.objectContaining({
                 to: 'user@test.com',
                 from: 'from@test.com',
                 subject: 'Sub',
                 text: 'Body'
             }));
         });
-
         it('should call Firebase Messaging API', async () => {
             // Mocking admin.apps to simulate initialized state
             (admin.apps as any).push({});

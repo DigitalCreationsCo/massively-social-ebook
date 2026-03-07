@@ -228,9 +228,9 @@ export async function registerRoutes(
 
     if (session) {
       try {
-        await Promise.all([
+        await Promise.allSettled([
           CalendarService.addToGoogle(email, session),
-          // CalendarService.addToOutlook(email, session)
+          CalendarService.sendCalendarInviteViaEmail(email, session)
         ]);
         res.json({ success: true, message: "You're on the list. Check your email for the notification." });
       } catch (err) {

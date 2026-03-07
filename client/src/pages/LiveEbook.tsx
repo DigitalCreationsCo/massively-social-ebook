@@ -1,3 +1,4 @@
+import { trackEvent } from '@/lib/analytics';
 import { useState, useEffect } from 'react';
 import { CHANNELS, DEFAULT_CHANNEL } from '@shared/channels';
 import { useLiveState } from '@/hooks/use-live-state';
