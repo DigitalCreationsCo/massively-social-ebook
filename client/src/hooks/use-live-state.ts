@@ -62,7 +62,9 @@ export function useLiveState(channelId: string) {
     return newName;
   });
   useEffect(() => {
-    identifyUser(username);
+    if (!username) {
+      identifyUser(username);
+    }
   }, [username]);
 
 

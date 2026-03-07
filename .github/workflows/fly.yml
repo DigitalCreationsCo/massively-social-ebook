@@ -2,7 +2,7 @@ name: Fly Deploy
 on:
   push:
     branches:
-      - production
+      - main
   workflow_dispatch:
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
           tag_name: ${{ steps.validator.outputs.full_tag }}
           name: Release ${{ steps.validator.outputs.full_tag }}
           body: "autonomous production release for build ${{ github.run_number }}"
-          target_commitish: production
+          target_commitish: main
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
