@@ -9,33 +9,11 @@ kill_signal = "SIGINT"
 kill_timeout = "5s"
 
 [build]
-  builder = "fly-builder/pack"
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "5001"
   NODE_ENV = "production"
-
-[[services]]
-  protocol = "tcp"
-  internal_port = 5001
-
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "1s"
-
-[mounts]
-  source="data"
-  destination="/data"
 
 [http_service]
   internal_port = 5001

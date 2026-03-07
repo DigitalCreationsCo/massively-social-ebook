@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install dependencies including devDependencies for build
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY . .
@@ -20,16 +20,16 @@ WORKDIR /app
 
 # Copy package files and install only production dependencies
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # Copy built server and client
 COPY --from=builder /app/dist ./dist
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5001
 
 # Set environment variables
-ENV PORT=5000
+ENV PORT=5001
 ENV NODE_ENV=production
 
 # Start the server
