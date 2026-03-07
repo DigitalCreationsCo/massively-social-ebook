@@ -22,22 +22,26 @@ jobs:
       - name: Verify Manifest Integrity
         id: validator
         run: |
-          # 1. extract semantic version from manifest
           local_version=$(node -p "require('./package.json').version")
+          tag_name="v${local_version}"
           
-          # 2. synchronize with global registry and check for collisions
-          # we check if a tag for this semantic version already exists
-          if git rev-parse "v${local_version}" >/dev/null 2>&1; then
-            echo "[-] critical: manifest collision detected at v${local_version}."
-            echo "[-] sequence halted: version already exists in global registry."
-            echo "[-] action: increment package.json version to resume pipeline."
-            exit 1
+          # Check if the tag exists
+          if git rev-parse "$tag_name" >/dev/null 2>&1; then
+            # COLLISION CHECK: Does the existing tag point to a DIFFERENT commit?
+            tag_commit=$(git rev-list -n 1 "$tag_name")
+            current_commit=${{ github.sha }}
+            
+            if [ "$tag_commit" != "$current_commit" ]; then
+              echo "[-] critical: manifest collision detected at ${tag_name}."
+              echo "[-] sequence halted: this version is already assigned to commit ${tag_commit}."
+              exit 1
+            fi
+            echo "[+] notice: tag ${tag_name} matches current commit. proceeding with build."
           fi
           
-          # 3. generate comprehensive build identity
-          tag_identity="v${local_version}-build.${{ github.run_number }}"
-          echo "full_tag=${tag_identity}" >> $GITHUB_OUTPUT
-          echo "[+] validation successful: manifest increment verified."
+          # Generate the unique build identity for Fly.io/Releases
+          full_tag="${tag_name}-build.${{ github.run_number }}"
+          echo "full_tag=${full_tag}" >> $GITHUB_OUTPUT
 
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
