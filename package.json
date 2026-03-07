@@ -5,8 +5,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "tsx watch -r dotenv/config server/index.ts",
-    "build": "tsx script/build.ts",
+    "build": "tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
+    "prepare": "husky",
+    "release": "npm version minor && git push origin production --tags",
+    "release:major": "npm version major && git push origin production --tags",
     "check": "tsc",
     "test": "vitest",
     "db:push": "drizzle-kit push"
@@ -113,6 +116,7 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.8",
     "esbuild": "^0.25.0",
+    "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "postcss": "^8.4.47",
     "supertest": "^7.2.2",
