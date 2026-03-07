@@ -48,7 +48,7 @@ describe('useLiveState', () => {
         
         // Mock window.location for WS URL
         Object.defineProperty(window, 'location', {
-            value: { protocol: 'http:', host: 'localhost:5000' },
+            value: { protocol: 'http:', host: 'localhost:5001' },
             writable: true
         });
         

@@ -64,7 +64,7 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 |----------|----------|-------------|
 | `GEMINI_API_KEY` | **Yes** | Google AI API key for Gemini text and Imagen image generation |
 | `DATABASE_URL` | **Yes** | PostgreSQL connection string |
-| `PORT` | No | Server port (default: `5000`) |
+| `PORT` | No | Server port (default: `5001`) |
 | `VITE_MIXPANEL_TOKEN` | No | Token for Mixpanel analytics (optional) |
 
 Create a `.env` file from the example:
@@ -339,6 +339,23 @@ npm run check
 npm run build
 npm run start
 ```
+
+## Deployment
+
+This application is configured for deployment on [Fly.io](https://fly.io) using Docker.
+
+1. Install the `flyctl` CLI and authenticate.
+2. The project contains a `fly.toml` and a multi-stage `Dockerfile` pre-configured to build both the Vite client and Express server.
+3. Set your production secrets (Gemini API key, Database URL):
+   ```bash
+   fly secrets set GEMINI_API_KEY="..." DATABASE_URL="..."
+   ```
+4. Deploy the application:
+   ```bash
+   fly deploy
+   ```
+
+The container exposes port `5001` internally, which is automatically mapped by the `fly.toml` HTTP service configuration to receive web traffic.
 
 ## Testing
 
