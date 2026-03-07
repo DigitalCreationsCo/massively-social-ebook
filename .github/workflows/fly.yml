@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - production
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,6 +14,10 @@ jobs:
     concurrency: deploy-group
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Switch to Branch
+        run: git checkout -B ${{ github.ref_name }}
       
       - name: Generate Build Metadata
         id: meta
@@ -25,7 +30,7 @@ jobs:
       
       # FIX: We pass the ARG so the Docker build can bake it in
       - name: Deploy to Fly
-        run: flyctl deploy --remote-only --build-arg APP_BUILD_TAG=${{ steps.meta.outputs.TAG }}
+        run: flyctl deploy --remote-only --no-cache --build-arg APP_BUILD_TAG=${{ steps.meta.outputs.TAG }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
