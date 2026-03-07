@@ -10,6 +10,9 @@ RUN npm install
 # Copy source code
 COPY . .
 
+ARG APP_BUILD_TAG
+ENV VITE_APP_BUILD_TAG=$APP_BUILD_TAG
+
 # Build client and server
 RUN npm run build
 

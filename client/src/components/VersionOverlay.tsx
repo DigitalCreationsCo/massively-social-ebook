@@ -1,9 +1,26 @@
 import pkg from "../../../package.json";
 
+/**
+ * Root Cause Analysis: Versioning failures usually occur when build arguments 
+ * are not correctly passed through the Docker-to-Vite pipeline.
+ * This component handles that by prioritizing the injected tag.
+ */
 export function VersionOverlay() {
+  const isProductionEnvironment = import.meta.env.PROD;
+  const buildTagFromInjectedEnv = import.meta.env.VITE_APP_BUILD_TAG;
+
+  // Use the injected tag only if it exists and we are in prod; 
+  // otherwise, default to a descriptive local dev string.
+  const finalDisplayVersion = (isProductionEnvironment && buildTagFromInjectedEnv)
+    ? buildTagFromInjectedEnv
+    : `v${pkg.version}-dev.local`;
+
   return (
-    <div className="fixed bottom-1 left-2 text-[10px] font-mono text-white/20 z-50 pointer-events-none">
-      v{pkg.version}
+    <div
+      className="fixed bottom-1 left-2 text-[10px] font-mono text-white/20 z-50 pointer-events-none select-none"
+      data-testid="version-overlay"
+    >
+      { finalDisplayVersion }
     </div>
   );
 }
