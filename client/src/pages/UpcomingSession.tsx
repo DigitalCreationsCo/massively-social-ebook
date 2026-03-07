@@ -292,29 +292,29 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
 
             {/* Preview Section */ }
             <section id="preview" className="flex items-center w-full max-w-6xl px-6 mt-16 space-y-32 min-h-screen">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-start">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
                     {/* Mockup Display */ }
-                    <div className="lg:col-span-8 space-y-8">
+                    <div className="lg:col-span-8 space-y-8 flex flex-col">
                         <div className="space-y-4">
                             <h2 className="text-4xl font-serif text-white tracking-tight">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
-                                Join the room, meet readers, experience the story. No scrolling back, no reading ahead. Just you, the community, and the unfolding narrative. The next story starts soon.
+                                Join a room of fellow readers. Experience the unfolding narrative. The next story starts soon.
                             </p>
                         </div>
-                        <div className="relative group">
+                        <div className="relative group flex-grow">
                             <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-50 group-hover:opacity-100 transition duration-1000"></div>
-                            <div className="relative rounded-xl overflow-hidden border border-white/10 shadow-3xl bg-zinc-900">
+                            <div className="relative rounded-xl overflow-hidden border border-white/10 shadow-3xl bg-zinc-900 h-full">
                                 <img
                                     src="/preview/2.png"
                                     alt="The 25th Chapter: 25 minutes. One Story."
-                                    className="w-full h-[75%] object-contain"
+                                    className="w-full h-full object-cover"
                                 />
                             </div>
                         </div>
                     </div>
 
                     {/* FAQ Aside */ }
-                    <aside className="lg:col-span-4 space-y-12 bg-white/5 p-10 rounded-2xl border border-white/10 backdrop-blur-sm self-start sticky top-24">
+                    <aside className="lg:col-span-4 space-y-12 bg-white/5 p-10 rounded-2xl border border-white/10 backdrop-blur-sm sticky top-24">
                         <div className="space-y-4">
                             <h2 className="text-3xl font-serif text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
