@@ -1,6 +1,60 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/**
+ * Validates the integrity and structure of the manifest.json file.
+ * Essential for maintaining narrative continuity in Cinematic Canvas.
+ */
+describe('Manifest Integrity Suite', () => {
+  const pathManifestFile = resolve(__dirname, './manifest.json');
+
+  it('should exist in the expected directory', () => {
+    const isManifestPresent = existsSync(pathManifestFile);
+
+    if (!isManifestPresent) {
+      console.error(`[TRACE] Critical Failure: Manifest not found at ${pathManifestFile}`);
+    }
+
+    expect(isManifestPresent).toBe(true);
+  });
+
+  it('should be a valid JSON format', () => {
+    try {
+      const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
+      const parsedManifestBody = JSON.parse(contentManifestRaw);
+
+      // Verbose logging for CI/CD traceability
+      console.log('[TRACE] Manifest successfully parsed. Root keys:', Object.keys(parsedManifestBody));
+
+      expect(parsedManifestBody).toBeDefined();
+      expect(typeof parsedManifestBody).toBe('object');
+    } catch (errJsonParse: any) {
+      console.error(`[DEBUG] JSON Parse Error: ${errJsonParse.message}`);
+      throw new Error(`Failed to parse manifest.json: Ensure no trailing commas or comments exist.`);
+    }
+  });
+
+  it('should contain required fields for Cinematic Canvas', () => {
+    const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
+    const parsedManifestBody = JSON.parse(contentManifestRaw);
+
+    // Explicitly defining required schema keys
+    const listRequiredKeys = [ 'name', 'version', 'manifest_version' ];
+
+    listRequiredKeys.forEach(strKey => {
+      const hasKey = Object.prototype.hasOwnProperty.call(parsedManifestBody, strKey);
+
+      if (!hasKey) {
+        console.error(`[TRACE] Schema Violation: Missing required key "${strKey}"`);
+      }
+
+      expect(hasKey).toBe(true);
+    });
+  });
+});
 
 describe('PWA Implementation', () => {
   const indexHtmlPath = path.resolve(__dirname, '../../index.html');

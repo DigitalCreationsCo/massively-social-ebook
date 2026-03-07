@@ -13,6 +13,9 @@ COPY . .
 ARG APP_BUILD_TAG
 ENV VITE_APP_BUILD_TAG=$APP_BUILD_TAG
 
+ARG VITE_MIXPANEL_TOKEN
+ENV VITE_MIXPANEL_TOKEN=$VITE_MIXPANEL_TOKEN
+
 # Build client and server
 RUN npm run build
 
@@ -23,7 +26,7 @@ WORKDIR /app
 
 # Copy package files and install only production dependencies
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --ignore-scripts
 
 # Copy built server and client
 COPY --from=builder /app/dist ./dist

@@ -2,7 +2,7 @@ name: Fly Deploy
 on:
   push:
     branches:
-      - production
+      - main
   workflow_dispatch:
 
 permissions:
@@ -10,36 +10,61 @@ permissions:
 
 jobs:
   deploy:
+    name: Validate, Build, and Deploy
     runs-on: ubuntu-latest
+    environment: production
     concurrency: deploy-group
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # essential for the machine to see global registry tags
+
       - name: Switch to Branch
         run: git checkout -B ${{ github.ref_name }}
-      
-      - name: Generate Build Metadata
-        id: meta
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v${VERSION}-build.${{ github.run_number }}"
-          echo "TAG=$TAG" >> $GITHUB_OUTPUT
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      
-      # FIX: We pass the ARG so the Docker build can bake it in
-      - name: Deploy to Fly
-        run: flyctl deploy --remote-only --no-cache --build-arg APP_BUILD_TAG=${{ steps.meta.outputs.TAG }}
+      - name: Verify Manifest Integrity
+        id: validator
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          tag_name="v${local_version}"
+          
+          # Check if the tag exists
+          if git rev-parse "$tag_name" >/dev/null 2>&1; then
+            # COLLISION CHECK: Does the existing tag point to a DIFFERENT commit?
+            tag_commit=$(git rev-list -n 1 "$tag_name")
+            current_commit=${{ github.sha }}
+            
+            if [ "$tag_commit" != "$current_commit" ]; then
+              echo "[-] critical: manifest collision detected at ${tag_name}."
+              echo "[-] sequence halted: this version is already assigned to commit ${tag_commit}."
+              exit 1
+            fi
+            echo "[+] notice: tag ${tag_name} matches current commit. proceeding with build."
+          fi
+          
+          # Generate the unique build identity for Fly.io/Releases
+          full_tag="${tag_name}-build.${{ github.run_number }}"
+          echo "full_tag=${full_tag}" >> $GITHUB_OUTPUT
+
+      - name: Setup Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Execute Autonomous Deployment
+        run: |
+          flyctl deploy --remote-only --no-cache \
+            --build-arg APP_BUILD_TAG=${{ steps.validator.outputs.full_tag }} \
+            --build-arg VITE_MIXPANEL_TOKEN=${{ secrets.VITE_MIXPANEL_TOKEN }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-      # FIX: Create the release ONLY if deploy succeeded
-      - name: Create GitHub Release
+      - name: Synchronize Global Registry
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.TAG }}
-          name: Release ${{ steps.meta.outputs.TAG }}
-          body: "Automated production release for build ${{ github.run_number }}"
-          target_commitish: production
+          tag_name: ${{ steps.validator.outputs.full_tag }}
+          name: Release ${{ steps.validator.outputs.full_tag }}
+          body: "autonomous production release for build ${{ github.run_number }}"
+          target_commitish: main
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

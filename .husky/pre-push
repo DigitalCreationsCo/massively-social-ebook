@@ -1,1 +1,13 @@
-sh scripts/check-version.sh
+#!/bin/bash
+
+# Identify the remote branch being pushed to
+remote_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u})
+
+# Only run the check-version script if pushing to production
+if [ "$remote_branch" = "origin/main" ]; then
+  echo "[+] production branch detected. running pre-push validation..."
+  sh scripts/check-version.sh
+else
+  echo "[+] skipping pre-push validation for non-production branch."
+fi
+
