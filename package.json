@@ -1,13 +1,14 @@
 {
   "name": "the-25th-chapter",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "tsx watch -r dotenv/config server/index.ts",
     "build": "tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
-    "release": "npm version minor && git push origin production --tags",
+    "release:patch": "npm version patch && git push origin production --tags",
+    "release:minor": "npm version minor && git push origin production --tags",
     "release:major": "npm version major && git push origin production --tags",
     "check": "tsc",
     "test": "vitest",

@@ -3,18 +3,21 @@
 # initialize autonomous manifest validation
 local_manifest_version=$(node -p "require('./package.json').version")
 
-# synchronizing with global registry tags
-git fetch --tags --quiet
-global_registry_version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/v//')
+echo "[+] checking global registry for version: v$local_manifest_version"
 
-# version collision detection logic
-if [ "$local_manifest_version" == "$global_registry_version" ]; then
-  echo "[-] critical: manifest collision detected at v$local_manifest_version."
-  echo "[-] sequence halted: local version matches existing production tag."
-  echo "[-] action required: execute 'npm run release:[patch|minor|major]' to increment state."
+# synchronizing with global registry
+git fetch --tags --quiet
+
+# FIX: Check if ANY tag exists that starts with our version 
+remote_collision=$(git ls-remote --tags origin "refs/tags/v$local_manifest_version*" | grep "v$local_manifest_version")
+
+if [ ! -z "$remote_collision" ]; then
+  echo "[-] critical: manifest collision detected for v$local_manifest_version."
+  echo "[-] remote conflict identified:"
+  echo "$remote_collision" | awk '{print "    -> " $2}'
+  echo "[-] sequence halted: this version has already been deployed."
   exit 1
 fi
 
-echo "[+] validation successful: version delta identified ($global_registry_version -> $local_manifest_version)."
-echo "[+] initiating upstream synchronization to production pipeline..."
+echo "[+] validation successful: no remote collision for v$local_manifest_version."
 exit 0
