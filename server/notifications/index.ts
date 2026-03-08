@@ -22,53 +22,65 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
  */
 
 /**
- * Sends an email notification using SendGrid.
+ * Sends an email notification using Resend.
+ * Supports both plain-text fallbacks and compiled HTML bodies.
  */
 export async function sendEmail(
-    to: string, 
-    subject: string, 
-    body: string,
-    attachments?: { filename: string; content: string | Buffer; contentType?: string }[]
+    addressTo: string,
+    stringSubject: string,
+    stringBodyText: string,
+    stringBodyHtml?: string,
+    arrayAttachments?: { filename: string; content: string | Buffer; contentType?: string; }[]
 ) {
+    console.debug(`[Notifications][sendEmail] Initiating email dispatch to: ${addressTo} with subject: "${stringSubject}"`);
+
     if (!process.env.RESEND_API_KEY) {
-        console.log(`[Email MOCK] Sending to: ${to}`);
-        console.log(`[Email MOCK] Subject: ${subject}`);
-        console.log(`[Email MOCK] Body: ${body.substring(0, 50)}...`);
-        if (attachments) {
-            console.log(`[Email MOCK] Attachments: ${attachments.length}`);
-        }
+        console.warn(`[Notifications][sendEmail] RESEND_API_KEY missing. Executing mock dispatch.`);
+        console.debug(`[Email MOCK] Address To: ${addressTo}`);
+        console.debug(`[Email MOCK] Subject: ${stringSubject}`);
+        console.debug(`[Email MOCK] Text Body: ${stringBodyText.substring(0, 50)}...`);
+        if (stringBodyHtml) console.debug(`[Email MOCK] HTML Body Provided: Yes, length: ${stringBodyHtml.length} bytes`);
+        if (arrayAttachments) console.debug(`[Email MOCK] Attachments Count: ${arrayAttachments.length}`);
+
         return { success: true, messageId: `mock-email-${Date.now()}` };
     }
 
+    if (process.env.RESEND_API_KEY && !process.env.RESEND_FROM_EMAIL) {
+        throw new Error("[Notifications][sendEmail] Configuration Error: RESEND_FROM_EMAIL is required when using Resend API.");
+    }
+
     try {
-        const payload: any = {
+        const payloadEmail: any = {
             from: process.env.RESEND_FROM_EMAIL || 'community@the25thchapter.com',
-            to,
-            subject,
-            text: body,
-            html: body.replace(/\n/g, '<br>'),
+            to: addressTo,
+            subject: stringSubject,
+            text: stringBodyText,
+            // Prioritize the injected React Email HTML; fallback to basic text formatting if absent
+            html: stringBodyHtml || stringBodyText.replace(/\n/g, '<br>'),
         };
 
-        if (attachments) {
-            payload.attachments = attachments.map(att => ({
-                filename: att.filename,
-                content: att.content,
-                contentType: att.contentType
+        if (arrayAttachments && arrayAttachments.length > 0) {
+            console.debug(`[Notifications][sendEmail] Processing ${arrayAttachments.length} attachments.`);
+            payloadEmail.attachments = arrayAttachments.map(paramAttachment => ({
+                filename: paramAttachment.filename,
+                content: paramAttachment.content,
+                contentType: paramAttachment.contentType
             }));
         }
 
-        const { data, error } = await resend.emails.send(payload);
+        console.debug(`[Notifications][sendEmail] Transmitting payload to Resend API.`);
+        const { data, error: errorResend } = await resend.emails.send(payloadEmail);
 
-        if (error) {
-            console.error('[Email] Resend Error:', error);
-            throw new Error(error.message);
+        if (errorResend) {
+            console.error(`[Notifications][sendEmail] Resend API rejected payload:`, errorResend);
+            throw new Error(`Resend API Error: ${errorResend.message}`);
         }
 
-        console.log(`[Email] Sent successfully to ${to}. Message ID: ${data?.id}`);
+        console.info(`[Notifications][sendEmail] Successfully transmitted email to ${addressTo}. Message ID: ${data?.id}`);
         return { success: true, messageId: data?.id };
-    } catch (err) {
-        console.error('[Email] Exception caught during sending:', err);
-        throw err;
+    } catch (errorUncaught) {
+        console.error(`[Notifications][sendEmail] CRITICAL FAILURE during email transmission to ${addressTo}:`, errorUncaught);
+        throw errorUncaught;
     }
 }
 

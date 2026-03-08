@@ -49,10 +49,11 @@ export default function LiveEbook() {
 
   if (isLoading) {
     return (
-      <div className="h-[100dvh] w-full bg-black flex flex-col items-center justify-center text-primary">
-        <Loader2 className="w-10 h-10 animate-spin mb-4" />
-        <p className="font-serif tracking-widest text-sm text-white/60">Opening...</p>
-      </div>
+      // <div className="h-[100dvh] w-full bg-black flex flex-col items-center justify-center text-primary">
+      //   <Loader2 className="w-10 h-10 animate-spin mb-4" />
+      //   <p className="font-serif tracking-widest text-sm text-white/60">Loading</p>
+      // </div>
+      <></>
     );
   }
 
