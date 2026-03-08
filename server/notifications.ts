@@ -30,7 +30,8 @@ export async function sendEmail(
     stringSubject: string,
     stringBodyText: string,
     stringBodyHtml?: string,
-    arrayAttachments?: { filename: string; content: string | Buffer; contentType?: string; }[]
+    arrayAttachments?: { filename: string; content: string | Buffer; contentType?: string; }[],
+    scheduledAt?: string
 ) {
     console.debug(`[Notifications][sendEmail] Initiating email dispatch to: ${addressTo} with subject: "${stringSubject}"`);
 
@@ -51,12 +52,12 @@ export async function sendEmail(
 
     try {
         const payloadEmail: any = {
-            from: process.env.RESEND_FROM_EMAIL || 'community@the25thchapter.com',
+            from: process.env.RESEND_FROM_EMAIL || 'community@25thchapter.com',
             to: addressTo,
             subject: stringSubject,
             text: stringBodyText,
-            // Prioritize the injected React Email HTML; fallback to basic text formatting if absent
             html: stringBodyHtml || stringBodyText.replace(/\n/g, '<br>'),
+            scheduledAt: scheduledAt, 
         };
 
         if (arrayAttachments && arrayAttachments.length > 0) {

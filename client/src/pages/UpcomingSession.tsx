@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 export default function UpcomingSession({ channelId = 'mystery' }: { channelId?: string; }) {
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
@@ -27,6 +28,8 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
     const [ reminding, setReminding ] = useState(false);
     const [ email, setEmail ] = useState("");
     const [ isDialogOpen, setIsDialogOpen ] = useState(false);
+    const [ subscribeToUpdates, setSubscribeToUpdates ] = useState(true);
+    const [ subscribeToStories, setSubscribeToStories ] = useState(true);
     const [ _, setLocation ] = useLocation();
 
     const [timeLeft, setTimeLeft] = useState("");
@@ -80,7 +83,9 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     sessionId: nextSession?.id, // Will be undefined if no session
-                    email
+                    email,
+                    subscribeToUpdates,
+                    subscribeToStories
                 })
             });
 
@@ -255,14 +260,55 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                         className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
                                                         />
                                                     </div>
+
+                                                    <div className="space-y-4 pt-2">
+                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                            <div className="flex flex-col space-y-1">
+                                                                <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
+                                                                <p className="text-xs text-white/50">Weekly email about new features</p>
+                                                            </div>
+                                                            <Switch 
+                                                                checked={subscribeToUpdates} 
+                                                                onCheckedChange={setSubscribeToUpdates} 
+                                                            />
+                                                        </div>
+
+                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                            <div className="flex flex-col space-y-1">
+                                                                <Label className="text-sm font-medium text-white">Subscribe to stories</Label>
+                                                                <p className="text-xs text-white/50">Be notified about new stories</p>
+                                                            </div>
+                                                            <Switch 
+                                                                checked={subscribeToStories} 
+                                                                onCheckedChange={setSubscribeToStories} 
+                                                            />
+                                                        </div>
+
+                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                            <div className="flex flex-col space-y-1">
+                                                                <Label className="text-sm font-medium text-white">Follow us on X</Label>
+                                                                <p className="text-xs text-white/50">Stay up-to-date with news</p>
+                                                            </div>
+                                                            <a href="https://x.com" target="_blank" rel="noopener noreferrer">
+                                                                <Button 
+                                                                    variant="outline" 
+                                                                    size="sm" 
+                                                                    type="button" 
+                                                                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
+                                                                >
+                                                                    Follow
+                                                                </Button>
+                                                            </a>
+                                                        </div>
+                                                    </div>
+
                                                     <DialogFooter>
                                                         <Button
                                                             type="submit"
-                                                        disabled={ reminding }
-                                                        className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                                            disabled={ reminding }
+                                                            className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
                                                         >
-                                                            {/* { reminding ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Bell className="w-5 h-5 mr-3" /> } */ }
-                                                            Confirm
+                                                            Continue
                                                         </Button>
                                                     </DialogFooter>
                                                 </form>

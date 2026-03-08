@@ -70,7 +70,7 @@ describe('Notifications Service Test Suite', () => {
 
     it('should transmit full payload to Resend when API key is present', async () => {
         process.env.RESEND_API_KEY = 're_test_key_123';
-        process.env.RESEND_FROM_EMAIL = 'test@the25thchapter.com';
+        process.env.RESEND_FROM_EMAIL = 'test@25thchapter.com';
 
         mockClientResend.emails.send.mockResolvedValue({
             data: { id: 'msg_success_123' },
@@ -80,7 +80,7 @@ describe('Notifications Service Test Suite', () => {
         const responseExecution = await sendEmail(stringAddressTo, stringSubject, stringBodyText, stringBodyHtml);
 
         expect(mockClientResend.emails.send).toHaveBeenCalledWith({
-            from: 'test@the25thchapter.com',
+            from: 'test@25thchapter.com',
             to: stringAddressTo,
             subject: stringSubject,
             text: stringBodyText,
