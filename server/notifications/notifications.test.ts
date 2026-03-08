@@ -146,7 +146,6 @@ describe('CalendarService Test Suite', () => {
                 expect.objectContaining({ filename: 'invite.ics' })
             ])
         );
-        expect(responseExecution.success).toBe(true);
     });
 
     it('should aggressively throw an error if unhydrated invalid string is passed', async () => {

@@ -72,7 +72,7 @@ function pregenerateOption(channelId: Channel, st: ChannelState, option: 'A' | '
 
   const promise = (async () => {
     try {
-      const nextContent = await generateStoryBlock(channelId, previousContext);
+      const nextContent = await generateStoryBlock(channelId, previousContext, false, st.activeSession?.id);
       let imageUrl: string;
       try {
         imageUrl = await generateStoryImage(nextContent.content);
@@ -112,7 +112,7 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
     const initialPrompt = "A detective is following a lead in a rainy alleyway.";
 
     try {
-      const nextContent = await generateStoryBlock(channelId, initialPrompt, false);
+      const nextContent = await generateStoryBlock(channelId, initialPrompt, false, session.id);
       let imageUrl: string;
       try {
         imageUrl = await generateStoryImage(nextContent.content);
@@ -619,7 +619,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         if (st.currentBlock) {
             try {
             const previousContext = `Previous event: ${st.currentBlock.content}`;
-            const nextContent = await generateStoryBlock(channelId, previousContext, true);
+            const nextContent = await generateStoryBlock(channelId, previousContext, true, st.activeSession?.id);
             let imageUrl;
             try {
                 imageUrl = await generateStoryImage(nextContent.content);
@@ -672,7 +672,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
                     const optData = opt as { label?: string, description?: string; } | null;
                     const winnerText = `${optData?.label || 'Choice A'}: ${optData?.description || 'The story continues...'}`;
                     const previousContext = `${st.currentBlock.title}\n${st.currentBlock.content}${winnerText}`;
-                    const nextContent = await generateStoryBlock(channelId, previousContext);
+                    const nextContent = await generateStoryBlock(channelId, previousContext, false, st.activeSession?.id);
                     let imageUrl: string;
                     try {
                       imageUrl = await generateStoryImage(nextContent.content);
@@ -736,7 +736,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
                   const optData = opt as { label?: string, description?: string; } | null;
                   const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
                   const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
-                  const nextContent = await generateStoryBlock(channelId, previousContext);
+                  const nextContent = await generateStoryBlock(channelId, previousContext, false, st.activeSession?.id);
                   let imageUrl: string;
                   try {
                     imageUrl = await generateStoryImage(nextContent.content);

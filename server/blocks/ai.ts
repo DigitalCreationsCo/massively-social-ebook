@@ -1,3 +1,5 @@
+import fs from "fs/promises";
+import path from "path";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../../prompts/storyblock-instructions";
 import { createImageInstructions } from "../../prompts/image-instructions";
@@ -17,27 +19,27 @@ const engine = new NarrativeEngine(new RagProvider());
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
 // Guard with try-catch to prevent production issues if import fails.
-if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB_STARTED__" ]) {
-  (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "pending";
+if (process.env.NODE_ENV === "development" && !(global as any)["__NARRATIVE_LAB_STARTED__"]) {
+  (global as any)["__NARRATIVE_LAB_STARTED__"] = "pending";
 
   process.nextTick(async () => {
     // Guard against double-initialization
-    if ((global as any)[ "__NARRATIVE_LAB_STARTED__" ] !== "pending") return;
+    if ((global as any)["__NARRATIVE_LAB_STARTED__"] !== "pending") return;
 
     try {
       const { startLabServer, configureLabEngine } = await import("narrative-engine-lab");
       configureLabEngine(engine);
       await startLabServer();
-      (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
+      (global as any)["__NARRATIVE_LAB_STARTED__"] = true;
       console.log("[Lab] NarrativeEngine Lab ready");
     } catch (err) {
-      (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = false;
+      (global as any)["__NARRATIVE_LAB_STARTED__"] = false;
       console.error("[Lab] Boot failed (non-fatal):", err);
     }
   });
 } else if (process.env.NODE_ENV === "production") {
   // Mark as skipped in production to prevent any attempt to load lab
-  (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "skipped";
+  (global as any)["__NARRATIVE_LAB_STARTED__"] = "skipped";
 }
 
 export interface StoryBlockResult {
@@ -51,10 +53,12 @@ async function generateContextWithTimeout(channelId: string, inputQuery: string)
   const timeoutPromise = new Promise<string>((_, reject) => {
     setTimeout(() => reject(new Error("Context generation timeout (>3000ms)")), TIMEOUT_CONTEXT_MS);
   });
-  return Promise.race([ engine.generateContext(channelId, inputQuery), timeoutPromise ]);
+  return Promise.race([engine.generateContext(channelId, inputQuery), timeoutPromise]);
 }
 
-export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false): Promise<StoryBlockResult> {
+export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
+
+  // Enrich context with RAG (transparently falls back to previousContext on error)
   let enrichedContext = previousContext;
 
   try {
@@ -81,7 +85,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
           label: { type: Type.STRING, description: "Short label for the first choice." },
           description: { type: Type.STRING, description: "Description of the first choice." }
         },
-        required: [ "label", "description" ]
+        required: ["label", "description"]
       },
       optionB: {
         type: Type.OBJECT,
@@ -89,10 +93,10 @@ export async function generateStoryBlock(channelId: string, previousContext: str
           label: { type: Type.STRING, description: "Short label for the second choice." },
           description: { type: Type.STRING, description: "Description of the second choice." }
         },
-        required: [ "label", "description" ]
+        required: ["label", "description"]
       }
     },
-    required: [ "title", "content" ] // optionA and optionB are no longer strictly required at schema level for resolution
+    required: ["title", "content"] // optionA and optionB are no longer strictly required at schema level for resolution
   };
 
   const response = await ai.models.generateContent({
@@ -116,6 +120,29 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     delete result.optionB;
   }
 
+  try {
+    const dateStr = new Date().toISOString().split('T')[0];
+    const sessionStr = sessionId ? `session_${sessionId}` : 'session_unknown';
+    const channelStr = `channel_${channelId}`;
+    const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelStr);
+    await fs.mkdir(logDir, { recursive: true });
+
+    const logFile = path.join(logDir, `${dateStr}.jsonl`);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      sessionId,
+      channelId,
+      isResolution,
+      previousContext,
+      enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
+      prompt,
+      response: result
+    };
+    await fs.appendFile(logFile, JSON.stringify(logEntry) + '\n');
+  } catch (err) {
+    console.error('Failed to log storyblock prompt:', err);
+  }
+
   return result;
 }
 
@@ -127,7 +154,7 @@ export async function generateStoryImage(description: string): Promise<string> {
       model: lmParamsGoogle.imageModel,
       contents: prompt,
       config: {
-        responseModalities: [ "image" ],
+        responseModalities: ["image"],
         candidateCount: 1,
         imageConfig: {
           aspectRatio: "16:9",
@@ -135,7 +162,7 @@ export async function generateStoryImage(description: string): Promise<string> {
       }
     });
 
-    const base64Image = response.candidates?.[ 0 ]?.content?.parts?.[ 0 ]?.inlineData?.data;
+    const base64Image = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
     if (!base64Image) {
       throw new Error("No image data returned.");
