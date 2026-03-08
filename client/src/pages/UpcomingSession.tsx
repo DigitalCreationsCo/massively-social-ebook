@@ -156,10 +156,11 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
 
     if (isLoading || sessionStatus === 'loading') {
         return (
-            <div className="h-screen w-full bg-black flex flex-col items-center justify-center text-primary">
-                <Loader2 className="w-10 h-10 animate-spin mb-4 text-white/60" />
-                <p className="font-serif tracking-widest text-sm text-white/60">Loading...</p>
-            </div>
+            // <div className="h-[100dvh] w-full bg-black flex flex-col items-center justify-center text-primary">
+            //     <Loader2 className="w-10 h-10 animate-spin mb-4" />
+            //     <p className="font-serif tracking-widest text-sm text-white/60">Loading</p>
+            // </div>
+            <></>
         );
     }
 
