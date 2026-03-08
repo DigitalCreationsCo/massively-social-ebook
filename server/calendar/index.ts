@@ -6,7 +6,7 @@ import { render } from '@react-email/render';
 import 'isomorphic-fetch';
 import { type Session } from "@shared/schema";
 import { generateICS } from './ics';
-import TemplateCalendarInvite from './emails/TemplateCalendarInvite';
+import TemplateCalendarInvite from '../emails/TemplateCalendarInvite';
 
 export class CalendarService {
 
@@ -49,11 +49,11 @@ export class CalendarService {
             `Reminder: ${session.title}`,
             `Join the session: ${urlAppBase}`,
             contentHtmlString,
-            [ {
+            [{
                 filename: 'invite.ics',
                 content: Buffer.from(contentIcsString, 'utf-8'),
                 contentType: 'text/calendar'
-            } ]
+            }]
         );
     }
 
@@ -72,7 +72,7 @@ export class CalendarService {
             const clientAuthGoogle = new google.auth.JWT({
                 email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
                 key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                scopes: [ 'https://www.googleapis.com/auth/calendar' ]
+                scopes: ['https://www.googleapis.com/auth/calendar']
             });
 
             const clientCalendarGoogle = google.calendar({ version: 'v3', auth: clientAuthGoogle });
@@ -82,7 +82,7 @@ export class CalendarService {
                 description: `${session.description}\n\nJoin the story live at: ${process.env.APP_URL || 'https://25thchapter.com'}`,
                 start: { dateTime: dateScheduledStart.toISOString() },
                 end: { dateTime: dateScheduledEnd.toISOString() },
-                attendees: [ { email: userEmail } ],
+                attendees: [{ email: userEmail }],
                 reminders: {
                     useDefault: false,
                     overrides: [
@@ -119,8 +119,8 @@ export class CalendarService {
             const dateScheduledEnd = this.parseDateStrict(session.scheduledEnd);
 
             // Format constraint: MS Graph requires YYYY-MM-DDTHH:mm:ss without the trailing 'Z' when timeZone is UTC.
-            const stringIsoStartGraph = dateScheduledStart.toISOString().split('.')[ 0 ];
-            const stringIsoEndGraph = dateScheduledEnd.toISOString().split('.')[ 0 ];
+            const stringIsoStartGraph = dateScheduledStart.toISOString().split('.')[0];
+            const stringIsoEndGraph = dateScheduledEnd.toISOString().split('.')[0];
 
             const credentialAzureClient = new ClientSecretCredential(
                 process.env.AZURE_TENANT_ID,

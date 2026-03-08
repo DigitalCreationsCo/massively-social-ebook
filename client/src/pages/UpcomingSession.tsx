@@ -298,7 +298,6 @@ export default function UpcomingSession() {
                                                             </DialogFooter>
                                                         </motion.div>
                                                     )}
-
                                                     {step === 2 && (
                                                         <motion.div
                                                             key="step2"
