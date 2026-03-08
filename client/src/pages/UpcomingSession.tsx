@@ -191,7 +191,7 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
             )}
 
             {/* Hero Section */ }
-            <div className="min-h-screen w-full flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
+            <div className="min-h-screen max-w-3xl w-full flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
                 <div className="max-w-xl w-full">
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
@@ -291,30 +291,28 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
             </div>
 
             {/* Preview Section */ }
-            <section id="preview" className="flex items-center w-full max-w-6xl px-6 mt-16 space-y-32 min-h-screen">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
+            <section id="preview" className="w-full px-6 mx-auto my-32">
+                <div className="flex flex-col gap-16 justify-center items-center">
                     {/* Mockup Display */ }
-                    <div className="lg:col-span-8 space-y-8 flex flex-col">
+                    <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
                         <div className="space-y-4">
                             <h2 className="text-4xl font-serif text-white tracking-tight">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
-                                Join a room of fellow readers. Experience the unfolding narrative. The next story starts soon.
+                                Join a room of fellow readers and unfold the narrative.
                             </p>
                         </div>
-                        <div className="relative group flex-grow">
-                            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-50 group-hover:opacity-100 transition duration-1000"></div>
-                            <div className="relative rounded-xl overflow-hidden border border-white/10 shadow-3xl bg-zinc-900 h-full">
-                                <img
-                                    src="/preview/2.png"
-                                    alt="The 25th Chapter: 25 minutes. One Story."
-                                    className="w-full h-full object-cover"
-                                />
-                            </div>
+                        <div className="relative group flex-grow min-h-0 flex justify-center">
+                            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-60 transition duration-1000 w-full h-full"></div>
+                            <img
+                                src="/preview/2.png"
+                                alt="The 25th Chapter: 25 minutes. One Story."
+                                className="relative h-full w-auto object-contain rounded-xl border border-white/5 shadow-3xl bg-zinc-900"
+                            />
                         </div>
                     </div>
 
                     {/* FAQ Aside */ }
-                    <aside className="lg:col-span-4 space-y-12 bg-white/5 p-10 rounded-2xl border border-white/10 backdrop-blur-sm sticky top-24">
+                    <aside className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                         <div className="space-y-4">
                             <h2 className="text-3xl font-serif text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
@@ -347,10 +345,10 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                         <Button
                             variant="secondary"
                             className="w-full bg-white/10 hover:bg-white/20 text-white font-serif tracking-widest py-6 border border-white/10"
-                            onClick={() => {
+                            onClick={ () => {
                                 trackEvent('Return to Top Clicked');
                                 window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }}
+                            } }
                         >
                             Return to top
                         </Button>
