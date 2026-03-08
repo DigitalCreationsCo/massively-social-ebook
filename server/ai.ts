@@ -77,12 +77,12 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 
   try {
     const dateStr = new Date().toISOString().split('T')[0];
-    const sessionStr = sessionId ? `session_${sessionId}` : 'session_unknown';
-    const channelStr = `channel_${channelId}`;
-    const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelStr);
+    const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
+    const sessionStr = sessionId ? `${sessionId}` : 'unknown';
+    const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelId, dateStr);
     await fs.mkdir(logDir, { recursive: true });
 
-    const logFile = path.join(logDir, `${dateStr}.jsonl`);
+    const logFile = path.join(logDir, `prompt_${timestampStr}.json`);
     const logEntry = {
       timestamp: new Date().toISOString(),
       sessionId,
@@ -93,7 +93,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
       prompt,
       response: result
     };
-    await fs.appendFile(logFile, JSON.stringify(logEntry) + '\n');
+    await fs.writeFile(logFile, JSON.stringify(logEntry, null, 2) + '\n');
   } catch (err) {
     console.error('Failed to log storyblock prompt:', err);
   }
