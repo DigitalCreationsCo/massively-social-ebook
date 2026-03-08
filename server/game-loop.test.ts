@@ -328,7 +328,7 @@ describe('handleGameLoopTick', () => {
         await handleGameLoopTick(now, mockBroadcast);
 
         expect(state.scifi.currentPhase).toBe('resolution');
-        expect(mockedAi.generateStoryBlock).toHaveBeenCalledWith('scifi', expect.any(String), true);
+        expect(mockedAi.generateStoryBlock).toHaveBeenCalledWith('scifi', expect.any(String), true, 1);
         expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
             type: 'SYNC_STATE',
             payload: expect.objectContaining({

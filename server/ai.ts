@@ -1,3 +1,5 @@
+import fs from "fs/promises";
+import path from "path";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
 import { createImageInstructions } from "../prompts/image-instructions";
@@ -17,7 +19,7 @@ export interface StoryBlockResult {
   optionB?: { label: string; description: string; };
 }
 
-export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false): Promise<StoryBlockResult> {
+export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
   // Enrich context with RAG (transparently falls back to previousContext on error)
   const enrichedContext = await buildRAGContext(channelId, previousContext);
 
@@ -71,6 +73,29 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   if (isResolution) {
     delete result.optionA;
     delete result.optionB;
+  }
+
+  try {
+    const dateStr = new Date().toISOString().split('T')[0];
+    const sessionStr = sessionId ? `session_${sessionId}` : 'session_unknown';
+    const channelStr = `channel_${channelId}`;
+    const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelStr);
+    await fs.mkdir(logDir, { recursive: true });
+
+    const logFile = path.join(logDir, `${dateStr}.jsonl`);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      sessionId,
+      channelId,
+      isResolution,
+      previousContext,
+      enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
+      prompt,
+      response: result
+    };
+    await fs.appendFile(logFile, JSON.stringify(logEntry) + '\n');
+  } catch (err) {
+    console.error('Failed to log storyblock prompt:', err);
   }
 
   return result;
