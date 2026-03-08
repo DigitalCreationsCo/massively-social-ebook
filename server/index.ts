@@ -25,7 +25,7 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
-  const allowedOrigins = [process.env.CLIENT_ORIGIN, "http://localhost:5001"];
+  const allowedOrigins = [ process.env.CLIENT_ORIGIN, "https://25thchapter.com" ];
   const origin = req.headers.origin || "";
   
   if (allowedOrigins.includes(origin) || !origin) {

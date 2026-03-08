@@ -198,7 +198,7 @@ export async function registerRoutes(
   });
 
   app.post(api.sessions.reminder.path, async (req, res) => {
-    const { sessionId, email } = req.body;
+    const { sessionId, email, subscribeToUpdates, subscribeToStories } = req.body;
     if (!email) return res.status(400).json({ message: "Email is required" });
 
     // 1. Persist User (Lead Capture) FIRST - We capture leads even if no session exists
@@ -218,6 +218,16 @@ export async function registerRoutes(
 
     // 2. Capture for Analytics/CRM
     await trackUserEmail(email, 'session_reminder');
+
+    // 2.5 Placeholder for Subscriptions
+    // TODO: Make these functional later (e.g., sync to Mailchimp, Resend Audiences, or update User preferences in DB)
+    if (subscribeToUpdates) {
+      console.log(`[Subscription Handler] TODO: Subscribe ${email} to Weekly Updates`);
+    }
+    
+    if (subscribeToStories) {
+      console.log(`[Subscription Handler] TODO: Subscribe ${email} to New Stories notifications`);
+    }
 
     // 3. Try to add to Calendar if session exists
     let session = undefined;

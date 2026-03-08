@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function UpcomingSession({ channelId = 'mystery' }: { channelId?: string; }) {
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
@@ -31,6 +32,14 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
     const [ subscribeToUpdates, setSubscribeToUpdates ] = useState(true);
     const [ subscribeToStories, setSubscribeToStories ] = useState(true);
     const [ _, setLocation ] = useLocation();
+    const [ step, setStep ] = useState<1 | 2>(1);
+
+    useEffect(() => {
+        if (!isDialogOpen) {
+            const t = setTimeout(() => setStep(1), 300);
+            return () => clearTimeout(t);
+        }
+    }, [ isDialogOpen ]);
 
     const [timeLeft, setTimeLeft] = useState("");
 
@@ -72,8 +81,16 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;
 
-    const handleReminder = async (e: React.FormEvent) => {
+    const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        if (step === 1) {
+            if (!email) return;
+            setStep(2);
+        } else {
+            handleReminder();
+        }
+    };
+    const handleReminder = async () => {
         if (!email) return;
         setReminding(true);
         trackEvent('Set Reminder Clicked', { channel: channelId, sessionId: nextSession?.id });
@@ -247,70 +264,110 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                     Enter your email address to receive an invitation to the next session.
                                                     </DialogDescription>
                                                 </DialogHeader>
-                                                <form onSubmit={ handleReminder } className="space-y-6 py-6">
-                                                    <div className="space-y-3">
-                                                        <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">Email Address</Label>
-                                                        <Input
-                                                            id="email"
-                                                            type="email"
-                                                            placeholder="youraddress@email.com"
-                                                            required
-                                                            value={ email }
-                                                            onChange={ (e) => setEmail(e.target.value) }
-                                                        className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
-                                                        />
-                                                    </div>
-
-                                                    <div className="space-y-4 pt-2">
-                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                            <div className="flex flex-col space-y-1">
-                                                                <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
-                                                                <p className="text-xs text-white/50">Weekly email about new features</p>
-                                                            </div>
-                                                            <Switch 
-                                                                checked={subscribeToUpdates} 
-                                                                onCheckedChange={setSubscribeToUpdates} 
-                                                            />
-                                                        </div>
-
-                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                            <div className="flex flex-col space-y-1">
-                                                                <Label className="text-sm font-medium text-white">Subscribe to stories</Label>
-                                                                <p className="text-xs text-white/50">Be notified about new stories</p>
-                                                            </div>
-                                                            <Switch 
-                                                                checked={subscribeToStories} 
-                                                                onCheckedChange={setSubscribeToStories} 
-                                                            />
-                                                        </div>
-
-                                                        <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                            <div className="flex flex-col space-y-1">
-                                                                <Label className="text-sm font-medium text-white">Follow us on X</Label>
-                                                                <p className="text-xs text-white/50">Stay up-to-date with news</p>
-                                                            </div>
-                                                            <a href="https://x.com" target="_blank" rel="noopener noreferrer">
-                                                                <Button 
-                                                                    variant="outline" 
-                                                                    size="sm" 
-                                                                    type="button" 
-                                                                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
-                                                                >
-                                                                    Follow
-                                                                </Button>
-                                                            </a>
-                                                        </div>
-                                                    </div>
-
-                                                    <DialogFooter>
-                                                        <Button
-                                                            type="submit"
-                                                            disabled={ reminding }
-                                                            className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                            <form onSubmit={ handleFormSubmit } className="py-2 overflow-visible px-1 -mx-1">
+                                                <AnimatePresence mode="wait" initial={ false }>
+                                                    { step === 1 && (
+                                                        <motion.div
+                                                            key="step1"
+                                                            initial={ { opacity: 0, x: -20 } }
+                                                            animate={ { opacity: 1, x: 0 } }
+                                                            exit={ { opacity: 0, x: -20 } }
+                                                            transition={ { duration: 0.2 } }
+                                                            className="space-y-6"
                                                         >
-                                                            Continue
-                                                        </Button>
-                                                    </DialogFooter>
+                                                            <div className="space-y-3 mt-4">
+                                                                <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">Email Address</Label>
+                                                                <Input
+                                                                    id="email"
+                                                                    type="email"
+                                                                    placeholder="youraddress@email.com"
+                                                                    required
+                                                                    value={ email }
+                                                                    onChange={ (e) => setEmail(e.target.value) }
+                                                                    className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
+                                                                />
+                                                            </div>
+                                                            <DialogFooter>
+                                                                <Button
+                                                                    type="submit"
+                                                                    className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                                                >
+                                                                    Continue
+                                                                </Button>
+                                                            </DialogFooter>
+                                                        </motion.div>
+                                                    ) }
+
+                                                    { step === 2 && (
+                                                        <motion.div
+                                                            key="step2"
+                                                            initial={ { opacity: 0, x: 20 } }
+                                                            animate={ { opacity: 1, x: 0 } }
+                                                            exit={ { opacity: 0, x: 20 } }
+                                                            transition={ { duration: 0.2 } }
+                                                            className="space-y-6 mt-4"
+                                                        >
+                                                            <div className="space-y-4">
+                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                                    <div className="flex flex-col space-y-1">
+                                                                        <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
+                                                                        <p className="text-xs text-white/50">Weekly email about new features</p>
+                                                                    </div>
+                                                                    <Switch
+                                                                        checked={ subscribeToUpdates }
+                                                                        onCheckedChange={ setSubscribeToUpdates }
+                                                                    />
+                                                                </div>
+
+                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                                    <div className="flex flex-col space-y-1">
+                                                                        <Label className="text-sm font-medium text-white">Subscribe to new stories</Label>
+                                                                        <p className="text-xs text-white/50">Be notified about new stories</p>
+                                                                    </div>
+                                                                    <Switch
+                                                                        checked={ subscribeToStories }
+                                                                        onCheckedChange={ setSubscribeToStories }
+                                                                    />
+                                                                </div>
+
+                                                                {/* <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                                    <div className="flex flex-col space-y-1">
+                                                                        <Label className="text-sm font-medium text-white">Follow us on X</Label>
+                                                                        <p className="text-xs text-white/50">Stay up-to-date with news</p>
+                                                                    </div>
+                                                                    <a href="https://x.com" target="_blank" rel="noopener noreferrer">
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            type="button"
+                                                                            className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
+                                                                        >
+                                                                            Follow
+                                                                        </Button>
+                                                                    </a>
+                                                                </div> */}
+                                                            </div>
+
+                                                            <DialogFooter className="flex-col sm:flex-col gap-3">
+                                                                <Button
+                                                                    type="submit"
+                                                                    disabled={ reminding }
+                                                                    className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                                                >
+                                                                    Confirm
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    onClick={ () => setStep(1) }
+                                                                    className="w-full text-white/50 hover:text-white h-12"
+                                                                >
+                                                                    Back
+                                                                </Button>
+                                                            </DialogFooter>
+                                                        </motion.div>
+                                                    ) }
+                                                </AnimatePresence>
                                                 </form>
                                             </DialogContent>
                                         </Dialog>

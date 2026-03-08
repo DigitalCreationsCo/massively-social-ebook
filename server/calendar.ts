@@ -35,7 +35,7 @@ export class CalendarService {
     }
 
     static async sendCalendarInviteViaEmail(userEmail: string, session: Session) {
-        const urlAppBase = process.env.APP_URL || 'http://localhost:3000';
+        const urlAppBase = process.env.APP_URL || 'https://25thchapter.com';
         const calendarLinks = this.generateCalendarUrls(session, urlAppBase);
         const contentIcsString = this.generateIcs(session);
 
@@ -143,7 +143,7 @@ export class CalendarService {
                 subject: `The 25th Chapter: ${session.title}`,
                 body: {
                     contentType: 'HTML',
-                    content: `${session.description}<br><br><a href="${process.env.APP_URL || 'http://localhost:3000'}">Join the story live</a>`,
+                    content: `${session.description}<br><br><a href="${process.env.APP_URL || 'https://25thchapter.com'}">Join the story live</a>`,
                 },
                 start: { dateTime: stringIsoStartGraph, timeZone: 'UTC' },
                 end: { dateTime: stringIsoEndGraph, timeZone: 'UTC' },
@@ -168,6 +168,6 @@ export class CalendarService {
         const dateScheduledStart = this.parseDateStrict(session.scheduledStart);
         // Guarantee hydration before passing down to purely sync functions
         const objectSessionHydrated = { ...session, scheduledStart: dateScheduledStart, scheduledEnd: this.parseDateStrict(session.scheduledEnd) };
-        return generateICS(objectSessionHydrated, process.env.APP_URL || 'http://localhost:3000');
+        return generateICS(objectSessionHydrated, process.env.APP_URL || 'https://25thchapter.com');
     }
 }
