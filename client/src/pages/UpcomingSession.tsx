@@ -21,15 +21,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DEFAULT_CHANNEL_ID } from '@/App';
+import { Switch } from "@/components/ui/switch";
 
 export default function UpcomingSession() {
     const channelId = DEFAULT_CHANNEL_ID;
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
-    const [ reminding, setReminding ] = useState(false);
-    const [ email, setEmail ] = useState("");
-    const [ isDialogOpen, setIsDialogOpen ] = useState(false);
-    const [ _, setLocation ] = useLocation();
+    const [reminding, setReminding] = useState(false);
+    const [email, setEmail] = useState("");
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+    const [subscribeToUpdates, setSubscribeToUpdates] = useState(true);
+    const [subscribeToStories, setSubscribeToStories] = useState(true);
+    const [_, setLocation] = useLocation();
 
     const [timeLeft, setTimeLeft] = useState("");
 
@@ -37,20 +40,20 @@ export default function UpcomingSession() {
         if (!nextSession?.scheduledStart) return;
 
         const target = new Date(nextSession.scheduledStart).getTime();
-        
+
         const updateTimer = () => {
             const now = new Date().getTime();
             const diff = target - now;
-            
+
             if (diff <= 0) {
                 setTimeLeft("00:00:00");
                 return;
             }
-            
+
             const hours = Math.floor(diff / (1000 * 60 * 60));
             const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
             const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-            
+
             setTimeLeft(
                 `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
             );
@@ -59,14 +62,14 @@ export default function UpcomingSession() {
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [ nextSession?.scheduledStart ]);
+    }, [nextSession?.scheduledStart]);
 
     // Auto-redirect if session becomes active
     useEffect(() => {
         if (sessionStatus === 'active') {
             setLocation('/live');
         }
-    }, [ sessionStatus, setLocation ]);
+    }, [sessionStatus, setLocation]);
 
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;
@@ -82,7 +85,9 @@ export default function UpcomingSession() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     sessionId: nextSession?.id, // Will be undefined if no session
-                    email
+                    email,
+                    subscribeToUpdates,
+                    subscribeToStories
                 })
             });
 
@@ -91,8 +96,8 @@ export default function UpcomingSession() {
             if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
 
             const message = await res.json();
-            const description = message.message?.split(". ")[ 1 ] ?? message.message?.split(". ")[ 0 ] ?? `You'll receive an email with the next session schedule.`;
-            const title = message.message?.split(". ")[ 1 ] ? message.message?.split(". ")[ 0 ] : `You're on the list.`; 
+            const description = message.message?.split(". ")[1] ?? message.message?.split(". ")[0] ?? `You'll receive an email with the next session schedule.`;
+            const title = message.message?.split(". ")[1] ? message.message?.split(". ")[0] : `You're on the list.`;
 
             trackEvent('Set Reminder Success', { channel: channelId, sessionId: nextSession?.id, email });
             toast({
@@ -174,7 +179,7 @@ export default function UpcomingSession() {
                     <h1 className="text-4xl font-serif text-white tracking-tight">The Room Is Open</h1>
                     <p className="text-white/60 font-serif">Starting...</p>
                     <Button
-                        onClick={ () => setLocation('/') }
+                        onClick={() => setLocation('/')}
                         className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-sans uppercase tracking-widest py-6"
                     >
                         Join
@@ -193,92 +198,133 @@ export default function UpcomingSession() {
                 />
             )}
 
-            {/* Hero Section */ }
+            {/* Hero Section */}
             <div className="min-h-screen max-w-3xl w-full flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
                 <div className="max-w-xl w-full">
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
                         <CardHeader className="text-center pb-0 pt-12">
 
-                                    <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
+                            <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
                                 The next story starts soon.
-                                    </CardTitle>
-                                    <CardDescription className="text-white/80 font-sans text-lg">
-                                { isScheduled && (
+                            </CardTitle>
+                            <CardDescription className="text-white/80 font-sans text-lg">
+                                {isScheduled && (
                                     <span>
-                                        { isTodayInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Today" :
+                                        {isTodayInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Today" :
                                             isTomorrowInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Tomorrow" :
-                                                    formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "EEEE, MMMM do")
-                                        } at { formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "h:mm a") } { nextSession.timezone }
+                                                formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "EEEE, MMMM do")
+                                        } at {formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "h:mm a")} {nextSession.timezone}
                                     </span>
-                                ) }
+                                )}
                             </CardDescription>
                         </CardHeader>
 
                         <CardContent className="space-y-10 pt-8 pb-12 px-8">
-                                <div className="space-y-10">
-                                { nextSession && (<div className="space-y-4">
-                                        <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
-                                        <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                        <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{ nextSession.title }</h2>
-                                            <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                                            { nextSession.description }
-                                            </p>
-                                        </div>
-                                </div>) }
+                            <div className="space-y-10">
+                                {nextSession && (<div className="space-y-4">
+                                    <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
+                                    <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
+                                        <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
+                                        <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
+                                            {nextSession.description}
+                                        </p>
+                                    </div>
+                                </div>)}
 
-                                    <div className="space-y-4">
-                                        <Dialog open={ isDialogOpen } onOpenChange={ setIsDialogOpen }>
-                                            <DialogTrigger asChild>
-                                                <Button
-                                                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
-                                                >
-                                                    Remind me
-                                                </Button>
-                                            </DialogTrigger>
-                                            <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
-                                                <DialogHeader>
-                                                    <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
+                                <div className="space-y-4">
+                                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                                        <DialogTrigger asChild>
+                                            <Button
+                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
+                                            >
+                                                Remind me
+                                            </Button>
+                                        </DialogTrigger>
+                                        <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
+                                            <DialogHeader>
+                                                <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
                                                 <DialogDescription className="text-white/60 font-sans text-sm">
                                                     Enter your email address to receive an invitation to the next session.
-                                                    </DialogDescription>
-                                                </DialogHeader>
-                                                <form onSubmit={ handleReminder } className="space-y-6 py-6">
-                                                    <div className="space-y-3">
-                                                        <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">Email Address</Label>
-                                                        <Input
-                                                            id="email"
-                                                            type="email"
-                                                            placeholder="youraddress@email.com"
-                                                            required
-                                                            value={ email }
-                                                            onChange={ (e) => setEmail(e.target.value) }
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <form onSubmit={handleReminder} className="space-y-6 py-6">
+                                                <div className="space-y-3">
+                                                    <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">Email Address</Label>
+                                                    <Input
+                                                        id="email"
+                                                        type="email"
+                                                        placeholder="youraddress@email.com"
+                                                        required
+                                                        value={email}
+                                                        onChange={(e) => setEmail(e.target.value)}
                                                         className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-4 pt-2">
+                                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                        <div className="flex flex-col space-y-1">
+                                                            <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
+                                                            <p className="text-xs text-white/50">Weekly email about new features</p>
+                                                        </div>
+                                                        <Switch
+                                                            checked={subscribeToUpdates}
+                                                            onCheckedChange={setSubscribeToUpdates}
                                                         />
                                                     </div>
-                                                    <DialogFooter>
-                                                        <Button
-                                                            type="submit"
-                                                        disabled={ reminding }
-                                                        className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
-                                                        >
-                                                            {/* { reminding ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Bell className="w-5 h-5 mr-3" /> } */ }
-                                                            Confirm
-                                                        </Button>
-                                                    </DialogFooter>
-                                                </form>
-                                            </DialogContent>
-                                        </Dialog>
 
-                                        <Button 
+                                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                        <div className="flex flex-col space-y-1">
+                                                            <Label className="text-sm font-medium text-white">Subscribe to stories</Label>
+                                                            <p className="text-xs text-white/50">Be notified about new stories</p>
+                                                        </div>
+                                                        <Switch
+                                                            checked={subscribeToStories}
+                                                            onCheckedChange={setSubscribeToStories}
+                                                        />
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                        <div className="flex flex-col space-y-1">
+                                                            <Label className="text-sm font-medium text-white">Follow us on X</Label>
+                                                            <p className="text-xs text-white/50">Stay up-to-date with news</p>
+                                                        </div>
+                                                        <a href="https://x.com" target="_blank" rel="noopener noreferrer">
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                type="button"
+                                                                className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
+                                                            >
+                                                                Follow
+                                                            </Button>
+                                                        </a>
+                                                    </div>
+                                                </div>
+
+                                                <DialogFooter>
+                                                    <Button
+                                                        type="submit"
+                                                        disabled={reminding}
+                                                        className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                                    >
+                                                        Continue
+                                                    </Button>
+                                                </DialogFooter>
+                                            </form>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    <Button
                                         variant="secondary"
                                         className="w-full font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
-                                            onClick={ () => {
-                                        trackEvent('Preview Chapter Clicked', { channel: channelId });
-                                                document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
-                                            } }
-                                        >
-                                            Preview chapter
+                                        onClick={() => {
+                                            trackEvent('Preview Chapter Clicked', { channel: channelId });
+                                            document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
+                                        }}
+                                    >
+                                        Preview chapter
                                     </Button>
                                 </div>
                             </div>
@@ -292,10 +338,10 @@ export default function UpcomingSession() {
                 </div>
             </div>
 
-            {/* Preview Section */ }
+            {/* Preview Section */}
             <section id="preview" className="w-full px-6 mx-auto my-32">
                 <div className="flex flex-col gap-16 justify-center items-center">
-                    {/* Mockup Display */ }
+                    {/* Mockup Display */}
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
                         <div className="space-y-4 px-6 mx-auto">
                             <h2 className="text-4xl font-serif text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
@@ -313,7 +359,7 @@ export default function UpcomingSession() {
                         </div>
                     </div>
 
-                    {/* FAQ Aside */ }
+                    {/* FAQ Aside */}
                     <aside className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                         <div className="space-y-4">
                             <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
@@ -332,7 +378,7 @@ export default function UpcomingSession() {
                                 <h3 className="text-lg font-serif text-white">Can I read missed chapters?</h3>
                                 <p className="text-white/50 font-sans text-sm leading-relaxed">
                                     All chapters are saved and will be available soon.
-                                    {/* The archives are open to all "Remembrance" holders. Missing a session means missing the live decisions, but not the story. */ }
+                                    {/* The archives are open to all "Remembrance" holders. Missing a session means missing the live decisions, but not the story. */}
                                 </p>
                             </div>
 
@@ -347,10 +393,10 @@ export default function UpcomingSession() {
                         <Button
                             variant="secondary"
                             className="w-full bg-white/10 hover:bg-white/20 text-white font-serif tracking-widest py-6 border border-white/10"
-                            onClick={ () => {
+                            onClick={() => {
                                 trackEvent('Return to Top Clicked');
                                 window.scrollTo({ top: 0, behavior: 'smooth' });
-                            } }
+                            }}
                         >
                             Return to top
                         </Button>

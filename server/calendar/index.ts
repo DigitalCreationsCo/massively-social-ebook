@@ -21,39 +21,40 @@ export class CalendarService {
         return objectDate;
     }
 
+    static generateCalendarUrls(session: Session, urlAppBase: string) {
+        const start = new Date(session.scheduledStart).toISOString().replace(/-|:|\.\d\d\d/g, "");
+        const end = new Date(session.scheduledEnd).toISOString().replace(/-|:|\.\d\d\d/g, "");
+        const title = encodeURIComponent(`The 25th Chapter: ${session.title}`);
+        const details = encodeURIComponent(`${session.description}\n\nJoin: ${urlAppBase}`);
+
+        return {
+            google: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}`,
+            outlook: `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${start}&enddt=${end}&body=${details}`,
+            office365: `https://outlook.office.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${start}&enddt=${end}&body=${details}`
+        };
+    }
+
     static async sendCalendarInviteViaEmail(userEmail: string, session: Session) {
-        console.debug(`[CalendarService][sendCalendarInviteViaEmail] Initiating invite sequence for user: ${userEmail}, session ID: ${session.id}`);
+        const urlAppBase = process.env.APP_URL || 'http://localhost:3000';
+        const calendarLinks = this.generateCalendarUrls(session, urlAppBase);
+        const contentIcsString = this.generateIcs(session);
 
-        try {
-            const dateScheduledStart = this.parseDateStrict(session.scheduledStart);
-            const contentIcsString = CalendarService.generateIcs(session);
-            const urlAppBase = process.env.APP_URL || 'http://localhost:3000';
+        const contentHtmlString = await render(
+            TemplateCalendarInvite({ dataSession: session, urlAppBase, calendarLinks })
+        );
 
-            console.debug(`[CalendarService][sendCalendarInviteViaEmail] Rendering React Email HTML template.`);
-            const contentHtmlString = await render(
-                TemplateCalendarInvite({ dataSession: session, urlAppBase })
-            );
-
-            const stringSubject = `Calendar Invite: ${session.title}`;
-            const stringBodyTextFallback = `You are invited to join the story session: ${session.title}\n\n${session.description}\n\nJoin here: ${urlAppBase}`;
-
-            console.debug(`[CalendarService][sendCalendarInviteViaEmail] Dispatching payload to notification provider.`);
-
-            // Note: Ensure your sendEmail function signature is updated to accept the HTML string parameter.
-            await sendEmail(userEmail, stringSubject, stringBodyTextFallback, contentHtmlString, [
-                {
-                    filename: 'invite.ics',
-                    content: Buffer.from(contentIcsString, 'utf-8'),
-                    contentType: 'text/calendar'
-                }
-            ]);
-
-            console.debug(`[CalendarService][sendCalendarInviteViaEmail] Successfully delivered email invite to ${userEmail}.`);
-            return { success: true, provider: 'email' };
-        } catch (errorUncaught) {
-            console.error(`[CalendarService][sendCalendarInviteViaEmail] CRITICAL FAILURE sending email to ${userEmail}:`, errorUncaught);
-            throw errorUncaught;
-        }
+        // Link-first: The links are in the HTML. Attachment is the fallback.
+        await sendEmail(
+            userEmail,
+            `Reminder: ${session.title}`,
+            `Join the session: ${urlAppBase}`,
+            contentHtmlString,
+            [ {
+                filename: 'invite.ics',
+                content: Buffer.from(contentIcsString, 'utf-8'),
+                contentType: 'text/calendar'
+            } ]
+        );
     }
 
     static async addToGoogle(userEmail: string, session: Session) {
