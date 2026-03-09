@@ -134,7 +134,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-background/95 backdrop-blur-md border-t border-border"
-          style={{ height: '50dvh' }}
+          style={ { height: '40dvh' } }
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
