@@ -19,14 +19,14 @@ export interface StoryBlockResult {
   optionB?: { label: string; description: string; };
 }
 
-export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
+export async function generateStoryBlock(channelId: string, previousContext: string, isResolving: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
   // Enrich context with RAG (transparently falls back to previousContext on error)
   const enrichedContext = await buildRAGContext(channelId, previousContext);
 
   const prompt = createStoryBlockInstructions({
-    previous: previousContext,
+    previousBlock: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
-    isResolution,
+    isResolving,
   });
 
   const responseSchema: Schema = {
@@ -70,7 +70,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   const result = JSON.parse(response.text) as StoryBlockResult;
 
   // Ensure options are present if not resolution, or removed if resolution
-  if (isResolution) {
+  if (isResolving) {
     delete result.optionA;
     delete result.optionB;
   }
@@ -87,7 +87,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
       timestamp: new Date().toISOString(),
       sessionId,
       channelId,
-      isResolution,
+      isResolving,
       previousContext,
       enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
       prompt,

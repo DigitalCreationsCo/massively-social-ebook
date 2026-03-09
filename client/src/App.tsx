@@ -43,7 +43,7 @@ function App() {
         <Toaster />
         <UpdatePrompt />
         <Router />
-        {import.meta.env.DEV && <DebugTools channelId="m2w4k" />}
+        { import.meta.env.DEV && <DebugTools channelId="mystery" /> }
         <VersionOverlay />
       </TooltipProvider>
     </QueryClientProvider>
