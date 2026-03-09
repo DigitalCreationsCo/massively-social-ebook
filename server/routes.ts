@@ -119,9 +119,15 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
       } catch (imageErr) {
         imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
       }
-      block = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+      block = await storage.createBlock({ 
+        sessionId: st.activeSession?.id || 0,
+        channelId, 
+        ...nextContent, 
+        imageUrl 
+      });
     } catch (err) {
       block = await storage.createBlock({
+        sessionId: st.activeSession?.id || 0,
         channelId,
         title: "System Reboot",
         content: "The story system encountered an anomaly and is attempting to reboot.",
@@ -519,7 +525,7 @@ export async function registerRoutes(
             // Or maybe just create chat without session ID (which will be filtered out by getRecentChat if we follow logic)?
             // I'll create it anyway, but it won't show up in history if sessionId is required for history retrieval.
             
-            const newMsg = await storage.createChat({ channelId: currentChannelId, username, text, sessionId });
+            const newMsg = await storage.createChat({ channelId: currentChannelId, username, text, sessionId: sessionId || 0 });
             broadcast(currentChannelId, {
               type: 'CHAT_MESSAGE',
               payload: {
@@ -549,9 +555,9 @@ export async function registerRoutes(
           }
         } else if (message.type === 'SUBMIT_VOTE') {
           const { choice, userId } = message.payload as { choice: string, userId: string };
-          if (st.currentPhase === 'voting' && st.currentBlock && (choice === 'A' || choice === 'B')) {
+          if (st.currentPhase === 'voting' && st.currentBlock && (choice === 'A' || choice === 'B') && st.activeSession) {
             await storage.createVote({
-              channelId: currentChannelId,
+              sessionId: st.activeSession.id,
               blockId: st.currentBlock.id,
               userId: userId || `anon-${Math.random()}`,
               choice
@@ -626,7 +632,12 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             } catch (err) {
                 imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
             }
-            st.currentBlock = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+            st.currentBlock = await storage.createBlock({ 
+              sessionId: st.activeSession?.id || 0,
+              channelId, 
+              ...nextContent, 
+              imageUrl 
+            });
             logger.info(`Resolution block generated: ${st.currentBlock.id}`, "gameloop");
             } catch (err) {
             logger.error("Failed to generate resolution block", "gameloop", err instanceof Error ? err : new Error(String(err)));
@@ -749,34 +760,35 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
                 }
 
                 st.currentBlock = await storage.createBlock({
+                  sessionId: st.activeSession?.id || 0,
                   channelId,
                   ...nextData
                 } as any);
-
-                // Clear used pregenerated blocks
+                
+                st.turnsToNextChoice = getRandomTurns();
                 st.nextBlockA = undefined;
                 st.nextBlockB = undefined;
-
                 pregenerateOption(channelId, st, 'A');
                 pregenerateOption(channelId, st, 'B');
               } catch (err) {
                 logger.error("Failed to adopt next block", "gameloop", err instanceof Error ? err : new Error(String(err)));
                 // Already logged above
-                // Fallback
                 st.currentBlock = await storage.createBlock({
+                  sessionId: st.activeSession?.id || 0,
                   channelId,
-                  title: "Temporal Distortion",
-                  content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+                  title: "Story Anomaly",
+                  content: "The narrative engine is experiencing turbulence. Hang tight.",
                   imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-                  optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
-                  optionB: { label: "Wait", description: "Wait for the distortion to pass." }
+                  optionA: { label: "Wait", description: "Stand by" },
+                  optionB: { label: "Observe", description: "Watch carefully" }
                 });
-
+                st.turnsToNextChoice = getRandomTurns();
+                st.nextBlockA = undefined;
+                st.nextBlockB = undefined;
                 pregenerateOption(channelId, st, 'A');
                 pregenerateOption(channelId, st, 'B');
               }
             }
-            
             // Now update phase logic
             st.currentPhase = 'reading';
             st.phaseEndsAt = now + POST_VOTE_READING_MS;
