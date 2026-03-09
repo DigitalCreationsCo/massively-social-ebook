@@ -189,6 +189,11 @@ export function useLiveState(channelId: string) {
           
           if (message.type === 'SYNC_STATE') {
             const payload = message.payload as StoryState;
+            // debug logging
+            // console.log("Received SYNC_STATE payload", payload.id, payload.phase);
+
+            setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+            const payload = message.payload as StoryState;
 
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeRemaining !== undefined) {
@@ -200,7 +205,15 @@ export function useLiveState(channelId: string) {
             if (payload.initialTimeToNextDecision !== undefined) {
               setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
             }
-          } 
+            
+            // Ensure the main block data is updated if the block ID or phase changes
+            queryClient.setQueryData<StoryState>([ api.blocks.current.path, normalizedChannelId ], (old) => {
+              if (!old || old.id !== payload.id || old.phase !== payload.phase) {
+                return payload;
+              }
+              return old;
+            });
+          }
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
             queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, channelId ], (old = []) => {
@@ -351,6 +364,11 @@ export function useLiveState(channelId: string) {
 
   // Get most recent chat message
   const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
+
+  // Reset vote results when the story block changes
+  useEffect(() => {
+    setVoteResults({ A: 0, B: 0 });
+  }, [currentBlock?.id]);
 
   return {
     isLoading: blockLoading || chatLoading,
