@@ -49,6 +49,7 @@ export interface StoryBlockResult {
   optionB?: { label: string; description: string; };
 }
 
+<<<<<<< HEAD:server/blocks/ai.ts
 async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<string> {
   const timeoutPromise = new Promise<string>((_, reject) => {
     setTimeout(() => reject(new Error("Context generation timeout (>3000ms)")), TIMEOUT_CONTEXT_MS);
@@ -56,6 +57,8 @@ async function generateContextWithTimeout(channelId: string, inputQuery: string)
   return Promise.race([engine.generateContext(channelId, inputQuery), timeoutPromise]);
 }
 
+=======
+>>>>>>> c36a530 (refactor(prompt): revised storyblock instructions for better prose, order of importance,):server/ai.ts
 export async function generateStoryBlock(channelId: string, previousContext: string, isResolving: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
   // Enrich context with RAG (transparently falls back to previousContext on error)
   let enrichedContext = previousContext;
