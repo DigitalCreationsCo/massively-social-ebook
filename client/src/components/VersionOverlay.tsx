@@ -13,14 +13,15 @@ export function VersionOverlay() {
   // otherwise, default to a descriptive local dev string.
   const finalDisplayVersion = (isProductionEnvironment && buildTagFromInjectedEnv)
     ? buildTagFromInjectedEnv
-    : `v${pkg.version}-dev.local`;
+    : `${pkg.version}-dev.local`;
 
   return (
-    <div
-      className="fixed bottom-1 left-2 text-[10px] font-mono text-white/20 z-50 pointer-events-none select-none"
+    <div className="relative">
+      <span
       data-testid="version-overlay"
-    >
+        className="absolute bottom-0 right-7 text-[10px] font-mono text-white/20 z-50 pointer-events-none select-none">
       { finalDisplayVersion }
+      </span>
     </div>
   );
 }

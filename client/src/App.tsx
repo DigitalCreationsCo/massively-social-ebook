@@ -28,7 +28,7 @@ function useAnalyticsHook() {
 
 function Router() {
   useAnalyticsHook();
-  
+
   return (
     <Switch>
       <Route path="/" component={LiveEbook} />
