@@ -1,22 +1,8 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType, index, char, primaryKey, vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
-
-const vector = (name: string, { dimensions }: { dimensions: number; }) =>
-  customType<{ data: number[]; }>({
-    dataType: () => `vector(${dimensions})`,
-  })(name);
-
-// Channels table - stores channel metadata
-export const channels = pgTable("channels", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id").notNull().unique(),
-  name: text("name").notNull(),
-  description: text("description"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
 
 export type Channel = typeof channels.$inferSelect;
 export const InsertChannel = createInsertSchema(channels);
@@ -50,12 +36,12 @@ export const schedules = pgTable("schedules", {
 });
 
 // Custom Zod schema for schedules with validations
-const validDays = [ 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday' ] as const;
-export type ScheduleDay = typeof validDays[ number ];
+const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+export type ScheduleDay = typeof validDays[number];
 
 // Zod schema for TitleConfig (mirrors title.ts types for runtime validation)
-const titleFormatEnum = z.enum([ 'numbered', 'numbered_subtitle', 'in_world', 'season_episode' ]);
-const numberSourceEnum = z.enum([ 'episode', 'absolute', 'day_of_month' ]);
+const titleFormatEnum = z.enum(['numbered', 'numbered_subtitle', 'in_world', 'season_episode']);
+const numberSourceEnum = z.enum(['episode', 'absolute', 'day_of_month']);
 
 export const titleConfigSchema = z.object({
   format: titleFormatEnum,
@@ -64,17 +50,17 @@ export const titleConfigSchema = z.object({
   sessionLabel: z.string().optional(),
   subtitle: z.string().optional(),
   inWorldTemplate: z.string().optional(),
-  inWorldMode: z.enum([ 'countup', 'countdown' ]).optional(),
+  inWorldMode: z.enum(['countup', 'countdown']).optional(),
   inWorldTotal: z.number().int().positive().optional(),
   seasonSize: z.number().int().min(1).default(30).optional(),
   showSeason: z.boolean().optional(),
   seasonLabel: z.string().optional(),
 }).refine(
   (c) => c.format !== 'in_world' || !!c.inWorldTemplate,
-  { message: "inWorldTemplate is required when format is 'in_world'", path: [ 'inWorldTemplate' ] }
+  { message: "inWorldTemplate is required when format is 'in_world'", path: ['inWorldTemplate'] }
 ).refine(
   (c) => c.inWorldMode !== 'countdown' || !!c.inWorldTotal,
-  { message: "inWorldTotal is required when inWorldMode is 'countdown'", path: [ 'inWorldTotal' ] }
+  { message: "inWorldTotal is required when inWorldMode is 'countdown'", path: ['inWorldTotal'] }
 );
 
 export const insertScheduleSchema = createInsertSchema(schedules, {
@@ -202,8 +188,12 @@ export const votes = pgTable("votes", {
     .notNull()
     .references(() => blocks.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull(),
-  choice: text("choice").notNull(), // 'A' or 'B'
-  createdAt: timestamp("created_at").defaultNow(),
+  choice: char("choice", { length: 1 }).notNull(), // 'A' or 'B'
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.sessionId, table.blockId, table.userId, table.createdAt] })
+  };
 });
 
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
@@ -220,7 +210,7 @@ export const chat = pgTable("chat", {
     .references(() => sessions.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
   username: text("username").notNull(),
   text: text("text").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
@@ -269,14 +259,31 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({ updatedAt: true });
-export type SystemSetting = typeof systemSettings.$inferSelect;
-export type InsertSystemSetting = z.infer<typeof insertSystemSettingsSchema>;
+// Separated Notification Tables
+export const notificationsSessionWarning = pgTable("notifications_session_warning", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
+
+export const notificationsDaily = pgTable("notifications_daily", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
+
+export const notificationsWeekly = pgTable("notifications_weekly", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
 
 // Notification target type for disambiguation
 export type NotificationTargetType = 'session' | 'user' | 'schedule';
 
 // Notification Logs table
+// Kept for backward compatibility
 export const notificationLogs = pgTable("notification_logs", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(), // '5_min_warning', 'session_started', 'session_ended', 'weekly_brief'
