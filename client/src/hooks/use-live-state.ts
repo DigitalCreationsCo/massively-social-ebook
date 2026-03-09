@@ -191,6 +191,12 @@ export function useLiveState(channelId: string) {
             const payload = message.payload as StoryState;
             // debug logging
             // console.log("Received SYNC_STATE payload", payload.id, payload.phase);
+<<<<<<< HEAD
+=======
+
+            setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+            const payload = message.payload as StoryState;
+>>>>>>> 36c5239 (fix: ensure new storyblocks appear by disabling service worker caching)
 
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeRemaining !== undefined) {
@@ -202,6 +208,17 @@ export function useLiveState(channelId: string) {
             if (payload.initialTimeToNextDecision !== undefined) {
               setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
             }
+<<<<<<< HEAD
+=======
+            
+            // Ensure the main block data is updated if the block ID or phase changes
+            queryClient.setQueryData<StoryState>([ api.blocks.current.path, normalizedChannelId ], (old) => {
+              if (!old || old.id !== payload.id || old.phase !== payload.phase) {
+                return payload;
+              }
+              return old;
+            });
+>>>>>>> 36c5239 (fix: ensure new storyblocks appear by disabling service worker caching)
           }
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
