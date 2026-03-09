@@ -1,34 +1,46 @@
-import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, bigserial, bigint, char, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const blocks = pgTable("blocks", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: 'number' }).notNull(),
+  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
   channelId: text("channel_id").notNull(),
   title: text("title"),
   content: text("content").notNull(),
   imageUrl: text("image_url"),
   optionA: jsonb("option_a"), // { label: string, description: string }
   optionB: jsonb("option_b"), // { label: string, description: string }
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.id, table.createdAt] })
+  };
 });
 
 export const votes = pgTable("votes", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id").notNull(),
-  blockId: integer("block_id").notNull(),
+  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
+  blockId: bigint("block_id", { mode: 'number' }).notNull(),
   userId: text("user_id").notNull(),
-  choice: text("choice").notNull(), // 'A' or 'B'
-  createdAt: timestamp("created_at").defaultNow(),
+  choice: char("choice", { length: 1 }).notNull(), // 'A' or 'B'
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.sessionId, table.blockId, table.userId, table.createdAt] })
+  };
 });
 
 export const chat = pgTable("chat", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: 'number' }).notNull(),
+  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
   channelId: text("channel_id").notNull(),
   username: text("username").notNull(),
   text: text("text").notNull(),
-  sessionId: integer("session_id"),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.id, table.createdAt] })
+  };
 });
 
 export const reactions = pgTable("reactions", {
@@ -45,14 +57,18 @@ export const reactions = pgTable("reactions", {
 export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
 
 export const sessions = pgTable("sessions", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: 'number' }).notNull(),
   channelId: text("channel_id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
-  scheduledStart: timestamp("scheduled_start").notNull(),
-  scheduledEnd: timestamp("scheduled_end").notNull(),
+  scheduledStart: timestamp("scheduled_start", { withTimezone: true }).notNull(),
+  scheduledEnd: timestamp("scheduled_end", { withTimezone: true }).notNull(),
   status: text("status").notNull().default('scheduled'), // scheduled | active | completed | cancelled
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.channelId, table.id] })
+  };
 });
 
 export const users = pgTable("users", {
@@ -68,6 +84,27 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Separated Notification Tables
+export const notificationsSessionWarning = pgTable("notifications_session_warning", {
+  id: bigserial("id", { mode: 'number' }).primaryKey(),
+  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
+
+export const notificationsDaily = pgTable("notifications_daily", {
+  id: bigserial("id", { mode: 'number' }).primaryKey(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
+
+export const notificationsWeekly = pgTable("notifications_weekly", {
+  id: bigserial("id", { mode: 'number' }).primaryKey(),
+  userId: text("user_id").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+});
+
+// Kept for backward compatibility
 export const notificationLogs = pgTable("notification_logs", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(), // '5_min_warning', 'weekly_brief'
@@ -78,7 +115,8 @@ export const notificationLogs = pgTable("notification_logs", {
 
 
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true });
-export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
+// Since votes has a composite PK and no single 'id', we omit createdAt
+export const insertVoteSchema = createInsertSchema(votes).omit({ createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
