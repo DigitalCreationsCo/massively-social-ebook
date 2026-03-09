@@ -4,6 +4,8 @@ import { sendEmail, sendPushNotification } from './notifications';
 import { type Session } from '@shared/schema';
 import { logger } from './logger';
 import { getMSTDateString, createMSTDate, formatMST } from '@shared/date';
+import { render } from '@react-email/render';
+import TemplateWeeklyBriefing from './emails/TemplateWeeklyBriefing';
 
 const CURSOR_KEY = 'notification_cursor';
 const LOOP_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -279,12 +281,24 @@ export async function dispatchWeeklyBriefing() {
         .join('\n');
 
     const subject = "Your Weekly 25th Chapter Schedule";
-    const body = `Hello reader,\n\nHere is your story schedule for the upcoming week:\n\n${scheduleList}\n\nJoin the global circle for your daily 25.\n\n- The 25th Chapter Team`;
+    const bodyText = `Hello reader,\n\nHere is your story schedule for the upcoming week:\n\n${scheduleList}\n\nJoin the global circle for your daily 25.\n\n- The 25th Chapter Team`;
 
-    for (const user of users) {
-        if (user.email) {
-            await sendEmail(user.email, subject, body);
-        }
+    const sessionsFormatted = upcoming.map(s => ({
+        id: s.id,
+        title: s.title,
+        description: s.description || '',
+        formattedDate: `${formatMST(s.scheduledStart, "EEEE, MMMM do 'at' h:mm a")} MST`
+    }));
+
+    const urlAppBase = process.env.APP_URL || 'https://25thchapter.com';
+    const htmlBody = await render(
+        TemplateWeeklyBriefing({ sessions: sessionsFormatted, urlAppBase })
+    );
+
+for (const user of users) {
+if (user.email) {
+await sendEmail(user.email, subject, bodyText, htmlBody);
+}
     }
 }
 
