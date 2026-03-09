@@ -66,7 +66,7 @@ const authorFlair = [
 
     "Use simple descriptions. Don't use 'A tiny, almost invisible inscription was etched into the silver frame.', use 'A small inscription was etched into the silver frame.'.",
 
-    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.',",
+    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.'",
 
     "Characters are complete and flawed. They each react uniquely. They can make mistakes. They can hesitate. They want things they won't say out loud.",
 
@@ -91,37 +91,37 @@ export const createStoryBlockInstructions = ({
     isResolving,
     genre = "crime",
     // Stateful Chronicle RAG parameters
-    chronicle,
+    lore,
     summary,
 }: {
-        previousBlock: string;
-        ragContext?: string;
-        isResolving?: boolean;
-        genre?: keyof typeof GENRE_RULES;
-        chronicle?: string[];
-        summary?: string;
+    previousBlock: string;
+    ragContext?: string;
+    isResolving?: boolean;
+    genre?: keyof typeof GENRE_RULES;
+    lore?: string[];
+    summary?: string;
 }) => {
 
     const previousContext = ragContext
         ? ragContext
         : previousBlock;
 
-    const storyRules = GENRE_RULES[ genre ] ?? GENRE_RULES.adventure;
+    const storyRules = GENRE_RULES[genre] ?? GENRE_RULES.adventure;
 
     // Build the chronicle/summary section if available
-    const chronicleSection = [];
+    const loreSection = [];
     if (summary) {
-        chronicleSection.push(`SUMMARY (Earlier Events):\n${summary}`);
+        loreSection.push(`SUMMARY (Earlier Events):\n${summary}`);
     }
-    if (chronicle && chronicle.length > 0) {
-        chronicleSection.push(`NOTABLE EVENTS:`);
-        chronicle.forEach(event => {
-            chronicleSection.push(`- ${event}`);
+    if (lore && lore.length > 0) {
+        loreSection.push(`NOTABLE EVENTS:`);
+        lore.forEach(event => {
+            loreSection.push(`- ${event}`);
         });
     }
 
-    const chronicleText = chronicleSection.length > 0
-        ? chronicleSection.join("\n") + "\n\n"
+    const loreText = loreSection.length > 0
+        ? loreSection.join("\n") + "\n\n"
         : "";
 
     const instructions = [
@@ -129,8 +129,7 @@ export const createStoryBlockInstructions = ({
 
         ...storyRules,
 
-        // Insert chronicle/summary before the story content
-        chronicleText,
+        loreText,
 
         previousContext,
 
