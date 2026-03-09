@@ -9,6 +9,9 @@ import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
 import { VersionOverlay } from "@/components/VersionOverlay";
+import Install from "@/pages/Install";
+import About from "@/pages/About";
+import NotFound from "@/pages/not-found";
 
 // Default channel - change here to switch the active channel
 // Future: load from database or user preference
@@ -32,7 +35,10 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={LiveEbook} />
-      <Route path="/upcoming" component={UpcomingSession} />
+      <Route path="/upcoming" component={() => <UpcomingSession />} />
+      <Route path="/install" component={Install} />
+      <Route path="/about" component={About} />
+      <Route component={NotFound} />
     </Switch>
   );
 }
