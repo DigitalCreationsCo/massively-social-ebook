@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -416,7 +416,7 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                     </div>
 
                     {/* FAQ Aside */ }
-                    <aside className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
+                    <aside id="faq" className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                         <div className="space-y-4">
                             <h2 className="text-3xl font-serif text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
@@ -443,6 +443,20 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                 <p className="text-white/50 font-sans text-sm leading-relaxed">
                                     Readers decide on key plot points with a community vote. The path with the most votes becomes part of the story.
                                 </p>
+                            </div>
+                             <div className="space-y-3">
+                                <h3 className="text-lg font-serif text-white">How can I download the app?</h3>
+                                <p className="text-white/50 font-sans text-sm leading-relaxed">
+                                    You can add The 25th Chapter to your home screen for a native app-like experience.
+                                    Click below for a simple guide.
+                                </p>
+                                <div className="pt-2">
+                                  <Link to="/install">
+                                    <Button variant="outline" size="sm" className="border-white/20 bg-white/5 hover:bg-white/10">
+                                        Installation Instructions
+                                    </Button>
+                                  </Link>
+                                </div>
                             </div>
                         </div>
 

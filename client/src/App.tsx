@@ -11,6 +11,8 @@ import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
 import { DebugTools } from "@/components/DebugTools";
 import { VersionOverlay } from "@/components/VersionOverlay";
+import Install from "@/pages/Install";
+import About from "@/pages/About";
 
 function useAnalyticsHook() {
   const [location] = useLocation();
@@ -31,6 +33,8 @@ function Router() {
     <Switch>
       <Route path="/" component={LiveEbook} />
       <Route path="/upcoming" component={() => <UpcomingSession />} />
+      <Route path="/install" component={Install} />
+      <Route path="/about" component={About} />
       <Route component={NotFound} />
     </Switch>
   );
