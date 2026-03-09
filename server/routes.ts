@@ -407,6 +407,12 @@ export async function registerRoutes(
 
   // REST API
   app.get(api.blocks.current.path, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    const rawChannelId = String(req.query.channelId || '');
+  app.get(api.blocks.current.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
     const channelId = getChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
