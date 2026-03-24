@@ -12,8 +12,23 @@ vi.mock('./rag', () => ({
     ),
 }));
 
+const { mockGenerateContext } = vi.hoisted(() => ({
+    mockGenerateContext: vi.fn((_channelId: string, immediateContext: string) =>
+        Promise.resolve(immediateContext)
+    )
+}));
+
+vi.mock('narrative-engine', () => ({
+    NarrativeEngine: class {
+        generateContext = mockGenerateContext;
+    }
+}));
+
+vi.mock('./storage', () => ({
+    storage: {}
+}));
+
 import { ai, generateStoryBlock, generateStoryImage } from './ai';
-import { buildRAGContext } from './rag';
 
 describe('AI Generators', () => {
     beforeEach(() => {
@@ -23,6 +38,10 @@ describe('AI Generators', () => {
             generateContent: vi.fn(),
             generateImages: vi.fn()
         } as any;
+
+        mockGenerateContext.mockImplementation((_channelId: string, immediateContext: string) =>
+            Promise.resolve(immediateContext)
+        );
     });
 
     describe('generateStoryBlock', () => {
@@ -41,8 +60,8 @@ describe('AI Generators', () => {
             expect(ai.models.generateContent).toHaveBeenCalledTimes(1);
             expect(result.title).toBe('Test Title');
             expect(result.content).toBe('Test content here.');
-            expect(result.optionA.label).toBe('A');
-            expect(result.optionB.label).toBe('B');
+            expect(result.optionA?.label).toBe('A');
+            expect(result.optionB?.label).toBe('B');
         });
 
         it('should throw an error if no text is returned', async () => {
@@ -58,7 +77,7 @@ describe('AI Generators', () => {
             await expect(generateStoryBlock('scifi', 'Context')).rejects.toThrow('Failed to generate story block: No text returned.');
         });
 
-        it('should call buildRAGContext with the channelId and previousContext', async () => {
+        it('should call NarrativeEngine.generateContext with the channelId and previousContext', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
                 text: JSON.stringify({
                     title: 'RAG Title',
@@ -70,12 +89,12 @@ describe('AI Generators', () => {
 
             await generateStoryBlock('mystery', 'The detective investigated.');
 
-            expect(buildRAGContext).toHaveBeenCalledWith('mystery', 'The detective investigated.');
+            expect(mockGenerateContext).toHaveBeenCalledWith('mystery', 'The detective investigated.');
         });
 
-        it('should use enriched context when RAG returns different content', async () => {
+        it('should use enriched context when NarrativeEngine returns different content', async () => {
             const enrichedContext = 'Story So Far:\n1. It began.\n\nCurrent Situation:\nThe crew arrived.';
-            (buildRAGContext as any).mockResolvedValueOnce(enrichedContext);
+            mockGenerateContext.mockResolvedValueOnce(enrichedContext);
 
             (ai.models.generateContent as any).mockResolvedValueOnce({
                 text: JSON.stringify({

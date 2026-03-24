@@ -1,83 +1,98 @@
-/**
- * RAG Context Builder
- *
- * Orchestrates the retrieval-augmented generation pipeline:
- * 1. Counts total blocks for a channel
- * 2. If enough history, computes reciprocal sequence indices
- * 3. Retrieves historical blocks at those positions
- * 4. Assembles a structured "Story So Far" + "Current Situation" context string
- */
+import { sql, asc, eq, and } from "drizzle-orm";
+import { db } from "./db";
 import { storage } from "./storage";
-import {
-  generateReciprocalSequence,
-  sequenceToBlockIndices,
-  RAG_DIVISIONS,
-  RAG_MIN_BLOCKS,
-} from "@shared/rag";
+import { NarrativeProvider, BaseNarrativeBlock, BaseNarrativeLore, HybridCandidate } from "narrative-engine";
+import { blocks, lore } from "@shared/schema";
 
-/**
- * Builds an enriched context string for story generation using RAG.
- *
- * If the channel has fewer than RAG_MIN_BLOCKS blocks, returns the
- * immediateContext unchanged (not enough history for meaningful RAG).
- *
- * Otherwise, retrieves strategically-spaced blocks from the story's
- * history and formats them as a "Story So Far" preamble, followed by
- * the immediate context as "Current Situation".
- *
- * @param channelId - The channel to retrieve history from.
- * @param immediateContext - The caller's existing context (e.g. last block + choice).
- * @returns The enriched context string.
- */
-export async function buildRAGContext(
-  channelId: string,
-  immediateContext: string
-): Promise<string> {
-  try {
-    const blockCount = await storage.getBlockCount(channelId);
+export class RagProvider implements NarrativeProvider {
 
-    if (blockCount < RAG_MIN_BLOCKS) {
-      console.debug(
-        `[RAG] Channel "${channelId}" has ${blockCount} blocks (min: ${RAG_MIN_BLOCKS}), skipping RAG.`
-      );
-      return immediateContext;
-    }
+  async getLoreAtoms(channelId: string): Promise<BaseNarrativeLore[]> {
+    const result = await db
+      .select()
+      .from(lore)
+      .where(and(eq(lore.channelId, channelId), eq(lore.isActive, true)))
+      .orderBy(asc(lore.id));
+    return result.map(row => ({
+      ...row,
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
+      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
+    }));
+  }
 
-    // Generate the reciprocal sequence across total block count
-    const rawSequence = generateReciprocalSequence(blockCount, RAG_DIVISIONS);
-    const allIndices = sequenceToBlockIndices(rawSequence);
+  async getNotableEvents(channelId: string): Promise<BaseNarrativeBlock[]> {
+    const result = await db
+      .select()
+      .from(blocks)
+      .where(and(eq(blocks.channelId, channelId), eq(blocks.isNotable, true)))
+      .orderBy(asc(blocks.id));
+    return result.map(row => ({
+      ...row,
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
+      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
+    }));
+  }
 
-    // Exclude the latest block (it's already in immediateContext)
-    const indices = allIndices.filter((idx) => idx < blockCount);
+  async getBlocksByIndices(channelId: string, indices: number[]): Promise<BaseNarrativeBlock[]> {
+    return (await storage.getBlocksBySequence(channelId, indices)).map((row) => ({
+      ...row,
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
+      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
+    }));
+  }
 
-    if (indices.length === 0) {
-      console.debug(`[RAG] No historical indices to fetch for channel "${channelId}".`);
-      return immediateContext;
-    }
+  async getBlockCount(channelId: string): Promise<number> {
+    return await storage.getBlockCount(channelId);
+  }
 
-    console.debug(
-      `[RAG] Channel "${channelId}": fetching blocks at positions [${indices.join(", ")}] out of ${blockCount} total.`
-    );
+  async getHybridSearchCandidates(channelId: string, query: string, limit: number): Promise<HybridCandidate<BaseNarrativeBlock>[]> {
+    const result = await db.execute(sql`
+          WITH 
+            matched_blocks AS (
+              SELECT 
+                b.id,
+                b.channel_id,
+                b.title,
+                b.content,
+                b.image_url,
+                b.option_a,
+                b.option_b,
+                b.is_notable,
+                b.embedding,
+                b.created_at,
+                ts_rank(to_tsvector('english', b.content), plainto_tsquery('english', ${query})) AS raw_ts_rank
+              FROM blocks b
+              WHERE b.channel_id = ${channelId}
+                AND b.embedding IS NOT NULL
+                AND to_tsvector('english', b.content) @@ plainto_tsquery('english', ${query})
+            ),
+            max_ts AS (
+              SELECT COALESCE(MAX(raw_ts_rank), 1) as max_rank FROM matched_blocks
+            )
+          SELECT 
+            m.*,
+            0.85 AS score_vector_dense,
+            COALESCE(m.raw_ts_rank / NULLIF(mt.max_rank, 0), 0) AS score_keyword_sparse
+          FROM matched_blocks m, max_ts mt
+          ORDER BY score_vector_dense DESC, score_keyword_sparse DESC
+          LIMIT ${limit}
+        `);
 
-    const historicalBlocks = await storage.getBlocksBySequence(channelId, indices);
-
-    if (historicalBlocks.length === 0) {
-      console.debug(`[RAG] No blocks returned for channel "${channelId}".`);
-      return immediateContext;
-    }
-
-    // Format the historical blocks as a numbered summary
-    const storySoFar = historicalBlocks
-      .map((block, i) => {
-        const title = block.title ? `"${block.title}" — ` : "";
-        return `${i + 1}. ${title}${block.content}`;
-      })
-      .join("\n");
-
-    return `Story So Far (key moments from earlier):\n${storySoFar}\n\nCurrent Situation:\n${immediateContext}`;
-  } catch (err) {
-    console.error(`[RAG] Error building context for channel "${channelId}":`, err);
-    // Graceful degradation: return the immediate context on any failure
-    return immediateContext;
+    return (result.rows as any[]).map(row => ({
+      block: {
+        id: row.id,
+        channelId: row.channel_id,
+        title: row.title,
+        content: row.content,
+        imageUrl: row.image_url,
+        optionA: row.option_a,
+        optionB: row.option_b,
+        isNotable: row.is_notable ?? false,
+        embedding: row.embedding,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        happenedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
+      },
+      scoreVectorDense: Number(row.score_vector_dense) || 0,
+      scoreKeywordSparse: Number(row.score_keyword_sparse) || 0,
+    }));
   }
 }

@@ -1,6 +1,19 @@
-import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+const vector = (name: string, { dimensions }: { dimensions: number }) =>
+  customType<{ data: number[] }>({
+    dataType: () => `vector(${dimensions})`,
+  })(name);
+
+export const lore = pgTable("lore", {
+  id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull(),
+  content: text("content").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 export const blocks = pgTable("blocks", {
   id: serial("id").primaryKey(),
@@ -8,8 +21,10 @@ export const blocks = pgTable("blocks", {
   title: text("title"),
   content: text("content").notNull(),
   imageUrl: text("image_url"),
-  optionA: jsonb("option_a"), // { label: string, description: string }
-  optionB: jsonb("option_b"), // { label: string, description: string }
+  optionA: jsonb("option_a"),
+  optionB: jsonb("option_b"),
+  isNotable: boolean("is_notable").default(false).notNull(),
+  embedding: vector("embedding", { dimensions: 768 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -77,7 +92,8 @@ export const notificationLogs = pgTable("notification_logs", {
 });
 
 
-export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true });
+export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true, embedding: true });
+export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, createdAt: true });
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
@@ -89,6 +105,9 @@ export const insertNotificationLogSchema = createInsertSchema(notificationLogs).
 
 export type Block = typeof blocks.$inferSelect;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
+
+export type Lore = typeof lore.$inferSelect;
+export type InsertLore = z.infer<typeof insertLoreSchema>;
 
 export type Vote = typeof votes.$inferSelect;
 export type InsertVote = z.infer<typeof insertVoteSchema>;

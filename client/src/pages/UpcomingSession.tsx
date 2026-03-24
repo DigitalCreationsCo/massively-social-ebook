@@ -295,10 +295,10 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                 <div className="flex flex-col gap-16 justify-center items-center">
                     {/* Mockup Display */ }
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
-                        <div className="space-y-4">
-                            <h2 className="text-4xl font-serif text-white tracking-tight">The 25th Chapter</h2>
+                        <div className="space-y-4 px-6 mx-auto">
+                            <h2 className="text-4xl font-serif text-white tracking-tight whitespace-nowrap">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
-                                Join a room of fellow readers and unfold the narrative.
+                                Join fellow readers in a live session to unfold the narrative.
                             </p>
                         </div>
                         <div className="relative group flex-grow min-h-0 flex justify-center">

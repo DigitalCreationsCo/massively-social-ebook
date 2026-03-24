@@ -4,10 +4,6 @@ import path from 'path';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-/**
- * Validates the integrity and structure of the manifest.json file.
- * Essential for maintaining narrative continuity in Cinematic Canvas.
- */
 describe('Manifest Integrity Suite', () => {
   const pathManifestFile = resolve(__dirname, './manifest.json');
 
@@ -37,7 +33,7 @@ describe('Manifest Integrity Suite', () => {
     }
   });
 
-  it('should contain required fields for Cinematic Canvas', () => {
+  it('should contain required fields', () => {
     const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
     const parsedManifestBody = JSON.parse(contentManifestRaw);
 

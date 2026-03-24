@@ -5,6 +5,7 @@ import {
   chat,
   reactions,
   sessions,
+  lore,
   type Block,
   type InsertBlock,
   type Vote,
@@ -18,6 +19,8 @@ import {
   type SessionStatus,
   type User,
   type InsertUser,
+  type Lore,
+  type InsertLore,
   users,
   systemSettings,
   notificationLogs,
@@ -29,14 +32,24 @@ import { desc, eq, and, asc, count, sql } from "drizzle-orm";
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
   createBlock(block: InsertBlock): Promise<Block>;
+
   createVote(vote: InsertVote): Promise<Vote>;
   getRecentChat(channelId: string, sessionId: number | undefined, limit?: number): Promise<ChatMessage[]>;
   createChat(msg: InsertChat): Promise<ChatMessage>;
+
   addReaction(reaction: InsertReaction): Promise<Reaction>;
   getReactionsForBlock(blockId: number): Promise<Reaction[]>;
+
   getRandomImage(channelId: string): Promise<string | null>;
+
   getBlockCount(channelId: string): Promise<number>;
   getBlocksBySequence(channelId: string, indices: number[]): Promise<Block[]>;
+
+  createLore(loreEntry: InsertLore): Promise<Lore>;
+  deactivateLore(id: number): Promise<Lore>;
+  setBlockEmbedding(blockId: number, embedding: number[]): Promise<void>;
+  setBlockNotable(blockId: number, isNotable: boolean): Promise<void>;
+
   // Session methods
   getNextSession(channelId: string): Promise<Session | undefined>;
   getActiveSession(channelId: string): Promise<Session | undefined>;
@@ -44,6 +57,7 @@ export interface IStorage {
   updateSessionStatus(id: number, status: SessionStatus): Promise<Session>;
   listSessions(channelId?: string, status?: SessionStatus): Promise<Session[]>;
   cancelSession(id: number): Promise<Session>;
+
   // User methods
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
@@ -154,8 +168,38 @@ export class DatabaseStorage implements IStorage {
       imageUrl: row.image_url,
       optionA: row.option_a,
       optionB: row.option_b,
+      isNotable: row.is_notable ?? false,
+      embedding: row.embedding,
       createdAt: row.created_at ? new Date(row.created_at) : null,
     })) as Block[];
+  }
+
+  async createLore(loreEntry: InsertLore): Promise<Lore> {
+    const [ newLore ] = await db.insert(lore).values(loreEntry).returning();
+    return newLore;
+  }
+
+  async deactivateLore(id: number): Promise<Lore> {
+    const [ updatedLore ] = await db
+      .update(lore)
+      .set({ isActive: false })
+      .where(eq(lore.id, id))
+      .returning();
+    return updatedLore;
+  }
+
+  async setBlockEmbedding(blockId: number, embedding: number[]): Promise<void> {
+    await db
+      .update(blocks)
+      .set({ embedding: embedding as any })
+      .where(eq(blocks.id, blockId));
+  }
+
+  async setBlockNotable(blockId: number, isNotable: boolean): Promise<void> {
+    await db
+      .update(blocks)
+      .set({ isNotable })
+      .where(eq(blocks.id, blockId));
   }
 
   // ─── Session Methods ───────────────────────────────────────────────

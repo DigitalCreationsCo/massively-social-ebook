@@ -17,7 +17,12 @@
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./client/src/*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": [
+        "./shared/*"
+      ],
+      "narrative-engine": [
+        "./packages/narrative-engine/src/index.ts"
+      ]
     }
   }
 }

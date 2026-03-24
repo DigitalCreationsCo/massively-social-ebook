@@ -2,10 +2,13 @@
   "name": "the-25th-chapter",
   "version": "0.1.14",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "CC BY-NC-SA",
   "scripts": {
-    "dev": "tsx watch -r dotenv/config server/index.ts",
-    "build": "tsx scripts/build.ts",
+    "dev": "NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
+    "build": "NODE_ENV=production tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "release:patch": "npm version patch && git push origin main --tags",
     "release:minor": "npm version minor && git push origin main --tags",
@@ -20,6 +23,7 @@
     "@google/genai": "^1.42.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
+    "narrative-engine": "^0.1.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@radix-ui/react-accordion": "^1.2.4",
     "@radix-ui/react-alert-dialog": "^1.1.7",

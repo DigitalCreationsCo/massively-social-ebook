@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
 import { createImageInstructions } from "../prompts/image-instructions";
-import { buildRAGContext } from "./rag";
+import { NarrativeEngine, configureNarrativeLab } from "narrative-engine";
+import { RagProvider } from './rag';
 
 export const ai = new GoogleGenAI({});
 
@@ -10,6 +11,17 @@ const lmParamsGoogle = {
   imageModel: 'gemini-2.5-flash-image',
 };
 
+const TIMEOUT_CONTEXT_MS = 3000;
+
+const engine = new NarrativeEngine(new RagProvider());
+configureNarrativeLab(engine);
+if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB_STARTED__" ]) {
+  import("packages/narrative-engine/src/lab").then(({ startLabServer }) => {
+    startLabServer().catch(err => console.error("[Lab] Boot failed:", err));
+    (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
+  });
+}
+
 export interface StoryBlockResult {
   title: string;
   content: string;
@@ -17,9 +29,22 @@ export interface StoryBlockResult {
   optionB?: { label: string; description: string; };
 }
 
+async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<string> {
+  const timeoutPromise = new Promise<string>((_, reject) => {
+    setTimeout(() => reject(new Error("Context generation timeout (>3000ms)")), TIMEOUT_CONTEXT_MS);
+  });
+  return Promise.race([ engine.generateContext(channelId, inputQuery), timeoutPromise ]);
+}
+
 export async function generateStoryBlock(channelId: string, previousContext: string, isResolution: boolean = false): Promise<StoryBlockResult> {
-  // Enrich context with RAG (transparently falls back to previousContext on error)
-  const enrichedContext = await buildRAGContext(channelId, previousContext);
+  let enrichedContext = previousContext;
+
+  try {
+    enrichedContext = await generateContextWithTimeout(channelId, previousContext);
+  } catch (err) {
+    console.warn("[NLP] Circuit breaker triggered, falling back to immediate context:", err);
+    enrichedContext = previousContext;
+  }
 
   const prompt = createStoryBlockInstructions({
     previous: previousContext,

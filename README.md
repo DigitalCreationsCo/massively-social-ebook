@@ -10,7 +10,6 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 - [Project Structure](#project-structure)
 - [Server](#server)
 - [AI Pipeline](#ai-pipeline)
-- [RAG Context System](#rag-context-system)
 - [Game Loop](#game-loop)
 - [API Reference](#api-reference)
 - [WebSocket Events](#websocket-events)
@@ -42,8 +41,9 @@ A real-time, interactive, AI-driven fictional story platform where readers vote 
 │  ┌────────────▼─────────────┐    ┌──────────────────────┐│
 │  │         AI Module        │    │    Channel State      ││
 │  │ ┌─────────────────────┐  │    │  phase, timer, block  ││
-│  │ │   RAG Context       │  │    └──────────────────────┘│
-│  │ │ (reciprocal seq.)   │  │                            │
+│  │ │   Initalizes and calls NarrativeEngine
+Generates next storyblock                  │  │    └──────────────────────┘│
+│  │ │                     │  │                            │
 │  │ └─────────────────────┘  │                            │
 │  └────────────┬─────────────┘                            │
 │               │                                          │
@@ -76,7 +76,6 @@ cp .env.example .env
 ## Features
 
 - **Dynamic Content Generation** — Blocks of up to 3 sentences generated conditionally based on reader voting using structured JSON schema output from Gemini (`gemini-2.5-flash`).
-- **RAG Context (Retrieval-Augmented Generation)** — Uses a reciprocal sequence algorithm to retrieve strategically-spaced historical blocks, giving the AI narrative coherence across many blocks. Dense sampling near recent events, sparse near the beginning.
 - **Dynamic Image Generation** — Generates 16:9 thematic images via `imagen-4.0-generate-001` to accompany each story block. Falls back to previously generated images or a default on failure.
 - **Periodic Decision Phases** — Story choices occur every 3–4 turns (randomized), allowing for longer narrative arcs between reader decisions.
 - **Proactive Branch Generation** — Both option A and option B storyblocks (and images) are pregenerated during reading phases, so transitions are instant.
@@ -103,7 +102,6 @@ cp .env.example .env
 │   ├── index.ts            # Entry point, middleware, server startup
 │   ├── routes.ts           # REST API, WebSocket, game loop, channel state
 │   ├── ai.ts               # Gemini text + Imagen image generation
-│   ├── rag.ts              # RAG context builder (buildRAGContext)
 │   ├── storage.ts          # Drizzle ORM data access layer
 │   ├── db.ts               # PostgreSQL pool + Drizzle instance
 │   ├── static.ts           # Production static file serving
@@ -113,7 +111,6 @@ cp .env.example .env
 │   ├── schema.ts           # Drizzle table definitions + Zod types
 │   ├── channels.ts         # Channel IDs, obfuscation, types
 │   ├── routes.ts           # API contract definitions (Zod schemas)
-│   └── rag.ts              # Reciprocal sequence math utilities
 │
 ├── prompts/                # AI prompt templates
 │   ├── generate-block.ts   # Story block generation prompt (with RAG)
@@ -134,11 +131,11 @@ cp .env.example .env
 
 ### AI Pipeline
 
-The AI pipeline generates story text and images via Google's Gemini API.
+The AI pipeline generates story text and images via NarrativeEngine.
 
 **Text Generation** (`generateStoryBlock`):
-1. Receives `channelId` and `previousContext` (the immediate prior block + reader choice)
-2. Calls `buildRAGContext()` to enrich with historical context (see [RAG Context System](#rag-context-system))
+1. { ...insert NarrativeEngine usage here... }
+2. { ...insert NarrativeEngine usage here... }
 3. Passes enriched context to `createStoryBlockInstructions()` prompt template
 4. Sends structured JSON schema request to `gemini-2.5-flash`
 5. Returns `{ title, content, optionA, optionB }`
@@ -150,31 +147,7 @@ The AI pipeline generates story text and images via Google's Gemini API.
 4. Saves to `public/images/` and returns the URL path
 5. On any failure, returns a fallback image path
 
-### RAG Context System
-
-RAG enriches the AI's context by retrieving historically important story blocks, not just the last one. This maintains narrative coherence over long stories.
-
-**Algorithm: Reciprocal Sequence**
-
-The sequence `generateReciprocalSequence(totalBlocks, divisions)` produces indices from 1 to `totalBlocks` with decreasing jump sizes:
-
-```
-For totalBlocks = 50, divisions = 5:
-  Indices: [1, 21, 31, 38, 43, 50]
-           ↑                     ↑
-  sparse (beginning)     dense (recent)
-```
-
-The jump at step `i` is `scale / i`, where `scale = (totalBlocks - 1) / H(divisions)` and `H(n)` is the harmonic sum.
-
-**Configuration** (in `shared/rag.ts`):
-
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `RAG_DIVISIONS` | `5` | Number of historical blocks to retrieve |
-| `RAG_MIN_BLOCKS` | `3` | Minimum block count before RAG activates |
-
-**Graceful Degradation**: Any error in the RAG pipeline silently falls back to `immediateContext` only. The story always progresses.
+**Graceful Degradation**: Any error from NarrativeEngine silently falls back to `immediateContext` only. The story always progresses.
 
 ### Game Loop
 
@@ -376,9 +349,7 @@ npm test server/ai.test.ts
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `shared/rag.test.ts` | 19 | Reciprocal sequence math, constants |
 | `shared/channels.test.ts` | 5 | Channel obfuscation, ID mapping |
-| `server/rag.test.ts` | 9 | RAG context builder, degradation |
 | `server/ai.test.ts` | 7 | Story block + image generation, RAG integration |
 | `server/storage.test.ts` | 6 | DB access, block count, sequence retrieval |
 | `server/session-storage.test.ts`| 7 | Session CRUD and status management |

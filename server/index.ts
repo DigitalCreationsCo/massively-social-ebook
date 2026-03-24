@@ -70,6 +70,8 @@ app.use(createRequestLogger());
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+  console.log(`mode: ${process.env.NODE_ENV}`);
+
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {

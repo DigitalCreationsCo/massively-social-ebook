@@ -25,6 +25,7 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "client", "src"),
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "narrative-engine": path.resolve(import.meta.dirname, "packages/narrative-engine/src"),
     },
   },
   build: {
@@ -44,6 +45,7 @@ export default defineConfig({
       "**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../server/**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../shared/**/*.{test,spec}.?(c|m)[jt]s?(x)",
+      "../packages/**/*.{test,spec}.?(c|m)[jt]s?(x)",
     ],
     setupFiles: [ path.resolve(import.meta.dirname, "client/src/test/setup.ts") ],
     coverage: {
