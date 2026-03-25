@@ -115,4 +115,4 @@ app.use(createRequestLogger());
       }
     },
   );
-})();
+});
