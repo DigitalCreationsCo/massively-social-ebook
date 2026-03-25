@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./scheduler";
 import { logger, createRequestLogger } from "./logger";
+import os from "os";
 
 const app = express();
 const httpServer = createServer(app);
@@ -83,6 +84,23 @@ app.use(createRequestLogger());
   // Other ports are firewalled. Default to 5001 if not specified.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5001", 10);
+
+  const getLocalIPForUrl = () => {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      const iface = interfaces[name];
+      if (!iface) continue;
+      for (const entry of iface) {
+        if (entry.family === "IPv4" && !entry.internal) {
+          return entry.address;
+        }
+      }
+    }
+    return "localhost";
+  };
+
+  const localIP = getLocalIPForUrl();
+
   httpServer.listen(
     {
       port,
@@ -91,7 +109,10 @@ app.use(createRequestLogger());
     },
     () => {
       logger.info(`Server starting on port ${port}`, "server");
-      logger.info(`🚀 serving on port ${port}`, "server");
+      logger.info(`🚀 http://localhost:${port}`, "server");
+      if (localIP !== "localhost") {
+        logger.info(`🚀 http://${localIP}:${port}`, "server");
+      }
     },
   );
 })();
