@@ -15,10 +15,24 @@ const TIMEOUT_CONTEXT_MS = 3000;
 
 const engine = new NarrativeEngine(new RagProvider());
 configureNarrativeLab(engine);
+// Start the narrative lab server in development without blocking app initialization.
+// Uses process.nextTick to defer execution after the current import cycle completes.
 if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB_STARTED__" ]) {
-  import("packages/narrative-engine/src/lab").then(({ startLabServer }) => {
-    startLabServer().catch(err => console.error("[Lab] Boot failed:", err));
-    (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
+  (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "pending";
+  
+  process.nextTick(async () => {
+    // Guard against double-initialization
+    if ((global as any)[ "__NARRATIVE_LAB_STARTED__" ] !== "pending") return;
+    
+    try {
+      const { startLabServer } = await import("../packages/narrative-engine/src/lab");
+      await startLabServer();
+      (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
+      console.log("[Lab] NarrativeEngine Lab ready");
+    } catch (err) {
+      (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = false;
+      console.error("[Lab] Boot failed (non-fatal):", err);
+    }
   });
 }
 

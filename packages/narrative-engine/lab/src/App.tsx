@@ -146,7 +146,7 @@ function App() {
       const data = await labFetch('/generate', {
         method: 'POST',
         body: JSON.stringify({
-          channelId: "cinematic-canvas-lab",
+          channelId,
           query: inputQuery,
           config: {
             saliencyThreshold,
