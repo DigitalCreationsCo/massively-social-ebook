@@ -3,8 +3,13 @@ import { db } from "./db";
 import { storage } from "./storage";
 import { NarrativeProvider, BaseNarrativeBlock, BaseNarrativeLore, HybridCandidate } from "narrative-engine";
 import { blocks, lore } from "@shared/schema";
+import { generateEmbedding } from "./engine/embedding";
 
 export class RagProvider implements NarrativeProvider {
+
+  async getBlockCount(channelId: string): Promise<number> {
+    return await storage.getBlockCount(channelId);
+  }
 
   async getLoreAtoms(channelId: string): Promise<BaseNarrativeLore[]> {
     const result = await db
@@ -19,32 +24,10 @@ export class RagProvider implements NarrativeProvider {
     }));
   }
 
-  async getNotableEvents(channelId: string): Promise<BaseNarrativeBlock[]> {
-    const result = await db
-      .select()
-      .from(blocks)
-      .where(and(eq(blocks.channelId, channelId), eq(blocks.isNotable, true)))
-      .orderBy(asc(blocks.id));
-    return result.map(row => ({
-      ...row,
-      createdAt: row.createdAt ? new Date(row.createdAt) : null,
-      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
-    }));
-  }
-
-  async getBlocksByIndices(channelId: string, indices: number[]): Promise<BaseNarrativeBlock[]> {
-    return (await storage.getBlocksBySequence(channelId, indices)).map((row) => ({
-      ...row,
-      createdAt: row.createdAt ? new Date(row.createdAt) : null,
-      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
-    }));
-  }
-
-  async getBlockCount(channelId: string): Promise<number> {
-    return await storage.getBlockCount(channelId);
-  }
-
   async getHybridSearchCandidates(channelId: string, query: string, limit: number): Promise<HybridCandidate<BaseNarrativeBlock>[]> {
+    const queryEmbedding = await generateEmbedding(query);
+    const queryEmbeddingStr = JSON.stringify(queryEmbedding);
+
     const result = await db.execute(sql`
           WITH 
             matched_blocks AS (
@@ -70,7 +53,7 @@ export class RagProvider implements NarrativeProvider {
             )
           SELECT 
             m.*,
-            0.85 AS score_vector_dense,
+            1 - (m.embedding <=> ${queryEmbeddingStr}::vector) AS score_vector_dense,
             COALESCE(m.raw_ts_rank / NULLIF(mt.max_rank, 0), 0) AS score_keyword_sparse
           FROM matched_blocks m, max_ts mt
           ORDER BY score_vector_dense DESC, score_keyword_sparse DESC
@@ -80,6 +63,7 @@ export class RagProvider implements NarrativeProvider {
     return (result.rows as any[]).map(row => ({
       block: {
         id: row.id,
+        index: row.id,
         channelId: row.channel_id,
         title: row.title,
         content: row.content,
@@ -93,6 +77,29 @@ export class RagProvider implements NarrativeProvider {
       },
       scoreVectorDense: Number(row.score_vector_dense) || 0,
       scoreKeywordSparse: Number(row.score_keyword_sparse) || 0,
+    }));
+  }
+
+  async getNotableEvents(channelId: string): Promise<BaseNarrativeBlock[]> {
+    const result = await db
+      .select()
+      .from(blocks)
+      .where(and(eq(blocks.channelId, channelId), eq(blocks.isNotable, true)))
+      .orderBy(asc(blocks.id));
+    return result.map(row => ({
+      ...row,
+      index: row.id,
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
+      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
+    }));
+  }
+
+  async getBlocksByIndices(channelId: string, indices: number[]): Promise<BaseNarrativeBlock[]> {
+    return (await storage.getBlocksBySequence(channelId, indices)).map((row) => ({
+      ...row,
+      index: row.id,
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
+      happenedAt: row.createdAt ? new Date(row.createdAt).getTime() : new Date().getTime()
     }));
   }
 }

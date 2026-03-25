@@ -23,7 +23,7 @@ if (!(global as any)[ LAB_TOKEN ]) {
 }
 const SESSION_SECRET = (global as any)[ LAB_TOKEN ];
 
-function securityGate(req: Request, res: Response, next: NextFunction) {
+export function securityGate(req: Request, res: Response, next: NextFunction) {
   const remoteAddress = req.socket.remoteAddress;
   const isLocal = remoteAddress === "127.0.0.1" || remoteAddress === "::1" || remoteAddress === "::ffff:127.0.0.1";
 
@@ -70,6 +70,7 @@ export async function startLabServer(port: number = 5002): Promise<void> {
   app.use(cors({
     origin: [
       "http://127.0.0.1:5173",
+      "http://127.0.0.1:5002",
     ],
     methods: [ "GET", "POST", "OPTIONS" ],
     allowedHeaders: [ "Content-Type", "Authorization" ]
@@ -126,17 +127,17 @@ export async function startLabServer(port: number = 5002): Promise<void> {
       console.error("[NarrativeLab] Failed to parse narrative ledger:", err);
       res.status(500).json({ error: "Failed to read traces due to I/O lock or corruption" });
     }
+  });
 
-    app.delete("/__narrative_lab/traces", (req, res) => {
-      try {
-        if (fs.existsSync(ledgerPath)) {
-          fs.unlinkSync(ledgerPath);
-        }
-        res.json({ status: "ok", message: "Ledger cleared" });
-      } catch (err) {
-        res.status(500).json({ error: "Failed to clear traces" });
+  app.delete("/__narrative_lab/traces", (req, res) => {
+    try {
+      if (fs.existsSync(ledgerPath)) {
+        fs.unlinkSync(ledgerPath);
       }
-    });
+      res.json({ status: "ok", message: "Ledger cleared" });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to clear traces" });
+    }
   });
 
   if (process.env.NODE_ENV === "development") {

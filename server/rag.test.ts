@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildRAGContext } from "./rag";
+import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
+import { RagProvider } from "./rag";
 import { storage } from "./storage";
+import { db } from "./db";
 
-// Mock storage
 vi.mock("./storage", () => ({
   storage: {
     getBlockCount: vi.fn(),
@@ -10,149 +10,200 @@ vi.mock("./storage", () => ({
   },
 }));
 
+vi.mock("./db", () => ({
+  db: {
+    select: vi.fn(),
+    execute: vi.fn(),
+  },
+}));
+
+vi.mock("./engine/embedding", () => ({
+  generateEmbedding: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+}));
+
 const mockedStorage = vi.mocked(storage);
 
-describe("buildRAGContext", () => {
+describe("RagProvider", () => {
+  let provider: RagProvider;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    provider = new RagProvider();
   });
 
-  it("returns immediateContext unchanged when block count is below threshold", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(2);
-
-    const result = await buildRAGContext("scifi", "The ship pressed on.");
-
-    expect(result).toBe("The ship pressed on.");
-    expect(mockedStorage.getBlocksBySequence).not.toHaveBeenCalled();
+  describe("getBlockCount", () => {
+    it("returns count from storage", async () => {
+      mockedStorage.getBlockCount.mockResolvedValue(42);
+      
+      const count = await provider.getBlockCount("scifi");
+      
+      expect(count).toBe(42);
+      expect(mockedStorage.getBlockCount).toHaveBeenCalledWith("scifi");
+    });
   });
 
-  it("returns immediateContext unchanged when block count is exactly at threshold - 1", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(2);
+  describe("getLoreAtoms", () => {
+    it("returns active lore from db", async () => {
+      const mockOrderBy = vi.fn().mockResolvedValue([
+        { 
+          id: 1, 
+          channelId: "scifi", 
+          content: "Lore 1", 
+          isActive: true,
+          createdAt: new Date("2024-01-01T00:00:00Z") 
+        }
+      ]);
+      const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+      (db.select as unknown as Mock).mockReturnValue({ from: mockFrom });
 
-    const result = await buildRAGContext("mystery", "A shadow appeared.");
+      const atoms = await provider.getLoreAtoms("scifi");
+      
+      expect(atoms).toHaveLength(1);
+      expect(atoms[0].content).toBe("Lore 1");
+      expect((atoms[0] as any).isActive).toBe(true);
+      expect(atoms[0].happenedAt).toBe(new Date("2024-01-01T00:00:00Z").getTime());
+      
+      expect(db.select).toHaveBeenCalled();
+      expect(mockFrom).toHaveBeenCalled();
+      expect(mockWhere).toHaveBeenCalled();
+      expect(mockOrderBy).toHaveBeenCalled();
+    });
 
-    expect(result).toBe("A shadow appeared.");
+    it("handles null createdAt gracefully", async () => {
+      const mockOrderBy = vi.fn().mockResolvedValue([
+        { id: 2, channelId: "scifi", content: "Lore 2", createdAt: null }
+      ]);
+      const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+      (db.select as unknown as Mock).mockReturnValue({ from: mockFrom });
+
+      const atoms = await provider.getLoreAtoms("scifi");
+      
+      expect(atoms[0].happenedAt).toBeTypeOf("number");
+    });
   });
 
-  it("fetches historical blocks and formats RAG context for sufficient block count", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(20);
-    mockedStorage.getBlocksBySequence.mockResolvedValue([
-      {
-        id: 1,
-        channelId: "scifi",
-        title: "Launch",
-        content: "The rocket launched into the void.",
-        imageUrl: null,
-        optionA: null,
-        optionB: null,
-        createdAt: new Date(),
-      },
-      {
-        id: 5,
-        channelId: "scifi",
-        title: "Asteroid Field",
-        content: "Debris filled the viewport.",
-        imageUrl: null,
-        optionA: null,
-        optionB: null,
-        createdAt: new Date(),
-      },
-      {
-        id: 15,
-        channelId: "scifi",
-        title: null,
-        content: "A signal came through.",
-        imageUrl: null,
-        optionA: null,
-        optionB: null,
-        createdAt: new Date(),
-      },
-    ] as any);
+  describe("getHybridSearchCandidates", () => {
+    it("returns candidates with computed scores", async () => {
+      (db.execute as unknown as Mock).mockResolvedValue({
+        rows: [
+          {
+            id: 1,
+            channel_id: "scifi",
+            title: "Block 1",
+            content: "Content 1",
+            image_url: null,
+            option_a: null,
+            option_b: null,
+            is_notable: false,
+            embedding: null,
+            created_at: new Date("2024-01-01T00:00:00Z"),
+            score_vector_dense: "0.85",
+            score_keyword_sparse: "0.5"
+          }
+        ]
+      });
 
-    const result = await buildRAGContext("scifi", "The crew debated.");
+      const candidates = await provider.getHybridSearchCandidates("scifi", "alien encounter", 10);
+      
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].block.id).toBe(1);
+      expect(candidates[0].block.content).toBe("Content 1");
+      expect(candidates[0].block.happenedAt).toBe(new Date("2024-01-01T00:00:00Z").getTime());
+      expect(candidates[0].scoreVectorDense).toBe(0.85);
+      expect(candidates[0].scoreKeywordSparse).toBe(0.5);
+      
+      expect(db.execute).toHaveBeenCalled();
+    });
 
-    expect(result).toContain("Story So Far");
-    expect(result).toContain('1. "Launch" — The rocket launched into the void.');
-    expect(result).toContain('2. "Asteroid Field" — Debris filled the viewport.');
-    expect(result).toContain("3. A signal came through.");
-    expect(result).toContain("Current Situation:\nThe crew debated.");
-    expect(mockedStorage.getBlocksBySequence).toHaveBeenCalledWith(
-      "scifi",
-      expect.any(Array)
-    );
+    it("handles default zero scores if missing in row", async () => {
+      (db.execute as unknown as Mock).mockResolvedValue({
+        rows: [
+          {
+            id: 2,
+            channel_id: "scifi",
+            content: "Content 2",
+            created_at: null,
+            score_vector_dense: null,
+            score_keyword_sparse: null
+          }
+        ]
+      });
+
+      const candidates = await provider.getHybridSearchCandidates("scifi", "query", 5);
+      
+      expect(candidates[0].scoreVectorDense).toBe(0);
+      expect(candidates[0].scoreKeywordSparse).toBe(0);
+      expect(candidates[0].block.happenedAt).toBe(0);
+    });
   });
 
-  it("excludes the final block index from retrieval (already in immediateContext)", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(10);
-    mockedStorage.getBlocksBySequence.mockResolvedValue([]);
+  describe("getNotableEvents", () => {
+    it("returns notable blocks from db", async () => {
+      const mockOrderBy = vi.fn().mockResolvedValue([
+        { 
+          id: 1, 
+          channelId: "scifi", 
+          content: "Notable event", 
+          isNotable: true, 
+          createdAt: new Date("2024-01-01T00:00:00Z") 
+        }
+      ]);
+      const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+      (db.select as unknown as Mock).mockReturnValue({ from: mockFrom });
 
-    await buildRAGContext("scifi", "Context here");
+      const events = await provider.getNotableEvents("scifi");
+      
+      expect(events).toHaveLength(1);
+      expect(events[0].content).toBe("Notable event");
+      expect((events[0] as any).isNotable).toBe(true);
+      expect(events[0].happenedAt).toBe(new Date("2024-01-01T00:00:00Z").getTime());
+    });
 
-    const calledIndices = mockedStorage.getBlocksBySequence.mock.calls[0]?.[1];
-    if (calledIndices) {
-      // No index should equal the total block count (10)
-      expect(calledIndices.every((idx: number) => idx < 10)).toBe(true);
-    }
+    it("handles null createdAt properly", async () => {
+      const mockOrderBy = vi.fn().mockResolvedValue([
+        { id: 2, channelId: "scifi", content: "Notable 2", isNotable: true, createdAt: null }
+      ]);
+      const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+      (db.select as unknown as Mock).mockReturnValue({ from: mockFrom });
+
+      const events = await provider.getNotableEvents("scifi");
+      
+      expect(events[0].happenedAt).toBeTypeOf("number");
+    });
   });
 
-  it("returns immediateContext when getBlocksBySequence returns empty", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(10);
-    mockedStorage.getBlocksBySequence.mockResolvedValue([]);
+  describe("getBlocksByIndices", () => {
+    it("returns blocks at positions mapped correctly", async () => {
+      mockedStorage.getBlocksBySequence.mockResolvedValue([
+        { 
+          id: 1, 
+          channelId: "scifi", 
+          content: "Block sequence", 
+          createdAt: new Date("2024-01-01T00:00:00Z") 
+        } as any
+      ]);
 
-    const result = await buildRAGContext("scifi", "Fallback context");
+      const blocks = await provider.getBlocksByIndices("scifi", [0, 1]);
+      
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].content).toBe("Block sequence");
+      expect(blocks[0].happenedAt).toBe(new Date("2024-01-01T00:00:00Z").getTime());
+      
+      expect(mockedStorage.getBlocksBySequence).toHaveBeenCalledWith("scifi", [0, 1]);
+    });
 
-    expect(result).toBe("Fallback context");
-  });
+    it("handles null createdAt properly", async () => {
+      mockedStorage.getBlocksBySequence.mockResolvedValue([
+        { id: 2, channelId: "scifi", content: "Block sequence 2", createdAt: null } as any
+      ]);
 
-  it("returns immediateContext when all indices equal blockCount (no historical indices)", async () => {
-    // blockCount = 3, RAG_MIN_BLOCKS = 3, so we enter RAG.
-    // With blockCount=3 and divisions=5, the sequence will be small.
-    // After filtering out idx >= blockCount, we may have no indices.
-    mockedStorage.getBlockCount.mockResolvedValue(3);
-    // The function must call getBlocksBySequence with indices that are < 3
-    // For blockCount=3 the sequence is [1, ..., 3], filter < 3 keeps [1, 2]
-    mockedStorage.getBlocksBySequence.mockResolvedValue([
-      {
-        id: 1,
-        channelId: "scifi",
-        title: "Start",
-        content: "It began.",
-        imageUrl: null,
-        optionA: null,
-        optionB: null,
-        createdAt: new Date(),
-      },
-    ] as any);
-
-    const result = await buildRAGContext("scifi", "Now we are here.");
-
-    expect(result).toContain("Story So Far");
-    expect(result).toContain("Now we are here.");
-  });
-
-  it("gracefully degrades on storage error", async () => {
-    mockedStorage.getBlockCount.mockRejectedValue(new Error("DB connection failed"));
-
-    const result = await buildRAGContext("scifi", "Error fallback");
-
-    expect(result).toBe("Error fallback");
-  });
-
-  it("gracefully degrades when getBlocksBySequence throws", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(20);
-    mockedStorage.getBlocksBySequence.mockRejectedValue(new Error("Query failed"));
-
-    const result = await buildRAGContext("scifi", "Query error fallback");
-
-    expect(result).toBe("Query error fallback");
-  });
-
-  it("returns immediateContext when blockCount is 0", async () => {
-    mockedStorage.getBlockCount.mockResolvedValue(0);
-
-    const result = await buildRAGContext("scifi", "No blocks yet");
-
-    expect(result).toBe("No blocks yet");
-    expect(mockedStorage.getBlocksBySequence).not.toHaveBeenCalled();
+      const blocks = await provider.getBlocksByIndices("scifi", [5]);
+      
+      expect(blocks[0].happenedAt).toBeTypeOf("number");
+    });
   });
 });

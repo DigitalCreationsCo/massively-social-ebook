@@ -89,8 +89,9 @@ function App() {
   // Config State (Synced with Engine defaults)
   const [ saliencyThreshold, setSaliencyThreshold ] = useState(0.65);
   const [ weightDense, setWeightDense ] = useState(0.7);
-  const [ significanceCoef, setSignificanceCoef ] = useState(1.5);
+  const [ significanceCoef, _ ] = useState(1.5);
   const [ temporalPhrasing, setTemporalPhrasing ] = useState(true);
+  const [ channelId, setChannelId ] = useState("test-channel");
 
   const API_BASE = "http://localhost:5002/__narrative_lab";
 
@@ -403,6 +404,16 @@ function App() {
                   temporalPhrasing ? "translate-x-5" : "translate-x-0"
                 ) } />
               </button>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase">Channel ID</label>
+              <input
+                type="text"
+                value={ channelId }
+                onChange={ (e) => setChannelId(e.target.value) }
+                className="w-full accent-primary"
+              />
             </div>
 
             {/* Status Panel */ }

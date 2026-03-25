@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { enqueueEmbeddingTask } from "./engine/embedding-queue";
 import {
   blocks,
   votes,
@@ -76,6 +77,10 @@ export class DatabaseStorage implements IStorage {
   }
   async createBlock(block: InsertBlock): Promise<Block> {
     const [newBlock] = await db.insert(blocks).values(block).returning();
+    
+    // Async: generate and store embedding without blocking block creation
+    enqueueEmbeddingTask(newBlock.id, newBlock.content, newBlock.title ?? undefined);
+    
     return newBlock;
   }
   async getVotesForBlock(blockId: number): Promise<Vote[]> {

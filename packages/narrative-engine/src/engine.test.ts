@@ -118,13 +118,14 @@ describe("NarrativeEngine Core Constraints", () => {
   it("should accurately calculate temporal phrasing offsets", async () => {
     const provider = new InMemoryNarrativeProvider([
       { id: 1, index: 1, content: "The beginning", happenedAt: 100 },
-      { id: 2, index: 2, content: "The end", happenedAt: 200 }
+      { id: 2, index: 2, content: "The middle", happenedAt: 150 },
+      { id: 3, index: 3, content: "The end", happenedAt: 200 }
     ]);
     const testEngine = new NarrativeEngine(provider);
     testEngine.setLabConfig({ temporalPhrasing: true });
 
     const result = await testEngine.generateContext("test", "query");
-    // Offset calculation: (Total: 2) - (Index: 1) + 1 = 2 storyblocks ago
+    // Offset calculation: (Total: 3) - (Index: 2) + 1 = 2 storyblocks ago
     expect(result).toContain("2 storyblocks ago");
   });
 });

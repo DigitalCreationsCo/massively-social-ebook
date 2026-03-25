@@ -11,11 +11,11 @@ export interface NarrativeProvider<
   TBlock extends BaseNarrativeBlock = BaseNarrativeBlock,
   TLore extends BaseNarrativeLore = BaseNarrativeLore
 > {
-  getLoreAtoms(channelId: string): Promise<TLore[]>;
-  getNotableEvents(channelId: string): Promise<TBlock[]>;
-  getBlocksByIndices(channelId: string, indices: number[]): Promise<TBlock[]>;
-  getHybridSearchCandidates(channelId: string, query: string, limit: number): Promise<HybridCandidate<TBlock>[]>;
   getBlockCount(channelId: string): Promise<number>;
+  getLoreAtoms(channelId: string): Promise<TLore[]>;
+  getHybridSearchCandidates(channelId: string, query: string, limit: number): Promise<HybridCandidate<TBlock>[]>;
+  getBlocksByIndices(channelId: string, indices: number[]): Promise<TBlock[]>;
+  getNotableEvents(channelId: string): Promise<TBlock[]>;
 }
 
 /**
@@ -38,11 +38,11 @@ export class InMemoryNarrativeProvider<
     this.lore = initialLore;
   }
 
-  async getLoreAtoms(): Promise<TLore[]> {
+  async getLoreAtoms(_channelId: string): Promise<TLore[]> {
     return this.lore.filter(l => l.isActive !== false);
   }
 
-  async getNotableEvents(): Promise<TBlock[]> {
+  async getNotableEvents(_channelId: string): Promise<TBlock[]> {
     return this.blocks.filter(b => b.isNotable);
   }
 
@@ -51,7 +51,7 @@ export class InMemoryNarrativeProvider<
     return this.blocks.filter(b => indices.includes(Number(b.id)));
   }
 
-  async getBlockCount(): Promise<number> {
+  async getBlockCount(_channelId: string): Promise<number> {
     return this.blocks.length;
   }
 
