@@ -116,6 +116,7 @@ export class NarrativeEngine<
       channelId,
       inputQuery,
       labConfig: { ...this.labConfig },
+      providerType: this.provider.getProviderType?.() ?? "custom",
       phases: {},
     };
 
@@ -124,9 +125,11 @@ export class NarrativeEngine<
       verboseLog.phase("HARVEST", "Fetching blocks, lore atoms, and hybrid search candidates");
       verboseLog.debug("LabConfig", this.labConfig);
 
+      // Get total blocks from provider
       const totalBlockCount = await this.provider.getBlockCount(channelId);
       verboseLog.info("BlockCount", `totalBlockCount=${totalBlockCount}`);
 
+      // Get lore atoms
       const loreAtomsRaw = await this.provider.getLoreAtoms(channelId);
       verboseLog.info("LoreAtomsRaw", `found=${loreAtomsRaw.length} atoms`);
 
@@ -143,6 +146,7 @@ export class NarrativeEngine<
         newestIncluded: loreAtoms.length > 0 ? loreAtoms[0].happenedAt : null,
       });
 
+      // Get search candidates
       const candidatesHybrid = await this.provider.getHybridSearchCandidates(channelId, inputQuery, 20);
       verboseLog.info("HybridCandidates", `found=${candidatesHybrid.length} candidates`);
       if (candidatesHybrid.length > 0) {
@@ -155,10 +159,13 @@ export class NarrativeEngine<
         })));
       }
 
+      // Get historical blocks via reciprocal skeleton
       let blocksHistorical: TBlock[] = [];
+      let blockSequenceIntervals: number[] = [];
       if (totalBlockCount >= RAG_MIN_BLOCKS) {
         const seq = generateReciprocalSequence(totalBlockCount, RAG_DIVISIONS);
         const indices = sequenceToBlockIndices(seq);
+        blockSequenceIntervals = indices;
         verboseLog.debug("ReciprocalSkeleton", {
           totalBlocks: totalBlockCount,
           divisions: RAG_DIVISIONS,
@@ -282,11 +289,13 @@ export class NarrativeEngine<
       // PHASE 5: PROSE GENERATION
       verboseLog.phase("PROSE", "Composing final context prompt");
 
+      const currentBlockCount = (blocksChrono.at(-1)?.index ?? 0) + 1;
+
       const finalizedPrompt = this.composeProse(
         blocksChrono,
         loreAtoms,
         inputQuery,
-        totalBlockCount
+        currentBlockCount
       );
 
       verboseLog.debug("ProseStats", {
@@ -296,11 +305,42 @@ export class NarrativeEngine<
         temporalPhrasing: this.labConfig.temporalPhrasing,
       });
 
+      // Build comprehensive trace with all data organized by execution order
       trace.phases = {
-        harvest: { totalBlockCount, loreCount: loreAtoms.length, candidateCount: candidatesHybrid.length },
-        fusion: scoredCandidates.map(c => ({ id: c.block.id, score: c.scoreFinalFused, raw: c.scoreRawFused })),
-        saliency: { threshold: this.labConfig.saliencyThreshold, passed: survivors.map(s => s.block.id), evicted: evicted.map(e => e.block.id) },
-        timeline: { merged: blocksChrono.map(b => b.id), fromHistorical: blocksHistorical.map(b => b.id), fromSurvivors: survivors.map(s => s.block.id) },
+        harvest: {
+          totalBlockCount,
+          loreCount: loreAtoms.length,
+          candidateCount: candidatesHybrid.length,
+          loreAtoms: loreAtoms.map(l => ({ id: l.id, content: l.content.substring(0, 100), happenedAt: l.happenedAt })),
+          searchCandidates: candidatesHybrid.map(c => ({
+            id: c.block.id,
+            content: c.block.content.substring(0, 60),
+            scoreVectorDense: c.scoreVectorDense,
+            scoreKeywordSparse: c.scoreKeywordSparse,
+            isNotable: c.block.isNotable
+          })),
+          immediateContext: inputQuery,
+        },
+        fusion: scoredCandidates.map(c => ({
+          id: c.block.id,
+          scoreFinal: c.scoreFinalFused,
+          scoreRaw: c.scoreRawFused,
+          isNotable: c.block.isNotable
+        })),
+        saliency: {
+          threshold: this.labConfig.saliencyThreshold,
+          passed: survivors.map(s => s.block.id),
+          evicted: evicted.map(e => e.block.id),
+          filteredCount: filteredBySaliency.length,
+          totalCandidates: scoredCandidates.length,
+        },
+        timeline: {
+          merged: blocksChrono.map(b => ({ id: b.id, index: b.index, content: b.content.substring(0, 80) })),
+          fromHistorical: blocksHistorical.map(b => b.id),
+          fromSurvivors: survivors.map(s => s.block.id),
+          blockSequenceIntervals,
+          currentBlockCount,
+        },
         prose: { promptLength: finalizedPrompt.length, loreAtoms: loreAtoms.length, blockCount: blocksChrono.length },
       };
       trace.finalizedPrompt = finalizedPrompt;
@@ -358,7 +398,7 @@ export class NarrativeEngine<
     blocksChrono: TBlock[],
     loreAtoms: TLore[],
     immediateContext: string,
-    totalBlockCount: number
+    currentBlockCount: number
   ): string {
     const loreSection = loreAtoms.length > 0
       ? loreAtoms.map((l) => l.content).join(" ")
@@ -373,11 +413,11 @@ export class NarrativeEngine<
 
     const blockSections = blocksChrono.map((block) => {
       if (this.labConfig.temporalPhrasing && typeof block.index === 'number') {
-        const offsetHistorical = totalBlockCount - block.index + 1;
+        const offsetHistorical = currentBlockCount - block.index + 1;
         const unit = offsetHistorical === 1 ? "storyblock" : "storyblocks";
-        return `${offsetHistorical} ${unit} ago, ${block.content}`;
+        return `${offsetHistorical} ${unit} ago: ${block.content}`;
       }
-      return `[Entry ${block.id}]: ${block.content}`;
+      return `Entry ${block.id}: ${block.content}`;
     });
 
     verboseLog.debug("BlockSections", {
@@ -388,14 +428,14 @@ export class NarrativeEngine<
 
     const parts: string[] = [];
     if (loreSection) {
-      parts.push(`To maintain consistency with the established story: ${loreSection}`);
+      parts.push(`Essential facts of the story: ${loreSection}`);
     }
     if (blockSections.length > 0) {
-      parts.push(blockSections.join(" "));
+      parts.push(blockSections.join("\n"));
     }
-    parts.push(`Current: ${immediateContext}`);
+    parts.push(`${immediateContext}`);
 
-    const result = parts.join("\n\n");
+    const result = parts.join("\n");
     verboseLog.debug("ProseComplete", {
       sections: parts.length,
       totalChars: result.length,

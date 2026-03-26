@@ -1,5 +1,4 @@
 export { NarrativeEngine } from "./engine";
-export { configureNarrativeLab } from "./lab";
 
 export type {
     NarrativeProvider,

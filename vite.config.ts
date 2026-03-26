@@ -45,14 +45,15 @@ export default defineConfig({
       "**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../server/**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../shared/**/*.{test,spec}.?(c|m)[jt]s?(x)",
-      "../packages/**/*.{test,spec}.?(c|m)[jt]s?(x)",
+      // Only include src from packages, not dist (dist contains old compiled tests)
+      "../packages/**/src/**/*.{test,spec}.?(c|m)[jt]s?(x)",
     ],
     setupFiles: [ path.resolve(import.meta.dirname, "client/src/test/setup.ts") ],
     coverage: {
       provider: "v8",
       reporter: [ "text", "json", "html" ],
       include: [ "client/src/**", "server/**" ],
-      exclude: [ "node_modules/**", "client/src/test/setup.ts", "**/*.test.ts" ],
+      exclude: [ "node_modules/**", "client/src/test/setup.ts", "**/*.test.ts", "**/dist/**" ],
     },
   },
 });

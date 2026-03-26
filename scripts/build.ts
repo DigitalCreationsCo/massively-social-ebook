@@ -19,6 +19,7 @@ const allowlist = [
   "memorystore",
   "multer",
   "nanoid",
+  "narrative-engine",
   "nodemailer",
   "openai",
   "passport",
@@ -30,11 +31,6 @@ const allowlist = [
   "xlsx",
   "zod",
   "zod-validation-error",
-];
-
-// local workspace packages to externalize (not bundle)
-const workspaceExternals = [
-  "narrative-engine",
 ];
 
 async function buildAll() {
@@ -49,10 +45,7 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = [
-    ...allDeps.filter((dep) => !allowlist.includes(dep)),
-    ...workspaceExternals,
-  ];
+  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
   await esbuild({
     entryPoints: ["server/index.ts"],

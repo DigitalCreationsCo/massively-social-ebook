@@ -7,6 +7,7 @@ vi.mock('@google/genai', () => ({
 
 // Mock the RAG module so AI tests remain isolated
 vi.mock('./rag', () => ({
+    RagProvider: class { },
     buildRAGContext: vi.fn((_channelId: string, immediateContext: string) =>
         Promise.resolve(immediateContext)
     ),

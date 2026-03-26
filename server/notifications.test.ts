@@ -40,7 +40,8 @@ describe('Notification System', () => {
         };
 
         vi.mocked(storage.listSessions).mockResolvedValue([ mockSession ] as any);
-        vi.mocked(storage.getUsers).mockResolvedValue([ mockUser ] as any);
+        // getUsers returns { users: [...], total: number }
+        vi.mocked(storage.getUsers).mockResolvedValue({ users: [ mockUser ], total: 1 });
 
         await checkAndSendPushWarnings();
 
@@ -68,7 +69,8 @@ describe('Notification System', () => {
         };
 
         vi.mocked(storage.listSessions).mockResolvedValue([ mockSession ] as any);
-        vi.mocked(storage.getUsers).mockResolvedValue([ mockUser ] as any);
+        // getUsers returns { users: [...], total: number }
+        vi.mocked(storage.getUsers).mockResolvedValue({ users: [ mockUser ], total: 1 });
 
         await dispatchWeeklyBriefing();
 

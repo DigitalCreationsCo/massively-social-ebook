@@ -6,6 +6,7 @@ export interface TraceObject {
   timestamp: string;
   channelId: string;
   inputQuery: string;
+  providerType?: string;
   phases: {
     harvest?: any;
     fusion?: any;

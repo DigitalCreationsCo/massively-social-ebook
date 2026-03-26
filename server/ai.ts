@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
 import { createImageInstructions } from "../prompts/image-instructions";
-import { NarrativeEngine, configureNarrativeLab } from "narrative-engine";
+import { NarrativeEngine } from "narrative-engine";
 import { RagProvider } from './rag';
 
 export const ai = new GoogleGenAI({});
@@ -14,9 +14,9 @@ const lmParamsGoogle = {
 const TIMEOUT_CONTEXT_MS = 3000;
 
 const engine = new NarrativeEngine(new RagProvider());
-configureNarrativeLab(engine);
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
+// Guard with try-catch to prevent production issues if import fails.
 if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB_STARTED__" ]) {
   (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "pending";
   
@@ -25,7 +25,7 @@ if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB
     if ((global as any)[ "__NARRATIVE_LAB_STARTED__" ] !== "pending") return;
     
     try {
-      const { startLabServer } = await import("../packages/narrative-engine/src/lab");
+      const { startLabServer } = await import("narrative-engine/lab");
       await startLabServer();
       (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
       console.log("[Lab] NarrativeEngine Lab ready");
@@ -34,6 +34,9 @@ if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB
       console.error("[Lab] Boot failed (non-fatal):", err);
     }
   });
+} else if (process.env.NODE_ENV === "production") {
+  // Mark as skipped in production to prevent any attempt to load lab
+  (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "skipped";
 }
 
 export interface StoryBlockResult {

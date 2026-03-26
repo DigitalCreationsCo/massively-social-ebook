@@ -16,7 +16,8 @@ describe('InMemoryNarrativeProvider', () => {
     ];
     const provider = new InMemoryNarrativeProvider(MOCK_BLOCKS, customLore);
     const atoms = await provider.getLoreAtoms('test');
-    expect(atoms.length).toBe(MOCK_LORE.length);
+    // Only active lore atoms should be returned (MOCK_LORE has 17 active, 3 inactive)
+    expect(atoms.length).toBe(17);
     expect(atoms.find(l => l.id === 'lore-inactive')).toBeUndefined();
   });
 

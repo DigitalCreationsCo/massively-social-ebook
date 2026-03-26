@@ -5,7 +5,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('Manifest Integrity Suite', () => {
-  const pathManifestFile = resolve(__dirname, './manifest.json');
+  // manifest.json is in client/public/, not in src/test/
+  const pathManifestFile = resolve(__dirname, '../../public/manifest.json');
 
   it('should exist in the expected directory', () => {
     const isManifestPresent = existsSync(pathManifestFile);
@@ -37,8 +38,8 @@ describe('Manifest Integrity Suite', () => {
     const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
     const parsedManifestBody = JSON.parse(contentManifestRaw);
 
-    // Explicitly defining required schema keys
-    const listRequiredKeys = [ 'name', 'version', 'manifest_version' ];
+    // Required fields for a valid PWA manifest (Web Manifest spec)
+    const listRequiredKeys = [ 'name', 'short_name', 'start_url', 'display', 'icons' ];
 
     listRequiredKeys.forEach(strKey => {
       const hasKey = Object.prototype.hasOwnProperty.call(parsedManifestBody, strKey);

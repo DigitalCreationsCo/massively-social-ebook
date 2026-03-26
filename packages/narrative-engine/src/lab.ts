@@ -10,8 +10,26 @@ import { randomUUID } from "crypto";
 import cors from "cors";
 import { createServer } from "node:http";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Lazy-load Vite only in development for the lab UI
+// This prevents Vite from being bundled in production builds
+let viteModule: any;
+async function getVite() {
+  if (!viteModule) {
+    viteModule = await import("vite");
+  }
+  return viteModule;
+}
+
+// labDir is available natively in CJS, but we need a fallback for ESM
+// This is evaluated at module load time - won't break in CJS bundles
+let moduleDir: string;
+try {
+  moduleDir = dirname(fileURLToPath(import.meta.url));
+} catch {
+  // CJS fallback - use global labDir which is available in CJS
+  moduleDir = (globalThis as any).labDir || process.cwd();
+}
+const labDir = moduleDir;
 
 const GLOBAL_KEY = Symbol.for("narrative.engine.registry");
 const LAB_TOKEN = Symbol.for("narrative.lab.token");
@@ -245,19 +263,19 @@ export async function startLabServer(port: number = 5002): Promise<void> {
 
   if (process.env.NODE_ENV === "development") {
     verboseLog.lab("Starting Vite dev server integration");
-    const { createServer: createViteServer } = await import("vite");
-    const viteConfig = (await import("../lab/vite.config")).default;
-    const vite = await createViteServer({
+    const vite = await getVite();
+    const viteConfig = await import("../lab/vite.config");
+    const server = await vite.createServer({
       ...viteConfig,
       server: { 
         middlewareMode: true,
         hmr: false,
       },
       appType: "spa",
-      root: resolve(__dirname, "../lab"),
+      root: resolve(labDir, "../lab"),
     });
 
-    app.use(vite.middlewares);
+    app.use(server.middlewares);
     verboseLog.lab("Vite middleware attached");
 
     app.use(async (req, res, next) => {
@@ -269,7 +287,7 @@ export async function startLabServer(port: number = 5002): Promise<void> {
 
       try {
         let template = fs.readFileSync(
-          resolve(__dirname, "../lab/index.html"),
+          resolve(labDir, "../lab/index.html"),
           "utf-8"
         );
 
@@ -283,7 +301,7 @@ export async function startLabServer(port: number = 5002): Promise<void> {
     });
   } else {
     verboseLog.lab("Production mode: serving static files");
-    const distPath = resolve(__dirname, "ui");
+    const distPath = resolve(labDir, "ui");
     app.use(express.static(distPath));
     app.get("*", (req, res) => res.sendFile(resolve(distPath, "index.html")));
   }

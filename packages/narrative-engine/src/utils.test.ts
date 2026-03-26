@@ -28,7 +28,9 @@ describe('validateProviderShape', () => {
       getNotableEvents: async () => [],
       getBlocksByIndices: async () => [],
       getHybridSearchCandidates: async () => [],
-      getBlockCount: async () => 0
+      getBlockCount: async () => 0,
+      addBlock: async () => { },
+      getProviderType: () => 'test'
     };
     
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

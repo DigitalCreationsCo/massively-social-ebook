@@ -19,6 +19,8 @@ describe("NarrativeEngine Logic Hardening", () => {
       getBlocksByIndices: vi.fn().mockResolvedValue([]),
       getHybridSearchCandidates: vi.fn().mockResolvedValue([]),
       getBlockCount: vi.fn().mockResolvedValue(10),
+      addBlock: vi.fn().mockResolvedValue(undefined),
+      getProviderType: () => 'test'
     };
     engine = new NarrativeEngine(mockProvider);
   });
