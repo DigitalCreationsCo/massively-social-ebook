@@ -7,6 +7,7 @@ import {
   reactions,
   sessions,
   lore,
+  channels,
   type Block,
   type InsertBlock,
   type Vote,
@@ -22,6 +23,8 @@ import {
   type InsertUser,
   type Lore,
   type InsertLore,
+  type Channel,
+  type InsertChannel,
   users,
   systemSettings,
   notificationLogs,
@@ -48,22 +51,32 @@ export interface IStorage {
 
   createLore(loreEntry: InsertLore): Promise<Lore>;
   deactivateLore(id: number): Promise<Lore>;
+  getLore(channelId?: string): Promise<Lore[]>;
   setBlockEmbedding(blockId: number, embedding: number[]): Promise<void>;
   setBlockNotable(blockId: number, isNotable: boolean): Promise<void>;
+
+  // Channel methods
+  getChannels(): Promise<Channel[]>;
+  getChannel(channelId: string): Promise<Channel | undefined>;
+  createChannel(channel: InsertChannel): Promise<Channel>;
+  updateChannel(id: number, channel: Partial<InsertChannel>): Promise<Channel>;
+  deleteChannel(id: number): Promise<void>;
 
   // Session methods
   getNextSession(channelId: string): Promise<Session | undefined>;
   getActiveSession(channelId: string): Promise<Session | undefined>;
   createSession(data: InsertSession): Promise<Session>;
+  updateSession(id: number, data: Partial<Session>): Promise<Session>;
   updateSessionStatus(id: number, status: SessionStatus): Promise<Session>;
   listSessions(channelId?: string, status?: SessionStatus): Promise<Session[]>;
   cancelSession(id: number): Promise<Session>;
 
   // User methods
-  getUsers(): Promise<User[]>;
+  getUsers(page?: number, limit?: number): Promise<{ users: User[]; total: number }>;
   createUser(user: InsertUser): Promise<User>;
   getUserByEmail(email: string): Promise<User | undefined>;
   updateUserPushToken(email: string, token: string): Promise<User>;
+  banUser(id: number, banned: boolean): Promise<User>;
   getSystemSetting(key: string): Promise<string | undefined>;
   setSystemSetting(key: string, value: string): Promise<void>;
   createNotificationLog(log: InsertNotificationLog): Promise<void>;
@@ -281,10 +294,65 @@ export class DatabaseStorage implements IStorage {
     return this.updateSessionStatus(id, 'cancelled');
   }
 
+  async updateSession(id: number, data: Partial<Session>): Promise<Session> {
+    const [session] = await db
+      .update(sessions)
+      .set(data)
+      .where(eq(sessions.id, id))
+      .returning();
+    return session;
+  }
+
+  // ─── Channel Methods ─────────────────────────────────────────────────
+
+  async getChannels(): Promise<Channel[]> {
+    return await db.select().from(channels).orderBy(asc(channels.id));
+  }
+
+  async getChannel(channelId: string): Promise<Channel | undefined> {
+    const [channel] = await db.select().from(channels).where(eq(channels.channelId, channelId));
+    return channel;
+  }
+
+  async createChannel(channel: InsertChannel): Promise<Channel> {
+    const [newChannel] = await db.insert(channels).values(channel).returning();
+    return newChannel;
+  }
+
+  async updateChannel(id: number, channel: Partial<InsertChannel>): Promise<Channel> {
+    const [updated] = await db
+      .update(channels)
+      .set(channel)
+      .where(eq(channels.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteChannel(id: number): Promise<void> {
+    await db.delete(channels).where(eq(channels.id, id));
+  }
+
+  // ─── Lore Methods ───────────────────────────────────────────────────
+
+  async getLore(channelId?: string): Promise<Lore[]> {
+    if (channelId) {
+      return await db.select().from(lore).where(eq(lore.channelId, channelId));
+    }
+    return await db.select().from(lore);
+  }
+
   // ─── User Methods ──────────────────────────────────────────────────
 
-  async getUsers(): Promise<User[]> {
-    return await db.select().from(users);
+  async getUsers(page: number = 1, limit: number = 50): Promise<{ users: User[]; total: number }> {
+    const offset = (page - 1) * limit;
+    const [allUsers, countResult] = await Promise.all([
+      db.select().from(users).orderBy(desc(users.id)).limit(limit).offset(offset),
+      db.select({ value: count() }).from(users)
+    ]);
+    return { 
+      users: allUsers, 
+      total: countResult[0]?.value ?? 0 
+    };
   }
 
   async createUser(user: InsertUser): Promise<User> {
@@ -301,6 +369,15 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({ pushToken: token })
       .where(eq(users.email, email))
+      .returning();
+    return user;
+  }
+
+  async banUser(id: number, banned: boolean): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ isBanned: banned })
+      .where(eq(users.id, id))
       .returning();
     return user;
   }

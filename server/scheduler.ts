@@ -256,7 +256,7 @@ export async function seedDailySessions() {
 
 
 export async function dispatchWeeklyBriefing() {
-    const users = await storage.getUsers();
+    const { users } = await storage.getUsers();
     if (users.length === 0) return;
 
     // Get all scheduled sessions for the next 7 days
@@ -290,7 +290,7 @@ export async function dispatchWeeklyBriefing() {
 
 async function sendPushWarningsForSession(session: Session) {
     logger.info(`Sending 5-minute warning for session: ${session.title}`, 'scheduler');
-    const users = await storage.getUsers();
+    const { users } = await storage.getUsers();
     const title = "🔔 5 Minutes to Go-Time";
     const body = `Today's chapter is about to begin. Claim your seat now for your daily 25.`;
 

@@ -1,7 +1,16 @@
 import { type Request, type Response, type NextFunction } from "express";
 
+function extractBearerToken(req: Request): string | undefined {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  return undefined;
+}
+
 export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
-  const token = req.headers['x-admin-token'] || req.query.token;
+  const bearerToken = extractBearerToken(req);
+  const token = bearerToken || req.headers['x-admin-token'] || req.query.token;
 
   if (token === process.env.ADMIN_TOKEN || (process.env.NODE_ENV !== 'production' && token === 'dev-token')) {
     return next();

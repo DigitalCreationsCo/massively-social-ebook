@@ -7,6 +7,19 @@ const vector = (name: string, { dimensions }: { dimensions: number }) =>
     dataType: () => `vector(${dimensions})`,
   })(name);
 
+// Channels table - stores channel metadata
+export const channels = pgTable("channels", {
+  id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertChannelSchema = createInsertSchema(channels).omit({ id: true, createdAt: true });
+export type Channel = typeof channels.$inferSelect;
+export type InsertChannel = z.infer<typeof insertChannelSchema>;
+
 export const lore = pgTable("lore", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull(),
@@ -66,7 +79,13 @@ export const sessions = pgTable("sessions", {
   description: text("description"),
   scheduledStart: timestamp("scheduled_start").notNull(),
   scheduledEnd: timestamp("scheduled_end").notNull(),
-  status: text("status").notNull().default('scheduled'), // scheduled | active | completed | cancelled
+  status: text("status").notNull().default('scheduled'),
+  scheduledDays: text("scheduled_days").array(),
+  scheduledTime: text("scheduled_time"),
+  intervalEnabled: boolean("interval_enabled").notNull().default(false),
+  timezone: text("timezone").notNull().default('UTC'),
+  nextRunAt: timestamp("next_run_at"),
+  notifyCount: integer("notify_count").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -74,6 +93,7 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").unique(),
   pushToken: text("push_token"),
+  isBanned: boolean("is_banned").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -97,7 +117,13 @@ export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, create
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
-export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
+export const insertSessionSchema = createInsertSchema(sessions).omit({ 
+  id: true, 
+  createdAt: true, 
+  status: true,
+  notifyCount: true,
+  nextRunAt: true
+});
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({ updatedAt: true });
 export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({ id: true, sentAt: true });
