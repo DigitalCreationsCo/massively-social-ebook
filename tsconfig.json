@@ -21,7 +21,7 @@
         "./shared/*"
       ],
       "narrative-engine": [
-        "./packages/narrative-engine/src/index.ts"
+        "./packages/narrative-engine"
       ]
     }
   }

@@ -124,7 +124,8 @@ cp .env.example .env
 │       └── lib/            # Client utilities
 │
 ├── public/                 # Static assets (AI-generated images stored here)
-└── drizzle.config.ts       # Drizzle Kit migration config
+└── drizzle.dev.config.ts   # Drizzle Kit development config
+└── drizzle.prod.config.ts  # Drizzle Kit production config
 ```
 
 ## Server

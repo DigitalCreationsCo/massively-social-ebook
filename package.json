@@ -15,7 +15,8 @@
     "release:major": "npm version major && git push origin main --tags",
     "check": "tsc",
     "test": "vitest",
-    "db:push": "drizzle-kit push",
+    "db:push": "drizzle-kit --config drizzle.dev.config.ts push",
+    "db:push:prod": "drizzle-kit --config drizzle.prod.config.ts push",
     "prepare": "husky"
   },
   "dependencies": {

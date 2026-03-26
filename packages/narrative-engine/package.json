@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc && npm run build:server && npm run build:ui",
     "build:ui": "cd lab && npm run build",
-    "build:server": "tsup src/index.ts src/cli.ts src/lab.ts --format cjs,esm --dts",
+    "build:server": "tsup src/index.ts src/cli.ts src/lab.ts --format cjs,esm --dts", 
     "check": "tsc --noEmit",
     "dev": "NODE_ENV=development tsx bin/cli.ts -- lab"
   },

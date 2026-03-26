@@ -10,10 +10,10 @@ export function useAdminToken() {
     const stored = localStorage.getItem(STORAGE_KEY)
     const envToken = import.meta.env.VITE_ADMIN_TOKEN
     
-    if (stored) {
+    if (stored && stored.length > 0) {
       setTokenState(stored)
       setIsValid(true)
-    } else if (envToken) {
+    } else if (envToken && envToken.length > 0) {
       setTokenState(envToken)
       setIsValid(true)
     }
@@ -28,6 +28,9 @@ export function useAdminToken() {
   return { token, setToken, isValid }
 }
 
-export function getAuthHeader(token: string) {
+export function getAuthHeader(token: string | undefined | null): { Authorization: string } {
+  if (!token || token.length === 0) {
+    throw new Error('Admin token is not set. Cannot make authenticated request.')
+  }
   return { Authorization: `Bearer ${token}` }
 }

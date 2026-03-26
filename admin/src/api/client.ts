@@ -2,9 +2,12 @@ const API_BASE = '/admin/api'
 
 export async function adminFetch<T>(
   endpoint: string,
-  token: string,
+  token: string | undefined,
   options: RequestInit = {}
 ): Promise<T> {
+  if (!token || token.length === 0) {
+    throw new Error('Admin token is not set. Cannot make authenticated request.')
+  }
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers: {
@@ -29,17 +32,24 @@ export async function adminFetch<T>(
 export interface Session {
   id: number
   channelId: string
+  scheduleId: number | null
   title: string
   description: string | null
   scheduledStart: string
   scheduledEnd: string
   status: 'scheduled' | 'active' | 'completed' | 'cancelled'
+  notifyCount: number
+  createdAt: string
+}
+
+export interface Schedule {
+  id: number
+  channelId: string
   scheduledDays: string[] | null
   scheduledTime: string | null
   intervalEnabled: boolean
   timezone: string
   nextRunAt: string | null
-  notifyCount: number
   createdAt: string
 }
 
@@ -79,4 +89,17 @@ export interface ChatMessage {
   text: string
   sessionId: number | null
   createdAt: string
+}
+
+export interface AdminInfo {
+  database: {
+    name: string
+    host: string
+    connected: boolean
+  }
+  version: string
+}
+
+export async function getAdminInfo(token: string | undefined): Promise<AdminInfo> {
+  return adminFetch<AdminInfo>('/info', token)
 }

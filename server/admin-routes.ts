@@ -2,12 +2,39 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { isAdmin } from "./middleware/auth";
 import { logger } from "./logger";
+import type { InsertSchedule, ScheduleDay } from "@shared/schema";
 
 function toString(val: unknown): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
+function parseDatabaseUrl(url: string | undefined): { name: string; host: string; connected: boolean } {
+  if (!url) {
+    return { name: 'unknown', host: 'unknown', connected: false };
+  }
+  try {
+    // postgres://user:pass@host:5432/dbname
+    const match = url.match(/postgres(?:ql)?:\/\/[^@]+@([^:]+):\d+\/(\w+)/);
+    if (match) {
+      return { host: match[1], name: match[2], connected: true };
+    }
+    // Fallback: just show the full URL parsed
+    const urlObj = new URL(url);
+    return { name: urlObj.pathname.slice(1) || 'unknown', host: urlObj.hostname, connected: true };
+  } catch {
+    return { name: 'unknown', host: 'unknown', connected: true };
+  }
+}
+
 export function registerAdminRoutes(app: Express): void {
+  app.get('/admin/api/info', isAdmin, async (req, res) => {
+    const dbInfo = parseDatabaseUrl(process.env.DATABASE_URL);
+    res.json({
+      database: dbInfo,
+      version: process.env.npm_package_version || '1.0.0'
+    });
+  });
+
   app.get('/admin/api/sessions', isAdmin, async (req, res) => {
     try {
       const channelId = toString(req.query.channelId);
@@ -27,10 +54,7 @@ export function registerAdminRoutes(app: Express): void {
       const description = req.body.description as string | undefined;
       const scheduledStart = req.body.scheduledStart as string;
       const scheduledEnd = req.body.scheduledEnd as string;
-      const scheduledDays = req.body.scheduledDays as string[] | undefined;
-      const scheduledTime = req.body.scheduledTime as string | undefined;
-      const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
-      const timezone = req.body.timezone as string | undefined;
+      const scheduleId = req.body.scheduleId as number | undefined;
       
       const session = await storage.createSession({
         channelId,
@@ -38,10 +62,7 @@ export function registerAdminRoutes(app: Express): void {
         description,
         scheduledStart: new Date(scheduledStart),
         scheduledEnd: new Date(scheduledEnd),
-        scheduledDays,
-        scheduledTime,
-        intervalEnabled: intervalEnabled ?? false,
-        timezone: timezone ?? 'UTC'
+        scheduleId,
       });
       res.status(201).json(session);
     } catch (err) {
@@ -57,20 +78,14 @@ export function registerAdminRoutes(app: Express): void {
       const description = req.body.description as string | undefined;
       const scheduledStart = toString(req.body.scheduledStart);
       const scheduledEnd = toString(req.body.scheduledEnd);
-      const scheduledDays = req.body.scheduledDays as string[] | undefined;
-      const scheduledTime = toString(req.body.scheduledTime);
-      const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
-      const timezone = toString(req.body.timezone);
+      const scheduleId = req.body.scheduleId as number | null | undefined;
       
       const session = await storage.updateSession(id, {
         ...(title && { title }),
         ...(description !== undefined && { description }),
         ...(scheduledStart && { scheduledStart: new Date(scheduledStart) }),
         ...(scheduledEnd && { scheduledEnd: new Date(scheduledEnd) }),
-        ...(scheduledDays !== undefined && { scheduledDays }),
-        ...(scheduledTime !== undefined && { scheduledTime }),
-        ...(intervalEnabled !== undefined && { intervalEnabled }),
-        ...(timezone && { timezone })
+        ...(scheduleId !== undefined && { scheduleId }),
       });
       res.json(session);
     } catch (err) {
@@ -229,6 +244,104 @@ export function registerAdminRoutes(app: Express): void {
     } catch (err) {
       logger.error("Failed to set setting", "admin", err instanceof Error ? err : new Error(String(err)));
       res.status(500).json({ message: "Failed to set setting" });
+    }
+  });
+
+  app.get('/admin/api/schedules', isAdmin, async (req, res) => {
+    try {
+      const channelId = toString(req.query.channelId);
+      if (channelId) {
+        const schedules = await storage.getSchedulesByChannel(channelId);
+        return res.json(schedules);
+      }
+      res.json([]);
+    } catch (err) {
+      logger.error("Failed to list schedules", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to list schedules" });
+    }
+  });
+
+  app.get('/admin/api/schedules/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const schedule = await storage.getSchedule(id);
+      if (!schedule) {
+        return res.status(404).json({ message: "Schedule not found" });
+      }
+      res.json(schedule);
+    } catch (err) {
+      logger.error("Failed to get schedule", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to get schedule" });
+    }
+  });
+
+  app.post('/admin/api/schedules', isAdmin, async (req, res) => {
+    try {
+      const channelId = req.body.channelId as string;
+      const scheduledDays = req.body.scheduledDays as ScheduleDay[] | undefined;
+      const scheduledTime = toString(req.body.scheduledTime);
+      const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
+      const timezone = toString(req.body.timezone);
+      
+      const schedule = await storage.createSchedule({
+        channelId,
+        scheduledDays,
+        scheduledTime,
+        intervalEnabled: intervalEnabled ?? false,
+        timezone: timezone ?? 'UTC',
+      });
+      res.status(201).json(schedule);
+    } catch (err) {
+      logger.error("Failed to create schedule", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to create schedule" });
+    }
+  });
+
+  app.patch('/admin/api/schedules/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const scheduledDays = req.body.scheduledDays as ScheduleDay[] | undefined;
+      const scheduledTime = toString(req.body.scheduledTime);
+      const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
+      const timezone = toString(req.body.timezone);
+      const nextRunAt = req.body.nextRunAt as string | undefined;
+      
+      const schedule = await storage.updateSchedule(id, {
+        ...(scheduledDays !== undefined && { scheduledDays }),
+        ...(scheduledTime !== undefined && { scheduledTime }),
+        ...(intervalEnabled !== undefined && { intervalEnabled }),
+        ...(timezone && { timezone }),
+        ...(nextRunAt && { nextRunAt: new Date(nextRunAt) }),
+      });
+      res.json(schedule);
+    } catch (err) {
+      logger.error("Failed to update schedule", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to update schedule" });
+    }
+  });
+
+  app.delete('/admin/api/schedules/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      await storage.deleteSchedule(id);
+      res.status(204).send();
+    } catch (err) {
+      logger.error("Failed to delete schedule", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to delete schedule" });
+    }
+  });
+
+  app.get('/admin/api/sessions/:id/with-schedule', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const session = await storage.getSessionWithSchedule(id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      res.json(session);
+    } catch (err) {
+      logger.error("Failed to get session with schedule", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to get session with schedule" });
     }
   });
 }

@@ -84,7 +84,7 @@ app.use(createRequestLogger());
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5001 if not specified.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5001", 10);
+  const port = parseInt(process.env.PORT || "5001", 10);  
   httpServer.listen(
     {
       port,

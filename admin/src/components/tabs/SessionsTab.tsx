@@ -82,7 +82,7 @@ export default function SessionsTab() {
               <th className="text-left py-2 px-2">Start</th>
               <th className="text-left py-2 px-2">End</th>
               <th className="text-left py-2 px-2">Status</th>
-              <th className="text-left py-2 px-2">Schedule</th>
+              <th className="text-left py-2 px-2">Schedule ID</th>
               <th className="text-left py-2 px-2">Actions</th>
             </tr>
           </thead>
@@ -100,8 +100,8 @@ export default function SessionsTab() {
                   </span>
                 </td>
                 <td className="py-2 px-2 text-xs">
-                  {session.intervalEnabled && session.scheduledDays ? (
-                    <span>{session.scheduledDays.join(', ')} @ {session.scheduledTime}</span>
+                  {session.scheduleId ? (
+                    <span className="text-gray-600">#{session.scheduleId}</span>
                   ) : (
                     <span className="text-gray-400">-</span>
                   )}

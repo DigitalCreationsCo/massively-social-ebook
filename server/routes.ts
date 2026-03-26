@@ -119,10 +119,11 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
       } catch (imageErr) {
         imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
       }
-      block = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+      block = await storage.createBlock({ channelId, sessionId: session.id, ...nextContent, imageUrl });
     } catch (err) {
       block = await storage.createBlock({
         channelId,
+        sessionId: session.id,
         title: "System Reboot",
         content: "The story system encountered an anomaly and is attempting to reboot.",
         imageUrl: "/images/img_1771936309521_ieycq2.jpg",
@@ -542,6 +543,7 @@ export async function registerRoutes(
           if (st.currentPhase === 'voting' && st.currentBlock && (choice === 'A' || choice === 'B')) {
             await storage.createVote({
               channelId: currentChannelId,
+              sessionId: st.activeSession?.id || 0,
               blockId: st.currentBlock.id,
               userId: userId || `anon-${Math.random()}`,
               choice
@@ -616,7 +618,7 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
             } catch (err) {
                 imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
             }
-            st.currentBlock = await storage.createBlock({ channelId, ...nextContent, imageUrl });
+            st.currentBlock = await storage.createBlock({ channelId, sessionId: st.activeSession.id, ...nextContent, imageUrl });
             logger.info(`Resolution block generated: ${st.currentBlock.id}`, "gameloop");
             } catch (err) {
             logger.error("Failed to generate resolution block", "gameloop", err instanceof Error ? err : new Error(String(err)));
@@ -755,11 +757,12 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
                 // Fallback
                 st.currentBlock = await storage.createBlock({
                   channelId,
+                  sessionId: st.activeSession.id,
                   title: "Temporal Distortion",
                   content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
                   imageUrl: "/images/img_1771936309521_ieycq2.jpg",
                   optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
-                  optionB: { label: "Wait", description: "Wait for the distortion to pass." }
+                  optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
                 });
 
                 pregenerateOption(channelId, st, 'A');
