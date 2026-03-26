@@ -32,6 +32,11 @@ const allowlist = [
   "zod-validation-error",
 ];
 
+// local workspace packages to externalize (not bundle)
+const workspaceExternals = [
+  "narrative-engine",
+];
+
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
@@ -44,7 +49,10 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const externals = [
+    ...allDeps.filter((dep) => !allowlist.includes(dep)),
+    ...workspaceExternals,
+  ];
 
   await esbuild({
     entryPoints: ["server/index.ts"],

@@ -9,8 +9,6 @@ import { dirname, resolve } from "path";
 import { randomUUID } from "crypto";
 import cors from "cors";
 import { createServer } from "node:http";
-import { createServer as createViteServer } from "vite";
-import viteConfig from "../lab/vite.config";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -98,8 +96,13 @@ export function getActiveEngine(): NarrativeEngine {
     verboseLog.lab("Retrieved existing engine from registry");
     return existing;
   }
-  verboseLog.lab("No engine in registry, creating new InMemoryNarrativeProvider");
-  return new NarrativeEngine(new InMemoryNarrativeProvider());
+  verboseLog.lab("No engine in registry, creating new InMemoryNarrativeProvider with browser storage");
+  const channelId = process.env.LAB_CHANNEL_ID || "lab-default";
+  const provider = new InMemoryNarrativeProvider(undefined, undefined, {
+    useBrowserStorage: true,
+    channelId
+  });
+  return new NarrativeEngine(provider);
 }
 
 /**
@@ -143,24 +146,44 @@ export async function startLabServer(port: number = 5002): Promise<void> {
     const startTime = Date.now();
     verboseLog.request("POST", "/generate", req.body);
     try {
-      const { channelId, query, config } = req.body as { channelId: string, query: string, config: LabConfig; };
+      const { channelId, query, config, newBlock } = req.body as { channelId: string, query: string, config: LabConfig; newBlock?: { content: string; isNotable?: boolean; }; };
 
       if (config) {
         verboseLog.lab("Updating engine config:", config);
         engine.setLabConfig(config);
       }
 
+      // Handle new block addition for in-memory provider
+      if (newBlock && newBlock.content) {
+        const provider = engine[ 'provider' ];
+        if (provider && typeof provider.addBlock === 'function') {
+          const currentBlockCount = await provider.getBlockCount(channelId || "lab-default");
+          const block = {
+            id: currentBlockCount + 1,
+            index: currentBlockCount + 1,
+            content: newBlock.content,
+            happenedAt: Date.now(),
+            isNotable: newBlock.isNotable ?? false,
+          };
+          await provider.addBlock(channelId || "lab-default", block);
+          verboseLog.lab("Block added to storage", { blockId: block.id, content: block.content.substring(0, 30) });
+        }
+      }
+
       const result = await engine.generateContext(channelId || "lab-default", query || "");
+      const provider = (engine as any).provider;
       verboseLog.lab("Context generated", {
         channelId: channelId || "lab-default",
         queryLength: (query || "").length,
         contextLength: result.length,
+        providerType: provider?.getProviderType?.() ?? "custom",
       });
       verboseLog.response("POST", "/generate", 200, Date.now() - startTime);
       res.json({
         channelId,
         context: result,
         config: engine.getLabConfig(),
+        providerType: provider?.getProviderType?.() ?? "custom",
         traceStored: true
       });
     } catch (err) {
@@ -222,6 +245,8 @@ export async function startLabServer(port: number = 5002): Promise<void> {
 
   if (process.env.NODE_ENV === "development") {
     verboseLog.lab("Starting Vite dev server integration");
+    const { createServer: createViteServer } = await import("vite");
+    const viteConfig = (await import("../lab/vite.config")).default;
     const vite = await createViteServer({
       ...viteConfig,
       server: { 
