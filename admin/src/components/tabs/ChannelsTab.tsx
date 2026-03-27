@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
-import { adminFetch, type Channel, type Schedule } from '../../api/client'
+import { adminFetch } from '../../api/client';
+import { Channel, Schedule } from '@shared/schema'
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
@@ -201,7 +202,7 @@ export default function ChannelsTab() {
                       <div className="text-sm text-gray-600 mt-1">{channel.description}</div>
                     )}
                     <div className="text-xs text-gray-400 mt-1">
-                      Created: {new Date(channel.createdAt).toLocaleDateString()}
+                        Created: { new Date(channel.createdAt ? channel.createdAt : '').toLocaleDateString() }
                     </div>
                   </div>
                   <div className="flex gap-2">

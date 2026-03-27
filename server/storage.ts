@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { enqueueEmbeddingTask } from "./engine/embedding-queue";
+import { enqueueEmbeddingTask } from "./blocks/embedding-queue";
 import {
   blocks,
   votes,
@@ -382,6 +382,17 @@ export class DatabaseStorage implements IStorage {
     await db.delete(schedules).where(eq(schedules.id, id));
   }
 
+  async listSchedules(): Promise<Schedule[]> {
+    return await db.select().from(schedules);
+  }
+
+  async getSessionsBySchedule(scheduleId: number): Promise<Session[]> {
+    return await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.scheduleId, scheduleId));
+  }
+
   async getDueSchedules(now: Date): Promise<Schedule[]> {
     return await db
       .select()
@@ -471,6 +482,15 @@ export class DatabaseStorage implements IStorage {
       ))
       .limit(1);
     return log;
+  }
+
+  async incrementScheduleSessionCount(scheduleId: number): Promise<void> {
+    await db
+      .update(schedules)
+      .set({
+        sessionCount: sql`${schedules.sessionCount} + 1`,
+      })
+      .where(eq(schedules.id, scheduleId));
   }
 }
 

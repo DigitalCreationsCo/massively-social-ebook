@@ -1,3 +1,5 @@
+import { User } from "@shared/schema";
+
 const API_BASE = '/admin/api'
 
 export async function adminFetch<T>(
@@ -29,66 +31,9 @@ export async function adminFetch<T>(
   return response.json()
 }
 
-export interface Session {
-  id: number
-  channelId: string
-  scheduleId: number | null
-  title: string
-  description: string | null
-  scheduledStart: string
-  scheduledEnd: string
-  status: 'scheduled' | 'active' | 'completed' | 'cancelled'
-  notifyCount: number
-  createdAt: string
-}
-
-export interface Schedule {
-  id: number
-  channelId: string
-  scheduledDays: string[] | null
-  scheduledTime: string | null
-  intervalEnabled: boolean
-  timezone: string
-  nextRunAt: string | null
-  createdAt: string
-}
-
-export interface Channel {
-  id: number
-  channelId: string
-  name: string
-  description: string | null
-  createdAt: string
-}
-
-export interface Lore {
-  id: number
-  channelId: string
-  content: string
-  isActive: boolean
-  createdAt: string
-}
-
-export interface User {
-  id: number
-  email: string | null
-  pushToken: string | null
-  isBanned: boolean
-  createdAt: string
-}
-
 export interface UsersResponse {
   users: User[]
   total: number
-}
-
-export interface ChatMessage {
-  id: number
-  channelId: string
-  username: string
-  text: string
-  sessionId: number | null
-  createdAt: string
 }
 
 export interface AdminInfo {

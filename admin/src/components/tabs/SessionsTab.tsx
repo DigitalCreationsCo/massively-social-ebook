@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
-import { adminFetch, type Session } from '../../api/client'
+import { adminFetch } from '../../api/client';
+import { Session } from '@shared/schema';
 
 export default function SessionsTab() {
   const { token } = useAdminToken()
@@ -92,8 +93,8 @@ export default function SessionsTab() {
                 <td className="py-2 px-2">{session.id}</td>
                 <td className="py-2 px-2">{session.channelId}</td>
                 <td className="py-2 px-2 font-medium">{session.title}</td>
-                <td className="py-2 px-2">{formatDate(session.scheduledStart)}</td>
-                <td className="py-2 px-2">{formatDate(session.scheduledEnd)}</td>
+                <td className="py-2 px-2">{formatDate(session.scheduledStart.toISOString())}</td>
+                <td className="py-2 px-2">{formatDate(session.scheduledEnd.toISOString())}</td>
                 <td className="py-2 px-2">
                   <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>
                     {session.status}

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { storage } from './storage';
-import { sendEmail, sendPushNotification } from './notifications';
-import { checkAndSendPushWarnings, dispatchWeeklyBriefing } from './scheduler';
+import { storage } from '../storage';
+import { sendEmail, sendPushNotification } from '.';
+import { checkAndSendPushWarnings, dispatchWeeklyBriefing } from '../sessions/scheduler';
 
 vi.mock('./storage', () => ({
     storage: {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DatabaseStorage } from './storage';
-import { db } from './db';
+import { DatabaseStorage } from '../storage';
+import { db } from '../db';
 import { sessions } from '@shared/schema';
 
 // Mock the db

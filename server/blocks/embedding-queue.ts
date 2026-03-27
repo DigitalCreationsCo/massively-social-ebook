@@ -1,4 +1,4 @@
-import { generateBlockEmbedding } from "../engine/embedding";
+import { generateBlockEmbedding } from "./embedding";
 import { storage } from "../storage";
 
 async function processWithRetry(fn: () => Promise<void>, retries = 3): Promise<void> {

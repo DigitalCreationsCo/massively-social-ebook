@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
 import { RagProvider } from "./rag";
-import { storage } from "./storage";
-import { db } from "./db";
+import { storage } from "../storage";
+import { db } from "../db";
 
 vi.mock("./storage", () => ({
   storage: {

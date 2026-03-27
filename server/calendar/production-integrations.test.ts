@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { CalendarService } from './calendar';
-import { sendEmail, sendPushNotification } from './notifications';
+import { CalendarService } from '.';
+import { sendEmail, sendPushNotification } from '../notifications';
 import { google } from 'googleapis';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';

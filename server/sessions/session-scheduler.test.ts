@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleGameLoopTick, state } from './routes';
-import { storage } from './storage';
-import * as ai from './ai';
+import { handleGameLoopTick, state } from '../routes';
+import { storage } from '../storage';
+import * as ai from '../blocks/ai';
 
 // Mock storage and AI
 vi.mock('./storage', () => ({

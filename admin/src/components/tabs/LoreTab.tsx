@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
-import { adminFetch, type Lore } from '../../api/client'
+import { adminFetch } from '../../api/client';
+import { Lore } from '@shared/schema'
 
 export default function LoreTab() {
   const { token } = useAdminToken()
@@ -78,7 +79,7 @@ export default function LoreTab() {
                 </div>
                 <div className="text-sm whitespace-pre-wrap">{item.content}</div>
                 <div className="text-xs text-gray-400 mt-1">
-                  {new Date(item.createdAt).toLocaleDateString()}
+                  { new Date(item.createdAt ? item.createdAt : '').toLocaleDateString() }
                 </div>
               </div>
               <button

@@ -1,9 +1,9 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { registerAdminRoutes } from "./admin-routes";
+import { registerAdminRoutes } from "./routes/admin-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { startRecurringScheduler } from "./scheduler";
+import { startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
 
 const app = express();

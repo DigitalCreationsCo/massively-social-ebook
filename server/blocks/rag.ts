@@ -1,9 +1,9 @@
 import { sql, asc, eq, and } from "drizzle-orm";
-import { db } from "./db";
-import { storage } from "./storage";
+import { db } from "../db";
+import { storage } from "../storage";
 import { NarrativeProvider, BaseNarrativeBlock, BaseNarrativeLore, HybridCandidate } from "narrative-engine";
 import { blocks, lore } from "@shared/schema";
-import { generateEmbedding } from "./engine/embedding";
+import { generateEmbedding } from "./embedding";
 
 export class RagProvider implements NarrativeProvider {
 

@@ -1,9 +1,10 @@
 import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import type { TitleConfig } from "./title";
 
-const vector = (name: string, { dimensions }: { dimensions: number }) =>
-  customType<{ data: number[] }>({
+const vector = (name: string, { dimensions }: { dimensions: number; }) =>
+  customType<{ data: number[]; }>({
     dataType: () => `vector(${dimensions})`,
   })(name);
 
@@ -31,20 +32,59 @@ export const schedules = pgTable("schedules", {
   intervalEnabled: boolean("interval_enabled").notNull().default(false),
   timezone: text("timezone").notNull().default("UTC"),
   nextRunAt: timestamp("next_run_at"),             // computed by scheduler, updated after each spawn
+
+  // ── Title composition ──────────────────────────────────────────────────
+  //
+  // titleConfig: full TitleConfig object (see title.ts).
+  //   Stored as JSONB so format, programName, labels, templates, etc. can
+  //   all live here without extra columns. Null = legacy plain-date fallback.
+  //
+  // sessionCount: the total number of sessions ever spawned by this schedule.
+  //   Incremented atomically at spawn time. Used to derive seasonNumber and
+  //   episodeNumber for each new session without a full table scan.
+  titleConfig: jsonb("title_config").$type<TitleConfig>(),
+  sessionCount: integer("session_count").notNull().default(0),
+
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Custom Zod schema for schedules with validations
-const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
-export type ScheduleDay = typeof validDays[number];
+const validDays = [ 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday' ] as const;
+export type ScheduleDay = typeof validDays[ number ];
+
+// Zod schema for TitleConfig (mirrors title.ts types for runtime validation)
+const titleFormatEnum = z.enum([ 'numbered', 'numbered_subtitle', 'in_world', 'season_episode' ]);
+const numberSourceEnum = z.enum([ 'episode', 'absolute', 'day_of_month' ]);
+
+export const titleConfigSchema = z.object({
+  format: titleFormatEnum,
+  programName: z.string().min(1),
+  numberSource: numberSourceEnum.optional(),
+  sessionLabel: z.string().optional(),
+  subtitle: z.string().optional(),
+  inWorldTemplate: z.string().optional(),
+  inWorldMode: z.enum([ 'countup', 'countdown' ]).optional(),
+  inWorldTotal: z.number().int().positive().optional(),
+  seasonSize: z.number().int().min(1).default(30).optional(),
+  showSeason: z.boolean().optional(),
+  seasonLabel: z.string().optional(),
+}).refine(
+  (c) => c.format !== 'in_world' || !!c.inWorldTemplate,
+  { message: "inWorldTemplate is required when format is 'in_world'", path: [ 'inWorldTemplate' ] }
+).refine(
+  (c) => c.inWorldMode !== 'countdown' || !!c.inWorldTotal,
+  { message: "inWorldTotal is required when inWorldMode is 'countdown'", path: [ 'inWorldTotal' ] }
+);
 
 export const insertScheduleSchema = createInsertSchema(schedules, {
   scheduledDays: z.array(z.enum(validDays)).optional(),
   scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Must be valid 24h time (HH:MM)").optional(),
+  titleConfig: titleConfigSchema.optional(),
 }).omit({
   id: true,
   createdAt: true,
   nextRunAt: true,
+  sessionCount: true,   // managed exclusively by the scheduler
 });
 export type Schedule = typeof schedules.$inferSelect;
 export type InsertSchedule = z.infer<typeof insertScheduleSchema>;
@@ -66,6 +106,31 @@ export const sessions = pgTable("sessions", {
   scheduledEnd: timestamp("scheduled_end").notNull(),
   status: text("status").notNull().default('scheduled'), // SessionStatus
   notifyCount: integer("notify_count").notNull().default(0),
+
+  // ── Seasonal position ──────────────────────────────────────────────────
+  //
+  // These three are denormalized from the schedule's sessionCount at spawn
+  // time so queries like "all S2 sessions" are cheap index scans.
+  //
+  // sessionNumber: 1-based total across the schedule's lifetime
+  // seasonNumber:  1-based season index  (floor((sessionNumber-1)/seasonSize)+1)
+  // episodeNumber: 1-based within season (((sessionNumber-1)%seasonSize)+1)
+  //
+  // All three are nullable to stay compatible with one-off sessions that
+  // have no schedule and no positional context.
+  sessionNumber: integer("session_number"),
+  seasonNumber: integer("season_number"),
+  episodeNumber: integer("episode_number"),
+
+  // ── Per-session subtitle override ──────────────────────────────────────
+  //
+  // When a schedule uses 'numbered_subtitle' format, this field lets an
+  // admin (or a future AI pipeline) set a unique subtitle for each session
+  // instead of relying on the static config.subtitle fallback.
+  //
+  // e.g. "The Confession", "Into the Fog", "Last Call"
+  subtitle: text("subtitle"),
+
   createdAt: timestamp("created_at").defaultNow(),
 });
 

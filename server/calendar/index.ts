@@ -1,4 +1,4 @@
-import { sendEmail } from './notifications';
+import { sendEmail } from '../notifications';
 import { google } from 'googleapis';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';

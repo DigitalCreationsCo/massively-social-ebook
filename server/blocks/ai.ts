@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
-import { createImageInstructions } from "../prompts/image-instructions";
+import { createStoryBlockInstructions } from "../../prompts/storyblock-instructions";
+import { createImageInstructions } from "../../prompts/image-instructions";
 import { NarrativeEngine } from "narrative-engine";
 import { RagProvider } from './rag';
 
@@ -19,11 +19,11 @@ const engine = new NarrativeEngine(new RagProvider());
 // Guard with try-catch to prevent production issues if import fails.
 if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB_STARTED__" ]) {
   (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = "pending";
-  
+
   process.nextTick(async () => {
     // Guard against double-initialization
     if ((global as any)[ "__NARRATIVE_LAB_STARTED__" ] !== "pending") return;
-    
+
     try {
       const { startLabServer, configureNarrativeLab } = await import("narrative-engine/lab");
       configureNarrativeLab(engine);

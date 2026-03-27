@@ -30,8 +30,6 @@ export function isTomorrowMST(date: Date | number | string): boolean {
     return dateStr === tomorrowStr;
 }
 
-
-
 export function createMSTDate(date: Date | number | string, hour: number, minute: number = 0, second: number = 0): Date {
     const mstStr = getMSTDateString(date);
     const localStr = `${mstStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;

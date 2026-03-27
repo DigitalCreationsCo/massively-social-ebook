@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
-import { adminFetch, type UsersResponse } from '../../api/client'
+import { adminFetch, UsersResponse } from '../../api/client';
 
 export default function UsersTab() {
   const { token } = useAdminToken()
@@ -11,7 +11,7 @@ export default function UsersTab() {
     return adminFetch<UsersResponse>(`/users?page=${page}&limit=50`, token)
   }, [token, page])
 
-  const { data, loading, error, refresh } = usePolling(fetchUsers, 10000, [token, page])
+  const { data, loading, error, refresh } = usePolling<UsersResponse>(fetchUsers, 10000, [ token, page ])
 
   const handleBan = async (id: number, currentlyBanned: boolean) => {
     const action = currentlyBanned ? 'unban' : 'ban'
@@ -68,7 +68,7 @@ export default function UsersTab() {
                   </span>
                 </td>
                 <td className="py-2 px-2 text-xs">
-                  {new Date(user.createdAt).toLocaleDateString()}
+                  { new Date(user.createdAt ? user.createdAt : '').toLocaleDateString() }
                 </td>
                 <td className="py-2 px-2">
                   <button

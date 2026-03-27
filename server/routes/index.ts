@@ -1,15 +1,15 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./storage";
-import { generateStoryBlock, generateStoryImage } from "./ai";
+import { storage } from "../storage";
+import { generateStoryBlock, generateStoryImage } from "../blocks/ai";
 import { api } from "@shared/routes";
 import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/schema";
 import { getChannelId, CHANNELS, type Channel } from "@shared/channels";
-import { trackUserEmail } from "./analytics";
-import { CalendarService } from "./calendar";
-import { isAdmin, isDevOnly } from "./middleware/auth";
-import { logger } from "./logger";
+import { trackUserEmail } from "../analytics";
+import { CalendarService } from "../calendar";
+import { isAdmin, isDevOnly } from "../middleware/auth";
+import { logger } from "../logger";
 
 import { formatMST } from "@shared/date";
 interface PendingBlock {
@@ -47,7 +47,7 @@ export function computeDecisionEndsAt(st: ChannelState): number {
 }
 
 export const state: Record<Channel, ChannelState> = CHANNELS.reduce((acc, channelId) => {
-  acc[channelId] = {
+  acc[ channelId ] = {
     currentPhase: 'reading',
     phaseEndsAt: Date.now() + POST_VOTE_READING_MS,
     decisionEndsAt: 0,
@@ -105,7 +105,7 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
   logger.info(`Starting session "${session.title}" for channel ${channelId}`, "session");
   const st = state[ channelId ];
   st.activeSession = session;
-  
+
   // Seed or resume block
   let block = await storage.getCurrentBlock(channelId);
   if (!block) {
@@ -135,11 +135,11 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
 
   st.currentBlock = block;
   st.currentPhase = 'reading';
-  
+
   // Add 3-minute lobby delay to the initial reading phase
-  const LOBBY_DELAY_MS = 3 * 60 * 1000; 
+  const LOBBY_DELAY_MS = 3 * 60 * 1000;
   st.phaseEndsAt = Date.now() + LOBBY_DELAY_MS + POST_VOTE_READING_MS;
-  
+
   st.turnsToNextChoice = getRandomTurns();
   st.decisionEndsAt = computeDecisionEndsAt(st);
   st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - Date.now() - LOBBY_DELAY_MS);
@@ -192,7 +192,7 @@ export async function registerRoutes(
     if (!session) return res.status(404).send('Session not found');
 
     const icsContent = CalendarService.generateIcs(session);
-    
+
     res.setHeader('Content-Type', 'text/calendar');
     res.setHeader('Content-Disposition', `attachment; filename="session-${id}.ics"`);
     res.send(icsContent);
@@ -394,11 +394,11 @@ export async function registerRoutes(
   app.get(api.blocks.current.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
     const channelId = getChannelId(rawChannelId) as Channel;
-    const channelState = state[channelId];
+    const channelState = state[ channelId ];
     if (!channelState || !channelState.activeSession || !channelState.currentBlock) {
       return res.status(404).json({ message: "No active session" });
     }
-    
+
     const now = Date.now();
     res.json({
       ...channelState.currentBlock,
@@ -414,8 +414,8 @@ export async function registerRoutes(
   app.get(api.chat.history.path, async (req, res) => {
     const rawChannelId = String(req.query.channelId || '');
     const channelId = getChannelId(rawChannelId) as Channel;
-    
-    let sessionId = state[channelId].activeSession?.id;
+
+    let sessionId = state[ channelId ].activeSession?.id;
     if (!sessionId) {
       const nextSession = await storage.getNextSession(channelId);
       sessionId = nextSession?.id;
@@ -462,7 +462,7 @@ export async function registerRoutes(
     const channelId = getChannelId(rawChannelId) as Channel;
     clientChannels.set(ws, channelId);
 
-    const channelState = state[channelId];
+    const channelState = state[ channelId ];
 
     // Send initial state on connect
     if (channelState && channelState.activeSession && channelState.currentBlock) {
@@ -494,22 +494,22 @@ export async function registerRoutes(
       try {
         const message = JSON.parse(data.toString()) as WsMessage;
         const currentChannelId = clientChannels.get(ws) || 'mystery';
-        const st = state[currentChannelId];
-        
+        const st = state[ currentChannelId ];
+
         if (message.type === 'SUBMIT_CHAT') {
-          const { username, text } = message.payload as { username: string, text: string };
+          const { username, text } = message.payload as { username: string, text: string; };
           if (username && text) {
             let sessionId = st.activeSession?.id;
             if (!sessionId) {
               const nextSession = await storage.getNextSession(currentChannelId);
               sessionId = nextSession?.id;
             }
-            
+
             // If still no session ID (no upcoming session), we might want to skip or allow global chat?
             // Requirement says "unique to each session". If no session, no chat?
             // Or maybe just create chat without session ID (which will be filtered out by getRecentChat if we follow logic)?
             // I'll create it anyway, but it won't show up in history if sessionId is required for history retrieval.
-            
+
             const newMsg = await storage.createChat({ channelId: currentChannelId, username, text, sessionId });
             broadcast(currentChannelId, {
               type: 'CHAT_MESSAGE',
@@ -520,7 +520,7 @@ export async function registerRoutes(
             });
           }
         } else if (message.type === 'SUBMIT_REACTION') {
-          const { blockId, emoji, userId, paragraphIndex } = message.payload as { blockId: number, emoji: string, userId: string, paragraphIndex: number };
+          const { blockId, emoji, userId, paragraphIndex } = message.payload as { blockId: number, emoji: string, userId: string, paragraphIndex: number; };
           if (blockId && emoji) {
             // Create reaction
             const reaction = await storage.addReaction({
@@ -531,7 +531,7 @@ export async function registerRoutes(
               emoji,
               paragraphIndex: paragraphIndex || 0
             });
-            
+
             // Broadcast immediately to all clients in channel
             broadcast(currentChannelId, {
               type: 'REACTION_RECEIVED',
@@ -539,7 +539,7 @@ export async function registerRoutes(
             });
           }
         } else if (message.type === 'SUBMIT_VOTE') {
-          const { choice, userId } = message.payload as { choice: string, userId: string };
+          const { choice, userId } = message.payload as { choice: string, userId: string; };
           if (st.currentPhase === 'voting' && st.currentBlock && (choice === 'A' || choice === 'B')) {
             await storage.createVote({
               channelId: currentChannelId,
@@ -587,12 +587,12 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
       const next = await storage.getNextSession(channelId);
       if (next && now >= next.scheduledStart.getTime() - (3 * 60 * 1000)) {
         if (!st.isProcessing) {
-             st.isProcessing = true;
-             try {
-                await startSessionForChannel(channelId, next, broadcast);
-             } finally {
-                st.isProcessing = false;
-             }
+          st.isProcessing = true;
+          try {
+            await startSessionForChannel(channelId, next, broadcast);
+          } finally {
+            st.isProcessing = false;
+          }
         }
       }
       continue; // Skip game loop if no session is active
@@ -609,24 +609,24 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
         st.initialTimeToDecision = 0;
 
         if (st.currentBlock) {
-            try {
+          try {
             const previousContext = `Previous event: ${st.currentBlock.content}`;
             const nextContent = await generateStoryBlock(channelId, previousContext, true);
             let imageUrl;
             try {
-                imageUrl = await generateStoryImage(nextContent.content);
+              imageUrl = await generateStoryImage(nextContent.content);
             } catch (err) {
-                imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+              imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
             }
             st.currentBlock = await storage.createBlock({ channelId, sessionId: st.activeSession.id, ...nextContent, imageUrl });
             logger.info(`Resolution block generated: ${st.currentBlock.id}`, "gameloop");
-            } catch (err) {
+          } catch (err) {
             logger.error("Failed to generate resolution block", "gameloop", err instanceof Error ? err : new Error(String(err)));
             // Already logged above
-            }
+          }
         }
       } finally {
-          st.isProcessing = false;
+        st.isProcessing = false;
       }
     } else if (st.currentPhase === 'resolution' && now >= st.phaseEndsAt) {
       if (st.isProcessing) continue;
@@ -645,96 +645,30 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
     if (now >= st.phaseEndsAt) {
       if (st.isProcessing) continue;
       st.isProcessing = true;
-      
+
       try {
-          if (st.currentPhase === 'reading') {
-            if (st.turnsToNextChoice > 0) {
-              // Narrative turn: skip voting, go straight to next block
-              st.turnsToNextChoice--;
-              
-              // Advance story using option A as default for narrative progression
-              if (st.currentBlock) {
-                try {
-                  let nextData;
-                  if (st.nextBlockA) {
-                    nextData = await st.nextBlockA.promise;
-                  } else {
-                    // Fallback if pregeneration didn't happen
-                    const opt = st.currentBlock.optionA;
-                    const optData = opt as { label?: string, description?: string; } | null;
-                    const winnerText = `${optData?.label || 'Choice A'}: ${optData?.description || 'The story continues...'}`;
-                    const previousContext = `${st.currentBlock.title}\n${st.currentBlock.content}${winnerText}`;
-                    const nextContent = await generateStoryBlock(channelId, previousContext);
-                    let imageUrl: string;
-                    try {
-                      imageUrl = await generateStoryImage(nextContent.content);
-                    } catch (imageErr) {
-                      imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
-                    }
-                    nextData = { ...nextContent, imageUrl };
-                  }
+        if (st.currentPhase === 'reading') {
+          if (st.turnsToNextChoice > 0) {
+            // Narrative turn: skip voting, go straight to next block
+            st.turnsToNextChoice--;
 
-                  st.currentBlock = await storage.createBlock({
-                    channelId,
-                    ...nextData
-                  } as any);
-
-                  // Clear used pregenerated blocks
-                  st.nextBlockA = undefined;
-                  st.nextBlockB = undefined;
-
-                  pregenerateOption(channelId, st, 'A');
-                  pregenerateOption(channelId, st, 'B');
-                  logger.info(`Advanced story to block ${st.currentBlock.id}`, "gameloop");
-                } catch (err) {
-                  logger.error("Failed to advance narrative", "gameloop", err instanceof Error ? err : new Error(String(err)));
-                  // Already logged above, removing duplicate
-                }
-              }
-              
-              // Update phase timing AFTER block is ready
-              st.phaseEndsAt = now + NARRATIVE_TURN_MS;
-              st.decisionEndsAt = computeDecisionEndsAt(st);
-              
-              logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
-
-            } else {
-            // Choice turn: enter voting phase
-              st.currentPhase = 'voting';
-              st.phaseEndsAt = now + VOTING_PHASE_MS;
-              st.decisionEndsAt = computeDecisionEndsAt(st);
-              st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-              logger.info(`ENTERING VOTING PHASE. Ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST`, "gameloop");
-            }
-          } else {
-            // Voting phase ended: tally votes and generate next block
-            
-            // First, determine winner and get next block content
+            // Advance story using option A as default for narrative progression
             if (st.currentBlock) {
-              const votes = await storage.getVotesForBlock(st.currentBlock.id);
-              const countA = votes.filter(v => v.choice === 'A').length;
-              const countB = votes.filter(v => v.choice === 'B').length;
-
-              const winner = countA >= countB ? 'A' : 'B';
-
               try {
                 let nextData;
-                if (winner === 'A' && st.nextBlockA) {
+                if (st.nextBlockA) {
                   nextData = await st.nextBlockA.promise;
-                } else if (winner === 'B' && st.nextBlockB) {
-                  nextData = await st.nextBlockB.promise;
                 } else {
-                  const opt = winner === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+                  // Fallback if pregeneration didn't happen
+                  const opt = st.currentBlock.optionA;
                   const optData = opt as { label?: string, description?: string; } | null;
-                  const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
-                  const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+                  const winnerText = `${optData?.label || 'Choice A'}: ${optData?.description || 'The story continues...'}`;
+                  const previousContext = `${st.currentBlock.title}\n${st.currentBlock.content}${winnerText}`;
                   const nextContent = await generateStoryBlock(channelId, previousContext);
                   let imageUrl: string;
                   try {
                     imageUrl = await generateStoryImage(nextContent.content);
                   } catch (imageErr) {
-                    logger.warn(`Game loop image generation failed for ${channelId}, using fallback`, "gameloop", imageErr);
-                    // Already logged above
                     imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
                   }
                   nextData = { ...nextContent, imageUrl };
@@ -751,50 +685,116 @@ export async function handleGameLoopTick(now: number, broadcast: (channelId: Cha
 
                 pregenerateOption(channelId, st, 'A');
                 pregenerateOption(channelId, st, 'B');
+                logger.info(`Advanced story to block ${st.currentBlock.id}`, "gameloop");
               } catch (err) {
-                logger.error("Failed to adopt next block", "gameloop", err instanceof Error ? err : new Error(String(err)));
-                // Already logged above
-                // Fallback
-                st.currentBlock = await storage.createBlock({
-                  channelId,
-                  sessionId: st.activeSession.id,
-                  title: "Temporal Distortion",
-                  content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
-                  imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-                  optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
-                  optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
-                });
-
-                pregenerateOption(channelId, st, 'A');
-                pregenerateOption(channelId, st, 'B');
+                logger.error("Failed to advance narrative", "gameloop", err instanceof Error ? err : new Error(String(err)));
+                // Already logged above, removing duplicate
               }
             }
-            
-            // Now update phase logic
-            st.currentPhase = 'reading';
-            st.phaseEndsAt = now + POST_VOTE_READING_MS;
-            st.turnsToNextChoice = getRandomTurns();
+
+            // Update phase timing AFTER block is ready
+            st.phaseEndsAt = now + NARRATIVE_TURN_MS;
+            st.decisionEndsAt = computeDecisionEndsAt(st);
+
+            logger.debug(`Narrative turn. Turns remaining: ${st.turnsToNextChoice}, Next phase ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST, Time to decision: ${Math.round((st.decisionEndsAt - now) / 1000)}s`, "gameloop");
+
+          } else {
+            // Choice turn: enter voting phase
+            st.currentPhase = 'voting';
+            st.phaseEndsAt = now + VOTING_PHASE_MS;
             st.decisionEndsAt = computeDecisionEndsAt(st);
             st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
-            logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${formatMST(st.decisionEndsAt, "h:mm:ss a")} MST`, "gameloop");
+            logger.info(`ENTERING VOTING PHASE. Ends at: ${formatMST(st.phaseEndsAt, "h:mm:ss a")} MST`, "gameloop");
+          }
+        } else {
+          // Voting phase ended: tally votes and generate next block
+
+          // First, determine winner and get next block content
+          if (st.currentBlock) {
+            const votes = await storage.getVotesForBlock(st.currentBlock.id);
+            const countA = votes.filter(v => v.choice === 'A').length;
+            const countB = votes.filter(v => v.choice === 'B').length;
+
+            const winner = countA >= countB ? 'A' : 'B';
+
+            try {
+              let nextData;
+              if (winner === 'A' && st.nextBlockA) {
+                nextData = await st.nextBlockA.promise;
+              } else if (winner === 'B' && st.nextBlockB) {
+                nextData = await st.nextBlockB.promise;
+              } else {
+                const opt = winner === 'A' ? st.currentBlock.optionA : st.currentBlock.optionB;
+                const optData = opt as { label?: string, description?: string; } | null;
+                const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
+                const previousContext = `Previous event: ${st.currentBlock.content}\nThe readers chose: ${winnerText}`;
+                const nextContent = await generateStoryBlock(channelId, previousContext);
+                let imageUrl: string;
+                try {
+                  imageUrl = await generateStoryImage(nextContent.content);
+                } catch (imageErr) {
+                  logger.warn(`Game loop image generation failed for ${channelId}, using fallback`, "gameloop", imageErr);
+                  // Already logged above
+                  imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                }
+                nextData = { ...nextContent, imageUrl };
+              }
+
+              st.currentBlock = await storage.createBlock({
+                channelId,
+                ...nextData
+              } as any);
+
+              // Clear used pregenerated blocks
+              st.nextBlockA = undefined;
+              st.nextBlockB = undefined;
+
+              pregenerateOption(channelId, st, 'A');
+              pregenerateOption(channelId, st, 'B');
+            } catch (err) {
+              logger.error("Failed to adopt next block", "gameloop", err instanceof Error ? err : new Error(String(err)));
+              // Already logged above
+              // Fallback
+              st.currentBlock = await storage.createBlock({
+                channelId,
+                sessionId: st.activeSession.id,
+                title: "Temporal Distortion",
+                content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+                imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+                optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
+                optionB: { label: "Wait", description: "Wait for the anomaly to clear." }
+              });
+
+              pregenerateOption(channelId, st, 'A');
+              pregenerateOption(channelId, st, 'B');
+            }
           }
 
-          if (st.currentBlock) {
-            broadcast(channelId, {
-              type: 'SYNC_STATE',
-              payload: {
-                ...st.currentBlock,
-                createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                phase: st.currentPhase,
-                timeRemaining: Math.max(0, st.phaseEndsAt - now),
-                timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
-                initialTimeToNextDecision: st.initialTimeToDecision,
-                turnsToNextChoice: st.turnsToNextChoice
-              }
-            });
-          }
+          // Now update phase logic
+          st.currentPhase = 'reading';
+          st.phaseEndsAt = now + POST_VOTE_READING_MS;
+          st.turnsToNextChoice = getRandomTurns();
+          st.decisionEndsAt = computeDecisionEndsAt(st);
+          st.initialTimeToDecision = Math.max(0, st.decisionEndsAt - now);
+          logger.info(`VOTING ENDED. Starting reading phase with ${st.turnsToNextChoice} turns. Overall ends at: ${formatMST(st.decisionEndsAt, "h:mm:ss a")} MST`, "gameloop");
+        }
+
+        if (st.currentBlock) {
+          broadcast(channelId, {
+            type: 'SYNC_STATE',
+            payload: {
+              ...st.currentBlock,
+              createdAt: st.currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+              phase: st.currentPhase,
+              timeRemaining: Math.max(0, st.phaseEndsAt - now),
+              timeToNextDecision: Math.max(0, st.decisionEndsAt - now),
+              initialTimeToNextDecision: st.initialTimeToDecision,
+              turnsToNextChoice: st.turnsToNextChoice
+            }
+          });
+        }
       } finally {
-          st.isProcessing = false;
+        st.isProcessing = false;
       }
     } else {
       // Send time updates every second to keep clients perfectly in sync

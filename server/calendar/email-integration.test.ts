@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { google } from 'googleapis';
-import { CalendarService } from './calendar';
-import { sendEmail } from './notifications';
+import { CalendarService } from '.';
+import { sendEmail } from '../notifications';
 
 // Mock googleapis
 vi.mock('googleapis', () => {

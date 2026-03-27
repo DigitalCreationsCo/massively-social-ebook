@@ -135,17 +135,17 @@ describe('AI Generators', () => {
     describe('generateStoryImage', () => {
         it('should generate an image and return data URL', async () => {
             const base64Image = 'YmFzZTY0dGVzdGk='; // base64 for "base64testi"
-            
+
             (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [{
+                candidates: [ {
                     content: {
-                        parts: [{
+                        parts: [ {
                             inlineData: {
                                 data: base64Image
                             }
-                        }]
+                        } ]
                     }
-                }]
+                } ]
             });
 
             const result = await generateStoryImage('A test image description');
@@ -155,7 +155,7 @@ describe('AI Generators', () => {
                 model: 'gemini-2.5-flash-image',
                 contents: expect.any(String),
                 config: {
-                    responseModalities: ["image"],
+                    responseModalities: [ "image" ],
                     candidateCount: 1,
                     imageConfig: {
                         aspectRatio: "16:9",
@@ -167,11 +167,11 @@ describe('AI Generators', () => {
 
         it('should return fallback image if no image data is returned', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [{
+                candidates: [ {
                     content: {
                         parts: []
                     }
-                }]
+                } ]
             });
 
             const url = await generateStoryImage('A test image description');
@@ -187,7 +187,7 @@ describe('AI Generators', () => {
 
         it('should return fallback image if content is undefined', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [{}]
+                candidates: [ {} ]
             });
 
             const url = await generateStoryImage('A test image description');
@@ -202,8 +202,8 @@ describe('AI Generators', () => {
         });
 
         it('should log warning on fallback', async () => {
-            const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-            
+            const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+
             (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
 
             await generateStoryImage('A test image description');
@@ -212,7 +212,7 @@ describe('AI Generators', () => {
                 'Failed to generate image, using fallback:',
                 expect.any(Error)
             );
-            
+
             consoleWarnSpy.mockRestore();
         });
     });

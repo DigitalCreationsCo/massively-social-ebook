@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
-import { adminFetch, type ChatMessage } from '../../api/client'
+import { adminFetch } from '../../api/client';
+import { ChatMessage } from '@shared/schema'
 
 export default function ChatTab() {
   const { token } = useAdminToken()
@@ -49,7 +50,7 @@ export default function ChatTab() {
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm">{msg.username}</span>
               <span className="text-xs text-gray-400">
-                {new Date(msg.createdAt).toLocaleTimeString()}
+                { new Date(msg.createdAt ? msg.createdAt : '').toLocaleTimeString() }
               </span>
             </div>
             <div className="text-sm mt-0.5">{msg.text}</div>

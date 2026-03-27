@@ -1,14 +1,14 @@
 import type { Express } from "express";
-import { storage } from "./storage";
-import { isAdmin } from "./middleware/auth";
-import { logger } from "./logger";
+import { storage } from "../storage";
+import { isAdmin } from "../middleware/auth";
+import { logger } from "../logger";
 import type { InsertSchedule, ScheduleDay } from "@shared/schema";
 
 function toString(val: unknown): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
-function parseDatabaseUrl(url: string | undefined): { name: string; host: string; connected: boolean } {
+function parseDatabaseUrl(url: string | undefined): { name: string; host: string; connected: boolean; } {
   if (!url) {
     return { name: 'unknown', host: 'unknown', connected: false };
   }
@@ -16,7 +16,7 @@ function parseDatabaseUrl(url: string | undefined): { name: string; host: string
     // postgres://user:pass@host:5432/dbname
     const match = url.match(/postgres(?:ql)?:\/\/[^@]+@([^:]+):\d+\/(\w+)/);
     if (match) {
-      return { host: match[1], name: match[2], connected: true };
+      return { host: match[ 1 ], name: match[ 2 ], connected: true };
     }
     // Fallback: just show the full URL parsed
     const urlObj = new URL(url);
@@ -55,7 +55,7 @@ export function registerAdminRoutes(app: Express): void {
       const scheduledStart = req.body.scheduledStart as string;
       const scheduledEnd = req.body.scheduledEnd as string;
       const scheduleId = req.body.scheduleId as number | undefined;
-      
+
       const session = await storage.createSession({
         channelId,
         title,
@@ -79,7 +79,7 @@ export function registerAdminRoutes(app: Express): void {
       const scheduledStart = toString(req.body.scheduledStart);
       const scheduledEnd = toString(req.body.scheduledEnd);
       const scheduleId = req.body.scheduleId as number | null | undefined;
-      
+
       const session = await storage.updateSession(id, {
         ...(title && { title }),
         ...(description !== undefined && { description }),
@@ -282,7 +282,7 @@ export function registerAdminRoutes(app: Express): void {
       const scheduledTime = toString(req.body.scheduledTime);
       const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
       const timezone = toString(req.body.timezone);
-      
+
       const schedule = await storage.createSchedule({
         channelId,
         scheduledDays,
@@ -305,7 +305,7 @@ export function registerAdminRoutes(app: Express): void {
       const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
       const timezone = toString(req.body.timezone);
       const nextRunAt = req.body.nextRunAt as string | undefined;
-      
+
       const schedule = await storage.updateSchedule(id, {
         ...(scheduledDays !== undefined && { scheduledDays }),
         ...(scheduledTime !== undefined && { scheduledTime }),
