@@ -4,7 +4,7 @@ import { usePolling } from '../../hooks/usePolling';
 import { adminFetch } from '../../api/client';
 import TitleBuilder from '../TitleBuilder';
 import { deriveTitleFromConfig, type TitleConfig } from '@shared/title';
-import { Schedule } from '@shared/schema';
+import { Schedule, Channel } from '@shared/schema';
 
 // ─── Preview helper ───────────────────────────────────────────────────────────
 
@@ -126,6 +126,12 @@ export default function SchedulesTab() {
     const [ savingId, setSavingId ] = useState<number | null>(null);
     const [ saveError, setSaveError ] = useState<string | null>(null);
 
+    const fetchChannels = useCallback(async () => {
+        return adminFetch<Channel[]>('/channels', token)
+    }, [token])
+
+    const { data: channels } = usePolling(fetchChannels, 30000, [token])
+
     const fetchSchedules = useCallback(async () => {
         const query = new URLSearchParams();
         if (channelFilter) query.set('channelId', channelFilter);
@@ -134,7 +140,7 @@ export default function SchedulesTab() {
 
     const { data: schedules, loading, error, refresh, lastUpdated } = usePolling(
         fetchSchedules,
-        30000,
+        10000,
         [ token, channelFilter ],
     );
 
@@ -171,8 +177,9 @@ export default function SchedulesTab() {
                         className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm"
                     >
                         <option value="">All</option>
-                        <option value="scifi">Sci-Fi</option>
-                        <option value="mystery">Mystery</option>
+                        {channels?.map(ch => (
+                            <option key={ch.id} value={ch.channelId}>{ch.name}</option>
+                        ))}
                     </select>
                 </label>
                 <button

@@ -1,12 +1,24 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
 import { adminFetch } from '../../api/client';
-import { ChatMessage } from '@shared/schema'
+import { ChatMessage, Channel } from '@shared/schema'
 
 export default function ChatTab() {
   const { token } = useAdminToken()
-  const [channelFilter, setChannelFilter] = useState<string>('scifi')
+  const [channelFilter, setChannelFilter] = useState<string>('')
+
+  const fetchChannels = useCallback(async () => {
+    return adminFetch<Channel[]>('/channels', token)
+  }, [token])
+
+  const { data: channels } = usePolling(fetchChannels, 30000, [token])
+
+  useEffect(() => {
+    if (channels && channels.length > 0 && !channelFilter) {
+      setChannelFilter(channels[0].channelId)
+    }
+  }, [channels, channelFilter])
 
   const fetchChat = useCallback(async () => {
     return adminFetch<ChatMessage[]>(`/chat?channelId=${channelFilter}`, token)
@@ -24,8 +36,9 @@ export default function ChatTab() {
             onChange={(e) => setChannelFilter(e.target.value)}
             className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm"
           >
-            <option value="scifi">Sci-Fi</option>
-            <option value="mystery">Mystery</option>
+            {channels?.map(ch => (
+              <option key={ch.id} value={ch.channelId}>{ch.name}</option>
+            ))}
           </select>
         </label>
         <button

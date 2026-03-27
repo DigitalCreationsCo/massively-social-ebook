@@ -1,11 +1,26 @@
-import { useState } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAdminToken, getAuthHeader } from '../../hooks/useAdminToken'
+import { usePolling } from '../../hooks/usePolling'
+import { adminFetch } from '../../api/client';
+import { Channel } from '@shared/schema'
 
 export default function DebugTab() {
   const { token } = useAdminToken()
-  const [debugChannel, setDebugChannel] = useState('scifi')
+  const [debugChannel, setDebugChannel] = useState<string>('')
   const [result, setResult] = useState<string>('')
   const [loading, setLoading] = useState(false)
+
+  const fetchChannels = useCallback(async () => {
+    return adminFetch<Channel[]>('/channels', token)
+  }, [token])
+
+  const { data: channels } = usePolling(fetchChannels, 30000, [token])
+
+  useEffect(() => {
+    if (channels && channels.length > 0 && !debugChannel) {
+      setDebugChannel(channels[0].channelId)
+    }
+  }, [channels, debugChannel])
 
   const debugAction = async (action: string) => {
     setLoading(true)
@@ -37,8 +52,9 @@ export default function DebugTab() {
             onChange={(e) => setDebugChannel(e.target.value)}
             className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm"
           >
-            <option value="scifi">Sci-Fi</option>
-            <option value="mystery">Mystery</option>
+            {channels?.map(ch => (
+              <option key={ch.id} value={ch.channelId}>{ch.name}</option>
+            ))}
           </select>
         </label>
       </div>
