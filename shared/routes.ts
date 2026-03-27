@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { insertChatSchema, insertVoteSchema } from './schema';
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),

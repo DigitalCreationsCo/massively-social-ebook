@@ -7,7 +7,7 @@
   ],
   "license": "CC BY-NC-SA",
   "scripts": {
-    "dev": "NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
+    "dev": "rm -rf node_modules/.vite && NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
     "build": "NODE_ENV=production tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "release:patch": "npm version patch && git push origin main --tags",
