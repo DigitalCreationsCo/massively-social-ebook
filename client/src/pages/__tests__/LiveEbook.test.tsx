@@ -4,7 +4,6 @@ import LiveEbook from '../LiveEbook';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 
-// Mock the hooks
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),
@@ -29,7 +28,7 @@ describe('LiveEbook Component Redirection', () => {
             voteResults: { A: 0, B: 0 }
         });
 
-        render(<LiveEbook params={{ channelId: 'mystery' }} />);
+        render(<LiveEbook />);
         expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
     });
 
@@ -53,7 +52,7 @@ describe('LiveEbook Component Redirection', () => {
             mostRecentMessage: null
         });
 
-        render(<LiveEbook params={{ channelId: 'mystery' }} />);
+        render(<LiveEbook />);
         expect(mockSetLocation).not.toHaveBeenCalled();
         expect(screen.getByText(/Story starting.../i)).toBeInTheDocument();
     });
@@ -64,7 +63,7 @@ describe('LiveEbook Component Redirection', () => {
             sessionStatus: 'loading',
         });
 
-        render(<LiveEbook params={{ channelId: 'mystery' }} />);
+        render(<LiveEbook />);
         expect(screen.getByText(/Opening.../i)).toBeInTheDocument();
         expect(mockSetLocation).not.toHaveBeenCalled();
     });

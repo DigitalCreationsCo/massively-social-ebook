@@ -628,9 +628,12 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
     for (let i = 0; i < channels.length; i++) {
         const channel = channels[i];
         const existing = await storage.getSchedulesByChannel(channel.channelId);
-        const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
 
-        if (!hasSchedule) {
+
+        const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
+        const needsSeedSchedule = existing.some(s => s.intervalEnabled && !s.scheduledDays);
+
+        if (needsSeedSchedule) {
             const baseHour = 19;
             const hour = baseHour + i;
 

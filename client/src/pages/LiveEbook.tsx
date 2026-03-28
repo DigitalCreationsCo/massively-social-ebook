@@ -8,13 +8,10 @@ import { LiveChat } from '@/components/LiveChat';
 import { PushToggle } from "@/components/pwa/PushToggle";
 import { Loader2, WifiOff, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { DEFAULT_CHANNEL_ID } from '@/App';
 
-interface LiveEbookProps {
-  params: { channelId: string };
-}
-
-export default function LiveEbook({ params }: LiveEbookProps) {
-  const channelId = params.channelId;
+export default function LiveEbook() {
+  const channelId = DEFAULT_CHANNEL_ID;
   const [ chatOpen, setChatOpen ] = useState(false);
 
   const {
@@ -41,7 +38,6 @@ export default function LiveEbook({ params }: LiveEbookProps) {
 
   const [ _, setLocation ] = useLocation();
 
-  // Redirect to upcoming if no active session
   if (!isLoading && (sessionStatus === 'scheduled' || sessionStatus === 'completed')) {
     setLocation('/upcoming');
   }

@@ -3,7 +3,7 @@ import { storage } from '../storage';
 import { sendEmail, sendPushNotification } from '.';
 import { checkAndSendPushWarnings, dispatchWeeklyBriefing } from '../sessions/scheduler';
 
-vi.mock('./storage', () => ({
+vi.mock('../storage', () => ({
     storage: {
         getUsers: vi.fn(),
         listSessions: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('./storage', () => ({
     },
 }));
 
-vi.mock('./notifications', () => ({
+vi.mock('.', () => ({
     sendEmail: vi.fn(),
     sendPushNotification: vi.fn(),
 }));
@@ -47,7 +47,7 @@ describe('Notification System', () => {
 
         expect(sendPushNotification).toHaveBeenCalledWith(
             'token-123',
-            '🔔 5 Minutes to Go-Time',
+            '5 Minutes to Go-Time',
             "Today's chapter is about to begin. Claim your seat now for your daily 25."
         );
     });

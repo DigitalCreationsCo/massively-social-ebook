@@ -3,14 +3,14 @@ import { RagProvider } from "./rag";
 import { storage } from "../storage";
 import { db } from "../db";
 
-vi.mock("./storage", () => ({
+vi.mock("../storage", () => ({
   storage: {
     getBlockCount: vi.fn(),
     getBlocksBySequence: vi.fn(),
   },
 }));
 
-vi.mock("./db", () => ({
+vi.mock("../db", () => ({
   db: {
     select: vi.fn(),
     execute: vi.fn(),

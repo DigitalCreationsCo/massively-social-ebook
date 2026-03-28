@@ -5,7 +5,6 @@ import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { useToast } from '@/hooks/use-toast';
 
-// Mock the hooks
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),
@@ -14,7 +13,6 @@ vi.mock('@/hooks/use-toast', () => ({
     useToast: vi.fn(),
 }));
 
-// Mock fetch
 global.fetch = vi.fn();
 
 describe('UpcomingSession Component', () => {
@@ -23,7 +21,7 @@ describe('UpcomingSession Component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        (useLocation as any).mockReturnValue([ '/upcoming/mystery', mockSetLocation ]);
+        (useLocation as any).mockReturnValue([ '/upcoming', mockSetLocation ]);
         (useToast as any).mockReturnValue({ toast: mockToast });
     });
 
@@ -34,7 +32,7 @@ describe('UpcomingSession Component', () => {
             activeSession: null
         });
 
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        render(<UpcomingSession />);
         expect(screen.getByText(/Loading\.\.\./i)).toBeInTheDocument();
     });
 
@@ -50,7 +48,7 @@ describe('UpcomingSession Component', () => {
             }
         });
 
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        render(<UpcomingSession />);
         expect(screen.getByText(/The Room Is Open/i)).toBeInTheDocument();
         expect(screen.getByText(/Join/i)).toBeInTheDocument();
     });
@@ -69,7 +67,7 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        render(<UpcomingSession />);
         expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
         expect(screen.getByText(/Remind me/i)).toBeInTheDocument();
     });
@@ -81,7 +79,7 @@ describe('UpcomingSession Component', () => {
             activeSession: null
         });
 
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        render(<UpcomingSession />);
         expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
     });
 
@@ -96,8 +94,8 @@ describe('UpcomingSession Component', () => {
             }
         });
 
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/live/mystery');
+        render(<UpcomingSession />);
+        expect(mockSetLocation).toHaveBeenCalledWith('/live');
     });
 
     it('handles reminder download', async () => {
@@ -113,16 +111,14 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        // Mock successful fetch
         (global.fetch as any).mockResolvedValue({
             ok: true,
             json: () => Promise.resolve({ message: "You're on the list." })
         });
-        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        render(<UpcomingSession />);
         const button = screen.getByText(/Remind me/i);
         fireEvent.click(button);
 
-        // Fill email and submit
         const emailInput = screen.getByLabelText(/Email Address/i);
         fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
 

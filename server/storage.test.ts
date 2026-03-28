@@ -2,11 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DatabaseStorage } from './storage';
 import { db } from './db';
 
+// Create chainable mock for drizzle query builder
+function createChainableMock() {
+  const chain: any = {
+    from: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+  };
+  return chain;
+}
+
 // Mock the db
 vi.mock('./db', () => ({
   db: {
-    select: vi.fn(),
-    insert: vi.fn(),
+    select: vi.fn(() => createChainableMock()),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
     execute: vi.fn(),
   }
 }));
@@ -26,22 +40,18 @@ describe('Server Storage & Fallback', () => {
         { imageUrl: null },
       ];
 
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue(mockBlocks),
-      });
+      const chain = createChainableMock();
+      chain.limit.mockResolvedValue(mockBlocks);
+      (db.select as any).mockReturnValue(chain);
 
       const result = await storage.getRandomImage('scifi');
       expect(['url1.jpg', 'url2.jpg']).toContain(result);
     });
 
     it('returns null if no images are found', async () => {
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([]),
-      });
+      const chain = createChainableMock();
+      chain.limit.mockResolvedValue([]);
+      (db.select as any).mockReturnValue(chain);
 
       const result = await storage.getRandomImage('scifi');
       expect(result).toBeNull();
@@ -50,20 +60,18 @@ describe('Server Storage & Fallback', () => {
 
   describe('getBlockCount', () => {
     it('returns the count of blocks for a channel', async () => {
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockResolvedValue([ { value: 42 } ]),
-      });
+      const chain = createChainableMock();
+      chain.where.mockResolvedValue([ { value: 42 } ]);
+      (db.select as any).mockReturnValue(chain);
 
       const result = await storage.getBlockCount('scifi');
       expect(result).toBe(42);
     });
 
     it('returns 0 when no result row is returned', async () => {
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockResolvedValue([]),
-      });
+      const chain = createChainableMock();
+      chain.where.mockResolvedValue([]);
+      (db.select as any).mockReturnValue(chain);
 
       const result = await storage.getBlockCount('scifi');
       expect(result).toBe(0);
@@ -82,22 +90,26 @@ describe('Server Storage & Fallback', () => {
         {
           id: 1,
           channel_id: 'scifi',
+          session_id: 1,
           title: 'First',
           content: 'First block.',
           image_url: '/img/1.jpg',
           option_a: { label: 'A', description: 'desc A' },
           option_b: { label: 'B', description: 'desc B' },
           created_at: '2026-01-01T00:00:00Z',
+          row_num: 1,
         },
         {
           id: 5,
           channel_id: 'scifi',
+          session_id: 1,
           title: 'Fifth',
           content: 'Fifth block.',
           image_url: null,
           option_a: null,
           option_b: null,
           created_at: null,
+          row_num: 5,
         },
       ];
 

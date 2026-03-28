@@ -20,13 +20,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DEFAULT_CHANNEL_ID } from '@/App';
 
-interface UpcomingSessionProps {
-    params: { channelId: string };
-}
-
-export default function UpcomingSession({ params }: UpcomingSessionProps) {
-    const channelId = params.channelId;
+export default function UpcomingSession() {
+    const channelId = DEFAULT_CHANNEL_ID;
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
     const [ reminding, setReminding ] = useState(false);
@@ -67,7 +64,7 @@ export default function UpcomingSession({ params }: UpcomingSessionProps) {
     // Auto-redirect if session becomes active
     useEffect(() => {
         if (sessionStatus === 'active') {
-            setLocation(`/live/${channelId}`);
+            setLocation('/live');
         }
     }, [ sessionStatus, setLocation ]);
 

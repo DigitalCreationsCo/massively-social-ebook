@@ -92,7 +92,7 @@ cp .env.example .env
 - **Debug Tools** — A hidden debug overlay (triggered via `?debug=true&token=...`) allows developers to force session resolution for instant verification.
 - **Live Chat** — Real-time chat alongside the story per channel.
 - **Real-time Syncing** — WebSockets sync votes, chat messages, and the countdown timer simultaneously.
-- **Multi-Channel** — Two parallel story channels (`scifi`, `mystery`) with obfuscated channel IDs for URLs.
+- **Database-Driven Channels** — Channels are stored in the database (`channels` table) with `channelId`, `name`, and `description`. The server queries active channels at runtime rather than using hardcoded values.
 - **Robust Error Handling** — API errors, rate limits, or image failures gracefully fall back to self-contained blocks and cached images.
 
 ## Project Structure
@@ -109,7 +109,6 @@ cp .env.example .env
 │
 ├── shared/                 # Shared between server and client
 │   ├── schema.ts           # Drizzle table definitions + Zod types
-│   ├── channels.ts         # Channel IDs, obfuscation, types
 │   ├── routes.ts           # API contract definitions (Zod schemas)
 │
 ├── prompts/                # AI prompt templates
@@ -135,8 +134,8 @@ cp .env.example .env
 The AI pipeline generates story text and images via NarrativeEngine.
 
 **Text Generation** (`generateStoryBlock`):
-1. { ...insert NarrativeEngine usage here... }
-2. { ...insert NarrativeEngine usage here... }
+1. Builds context from RAG-enabled lore database
+2. Enriches context with recent story blocks for continuity
 3. Passes enriched context to `createStoryBlockInstructions()` prompt template
 4. Sends structured JSON schema request to `gemini-2.5-flash`
 5. Returns `{ title, content, optionA, optionB }`
@@ -198,10 +197,16 @@ Constants (in `routes.ts`):
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/api/channels` | List all channels from database |
+| `GET` | `/api/channels/active` | List channels with active/scheduled sessions |
 | `GET` | `/api/blocks/current?channelId=<id>` | Current block with phase, timer, and turn info |
 | `GET` | `/api/chat?channelId=<id>` | Recent chat history (50 messages) |
 | `GET` | `/api/sessions/next?channelId=<id>` | Fetch the next scheduled or active session |
 | `POST` | `/api/sessions/reminder` | Generate `.ics` reminder (body: `{ sessionId }`) |
+| `GET` | `/api/admin/channels` | List all channels (admin) |
+| `POST` | `/api/admin/channels` | Create new channel (admin) |
+| `PATCH` | `/api/admin/channels/:id` | Update channel (admin) |
+| `DELETE` | `/api/admin/channels/:id` | Delete channel (admin) |
 | `GET` | `/api/admin/sessions` | List all sessions (admin) |
 | `POST` | `/api/admin/sessions` | Create new session (admin) |
 | `PATCH` | `/api/admin/sessions/:id/cancel` | Cancel an upcoming session (admin) |
@@ -228,19 +233,32 @@ Connect to `ws://<host>/ws?channelId=<obfuscatedId>`
 
 ## Database Schema
 
-Three tables managed by Drizzle ORM with PostgreSQL:
+Six tables managed by Drizzle ORM with PostgreSQL:
+
+**`channels`** — Story channels
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | Auto-incrementing ID |
+| `channel_id` | text | Unique channel identifier (e.g., `scifi`, `mystery`) |
+| `name` | text | Display name |
+| `description` | text | Channel description |
+| `created_at` | timestamp | Creation time |
 
 **`blocks`** — Story content blocks
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
-| `channel_id` | text | Channel (`scifi` or `mystery`) |
+| `channel_id` | text | Channel |
+| `session_id` | integer | FK to sessions |
 | `title` | text | Block title |
 | `content` | text | Story text (max ~3 sentences) |
 | `image_url` | text | Path to associated image |
 | `option_a` | jsonb | `{ label, description }` for choice A |
 | `option_b` | jsonb | `{ label, description }` for choice B |
+| `is_notable` | boolean | Notable moment flag |
+| `embedding` | vector | Vector embedding for RAG |
 | `created_at` | timestamp | Creation time |
 
 **`votes`** — Reader votes per block
@@ -249,6 +267,7 @@ Three tables managed by Drizzle ORM with PostgreSQL:
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
 | `channel_id` | text | Channel |
+| `session_id` | integer | FK to sessions |
 | `block_id` | integer | FK to blocks |
 | `user_id` | text | Voter identifier |
 | `choice` | text | `'A'` or `'B'` |
@@ -260,6 +279,7 @@ Three tables managed by Drizzle ORM with PostgreSQL:
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
 | `channel_id` | text | Channel |
+| `schedule_id` | integer | FK to schedules (optional) |
 | `title` | text | Session title |
 | `description` | text | Session summary |
 | `scheduled_start`| timestamp | Start time |
@@ -273,9 +293,63 @@ Three tables managed by Drizzle ORM with PostgreSQL:
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
 | `channel_id` | text | Channel |
+| `session_id` | integer | FK to sessions (optional) |
 | `username` | text | Display name |
 | `text` | text | Message content |
 | `created_at` | timestamp | Message time |
+
+**`lore`** — Story world-building content
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | Auto-incrementing ID |
+| `channel_id` | text | Channel |
+| `content` | text | Lore entry content |
+| `is_active` | boolean | Active flag |
+| `created_at` | timestamp | Creation time |
+
+**`schedules`** — Recurring session schedules
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | Auto-incrementing ID |
+| `channel_id` | text | Channel |
+| `scheduled_days` | jsonb | Days of week |
+| `scheduled_time` | text | Time of day |
+| `interval_enabled` | boolean | Auto-create sessions |
+| `session_count` | integer | Sessions created |
+| `next_run_at` | timestamp | Next run time |
+| `timezone` | text | Timezone |
+| `created_at` | timestamp | Creation time |
+
+**`channel_states`** — Game loop state (persisted for multi-instance support)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `channel_id` | text PK | Channel identifier |
+| `current_phase` | text | `reading`, `voting`, `resolution` |
+| `phase_ends_at` | timestamp | Phase end time |
+| `decision_ends_at` | timestamp | Decision end time |
+| `initial_time_to_decision` | integer | Initial time budget |
+| `turns_to_next_choice` | integer | Turns until next decision |
+| `current_block_id` | integer | Current block |
+| `active_session_id` | integer | Active session |
+| `processing_locked_until` | timestamp | Distributed lock |
+| `updated_at` | timestamp | Last update |
+
+**`pending_blocks`** — Pre-generated story branches
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | Auto-incrementing ID |
+| `for_block_id` | integer | Parent block |
+| `choice` | text | `'A'` or `'B'` |
+| `title` | text | Block title |
+| `content` | text | Block content |
+| `option_a` | jsonb | Choice A data |
+| `option_b` | jsonb | Choice B data |
+| `image_url` | text | Block image |
+| `created_at` | timestamp | Creation time |
 
 Push schema to database:
 
@@ -350,7 +424,6 @@ npm test server/ai.test.ts
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `shared/channels.test.ts` | 5 | Channel obfuscation, ID mapping |
 | `server/ai.test.ts` | 7 | Story block + image generation, RAG integration |
 | `server/storage.test.ts` | 6 | DB access, block count, sequence retrieval |
 | `server/session-storage.test.ts`| 7 | Session CRUD and status management |

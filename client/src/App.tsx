@@ -5,12 +5,14 @@ import { queryClient } from "@/lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
 import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import LiveEbook from "@/pages/LiveEbook";
 import UpcomingSession from "@/pages/UpcomingSession";
-import { DebugTools } from "@/components/DebugTools";
 import { VersionOverlay } from "@/components/VersionOverlay";
+
+// Default channel - change here to switch the active channel
+// Future: load from database or user preference
+export const DEFAULT_CHANNEL_ID = "mystery";
 
 function useAnalyticsHook() {
   const [location] = useLocation();
@@ -29,10 +31,9 @@ function Router() {
   
   return (
     <Switch>
-      <Route path="/" component={NotFound} />
-      <Route path="/live/:channelId" component={LiveEbook} />
-      <Route path="/upcoming/:channelId" component={UpcomingSession} />
-      <Route component={NotFound} />
+      <Route path="/" component={LiveEbook} />
+      <Route path="/live" component={LiveEbook} />
+      <Route path="/upcoming" component={UpcomingSession} />
     </Switch>
   );
 }
@@ -44,7 +45,6 @@ function App() {
         <Toaster />
         <UpdatePrompt />
         <Router />
-        {/* {import.meta.env.DEV && <DebugTools channelId="m2w4k" />} */ }
         <VersionOverlay />
       </TooltipProvider>
     </QueryClientProvider>

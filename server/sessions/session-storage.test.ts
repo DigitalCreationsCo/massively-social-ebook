@@ -4,11 +4,11 @@ import { db } from '../db';
 import { sessions } from '@shared/schema';
 
 // Mock the db
-vi.mock('./db', () => ({
+vi.mock('../db', () => ({
     db: {
-        select: vi.fn(),
-        insert: vi.fn(),
-        update: vi.fn(),
+        select: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockReturnThis(),
+        update: vi.fn().mockReturnThis(),
         execute: vi.fn(),
     }
 }));
