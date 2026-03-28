@@ -15,5 +15,6 @@ export default defineConfig({
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL,
+    ssl: true, // Force SSL for production connectivity
   },
 });

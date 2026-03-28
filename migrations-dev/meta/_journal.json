@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1774646330008,
+      "tag": "0000_public_onslaught",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774646562472,
+      "tag": "0001_channel_states",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774681169213,
+      "tag": "0002_petite_iron_patriot",
+      "breakpoints": true
+    }
+  ]
+}
