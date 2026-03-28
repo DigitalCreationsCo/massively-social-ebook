@@ -32,7 +32,6 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={LiveEbook} />
-      <Route path="/live" component={LiveEbook} />
       <Route path="/upcoming" component={UpcomingSession} />
     </Switch>
   );
