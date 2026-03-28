@@ -1,7 +1,6 @@
 import { storage } from '../storage';
-import { CHANNELS } from '@shared/channels';
 import { sendEmail, sendPushNotification } from '../notifications';
-import { type Session, type Schedule } from '@shared/schema';
+import { type Session, type Schedule, type Channel } from '@shared/schema';
 import { logger } from '../logger';
 import { getMSTDateString, createMSTDate, formatMST } from '@shared/date';
 import {
@@ -624,20 +623,20 @@ async function processEvent(event: ScheduledEvent, now: number): Promise<void> {
  * @internal
  */
 export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
-    const now = new Date();
+    const channels = await storage.getChannels();
 
-    for (const channelId of CHANNELS) {
-        const existing = await storage.getSchedulesByChannel(channelId);
+    for (let i = 0; i < channels.length; i++) {
+        const channel = channels[i];
+        const existing = await storage.getSchedulesByChannel(channel.channelId);
         const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
 
         if (!hasSchedule) {
             const baseHour = 19;
-            const hour = baseHour + CHANNELS.indexOf(channelId);
+            const hour = baseHour + i;
 
-            // Default TitleConfig used only for seed - real programs should be configured via admin
             const defaultTitleConfig: TitleConfig = {
                 format: 'numbered',
-                programName: channelId.charAt(0).toUpperCase() + channelId.slice(1),
+                programName: channel.name,
                 sessionLabel: 'Day',
                 numberSource: 'episode',
                 seasonSize: 30,
@@ -645,7 +644,7 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
             };
 
             const schedule = await storage.createSchedule({
-                channelId,
+                channelId: channel.channelId,
                 scheduledDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
                 scheduledTime: `${hour.toString().padStart(2, '0')}:00`,
                 intervalEnabled: true,
@@ -655,9 +654,9 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
 
             await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
 
-            logger.info(`Created default schedule ${schedule.id} for channel ${channelId}`, 'scheduler');
+            logger.info(`Created default schedule ${schedule.id} for channel ${channel.channelId}`, 'scheduler');
         } else {
-            logger.debug(`Schedule already exists for channel ${channelId}`, 'scheduler');
+            logger.debug(`Schedule already exists for channel ${channel.channelId}`, 'scheduler');
         }
     }
 }

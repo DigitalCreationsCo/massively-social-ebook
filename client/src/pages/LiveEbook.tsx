@@ -1,22 +1,21 @@
 import { trackEvent } from '@/lib/analytics';
-import { useState, useEffect } from 'react';
-import { CHANNELS, DEFAULT_CHANNEL } from '@shared/channels';
+import { useState } from 'react';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
 import { DecisionPhase } from '@/components/DecisionPhase';
 import { LiveChat } from '@/components/LiveChat';
 import { PushToggle } from "@/components/pwa/PushToggle";
-import { Loader2, WifiOff, Users, Radio } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2, WifiOff, Users } from 'lucide-react';
+import { motion } from 'framer-motion';
 
+interface LiveEbookProps {
+  params: { channelId: string };
+}
 
-export default function LiveEbook() {
-  const [ selectedChannel, setSelectedChannel ] = useState<string>(DEFAULT_CHANNEL);
+export default function LiveEbook({ params }: LiveEbookProps) {
+  const channelId = params.channelId;
   const [ chatOpen, setChatOpen ] = useState(false);
-  const [ showChannelSelector, setShowChannelSelector ] = useState(false);
 
   const {
     isLoading,
@@ -38,7 +37,7 @@ export default function LiveEbook() {
     macroPhase,
     reactions,
     submitReaction
-  } = useLiveState(selectedChannel);
+  } = useLiveState(channelId);
 
   const [ _, setLocation ] = useLocation();
 
@@ -49,7 +48,7 @@ export default function LiveEbook() {
 
   const handleToggleChat = () => {
     setChatOpen((prev) => !prev);
-    trackEvent('Live Chat Toggled', { isOpen: !chatOpen, channel: selectedChannel });
+    trackEvent('Live Chat Toggled', { isOpen: !chatOpen, channel: channelId });
   };
 
   if (isLoading) {
@@ -133,7 +132,7 @@ export default function LiveEbook() {
             optionA={ currentBlock?.optionA }
             optionB={ currentBlock?.optionB }
             voteResults={ voteResults }
-            selectedChoice={ hasVotedCurrent ? (sessionStorage.getItem(`voted_${selectedChannel}_${currentBlock?.id}`) as 'A' | 'B') : null }
+            selectedChoice={ hasVotedCurrent ? (sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) as 'A' | 'B') : null }
           />
         )}
       </section>

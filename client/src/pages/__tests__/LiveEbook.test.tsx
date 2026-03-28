@@ -29,7 +29,7 @@ describe('LiveEbook Component Redirection', () => {
             voteResults: { A: 0, B: 0 }
         });
 
-        render(<LiveEbook />);
+        render(<LiveEbook params={{ channelId: 'mystery' }} />);
         expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
     });
 
@@ -53,7 +53,7 @@ describe('LiveEbook Component Redirection', () => {
             mostRecentMessage: null
         });
 
-        render(<LiveEbook />);
+        render(<LiveEbook params={{ channelId: 'mystery' }} />);
         expect(mockSetLocation).not.toHaveBeenCalled();
         expect(screen.getByText(/Story starting.../i)).toBeInTheDocument();
     });
@@ -64,7 +64,7 @@ describe('LiveEbook Component Redirection', () => {
             sessionStatus: 'loading',
         });
 
-        render(<LiveEbook />);
+        render(<LiveEbook params={{ channelId: 'mystery' }} />);
         expect(screen.getByText(/Opening.../i)).toBeInTheDocument();
         expect(mockSetLocation).not.toHaveBeenCalled();
     });

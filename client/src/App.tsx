@@ -29,8 +29,9 @@ function Router() {
   
   return (
     <Switch>
-      <Route path="/" component={LiveEbook} />
-      <Route path="/upcoming" component={() => <UpcomingSession />} />
+      <Route path="/" component={NotFound} />
+      <Route path="/live/:channelId" component={LiveEbook} />
+      <Route path="/upcoming/:channelId" component={UpcomingSession} />
       <Route component={NotFound} />
     </Switch>
   );

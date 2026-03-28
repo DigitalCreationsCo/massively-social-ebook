@@ -21,7 +21,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function UpcomingSession({ channelId = 'mystery' }: { channelId?: string; }) {
+interface UpcomingSessionProps {
+    params: { channelId: string };
+}
+
+export default function UpcomingSession({ params }: UpcomingSessionProps) {
+    const channelId = params.channelId;
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
     const [ reminding, setReminding ] = useState(false);
@@ -62,7 +67,7 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
     // Auto-redirect if session becomes active
     useEffect(() => {
         if (sessionStatus === 'active') {
-            setLocation('/');
+            setLocation(`/live/${channelId}`);
         }
     }, [ sessionStatus, setLocation ]);
 

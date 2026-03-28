@@ -23,7 +23,7 @@ describe('UpcomingSession Component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        (useLocation as any).mockReturnValue([ '/upcoming', mockSetLocation ]);
+        (useLocation as any).mockReturnValue([ '/upcoming/mystery', mockSetLocation ]);
         (useToast as any).mockReturnValue({ toast: mockToast });
     });
 
@@ -34,7 +34,7 @@ describe('UpcomingSession Component', () => {
             activeSession: null
         });
 
-        render(<UpcomingSession />);
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
         expect(screen.getByText(/Loading\.\.\./i)).toBeInTheDocument();
     });
 
@@ -50,7 +50,7 @@ describe('UpcomingSession Component', () => {
             }
         });
 
-        render(<UpcomingSession />);
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
         expect(screen.getByText(/The Room Is Open/i)).toBeInTheDocument();
         expect(screen.getByText(/Join/i)).toBeInTheDocument();
     });
@@ -69,7 +69,7 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        render(<UpcomingSession />);
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
         expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
         expect(screen.getByText(/Remind me/i)).toBeInTheDocument();
     });
@@ -81,7 +81,7 @@ describe('UpcomingSession Component', () => {
             activeSession: null
         });
 
-        render(<UpcomingSession />);
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
         expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
     });
 
@@ -96,8 +96,8 @@ describe('UpcomingSession Component', () => {
             }
         });
 
-        render(<UpcomingSession />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/');
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
+        expect(mockSetLocation).toHaveBeenCalledWith('/live/mystery');
     });
 
     it('handles reminder download', async () => {
@@ -118,7 +118,7 @@ describe('UpcomingSession Component', () => {
             ok: true,
             json: () => Promise.resolve({ message: "You're on the list." })
         });
-        render(<UpcomingSession />);
+        render(<UpcomingSession params={{ channelId: 'mystery' }} />);
         const button = screen.getByText(/Remind me/i);
         fireEvent.click(button);
 

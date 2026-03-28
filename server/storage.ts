@@ -1,6 +1,13 @@
+
 import { db } from "./db";
 import { enqueueEmbeddingTask } from "./blocks/embedding-queue";
 import {
+  channelStates,
+  pendingBlocks,
+  type ChannelStateRow,
+  type InsertChannelState,
+  type PendingBlock,
+  type InsertPendingBlock,
   blocks,
   votes,
   chat,
@@ -35,7 +42,7 @@ import {
   users,
   systemSettings,
 } from "@shared/schema";
-import { desc, eq, and, asc, count, sql, lte } from "drizzle-orm";
+import { desc, eq, and, asc, count, sql, lte, lt, isNull, or } from "drizzle-orm";
 
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
@@ -63,6 +70,7 @@ export interface IStorage {
   setBlockNotable(blockId: number, isNotable: boolean): Promise<void>;
 
   getChannels(): Promise<Channel[]>;
+  getActiveChannels(): Promise<Channel[]>;
   getChannel(channelId: string): Promise<Channel | undefined>;
   createChannel(channel: InsertChannel): Promise<Channel>;
   updateChannel(id: number, channel: Partial<InsertChannel>): Promise<Channel>;
@@ -241,6 +249,32 @@ export class DatabaseStorage implements IStorage {
 
   async getChannels(): Promise<Channel[]> {
     return await db.select().from(channels).orderBy(asc(channels.id));
+  }
+
+  /**
+   * Returns channels that have at least one active or scheduled session.
+   * Used by the game loop and scheduler to determine which channels to process.
+   */
+  async getActiveChannels(): Promise<Channel[]> {
+    const LOOKAHEAD_DAYS = 7;
+    const lookaheadDate = new Date(Date.now() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+
+    const result = await db
+      .selectDistinct({ channel: channels })
+      .from(channels)
+      .innerJoin(sessions, eq(sessions.channelId, channels.channelId))
+      .where(
+        and(
+          or(
+            eq(sessions.status, 'active'),
+            eq(sessions.status, 'scheduled')
+          ),
+          lte(sessions.scheduledStart, lookaheadDate)
+        )
+      )
+      .orderBy(asc(channels.id));
+
+    return result.map(r => r.channel);
   }
 
   async getChannel(channelId: string): Promise<Channel | undefined> {
@@ -491,6 +525,192 @@ export class DatabaseStorage implements IStorage {
         sessionCount: sql`${schedules.sessionCount} + 1`,
       })
       .where(eq(schedules.id, scheduleId));
+  }
+
+  /**
+ * storage-additions.ts
+ *
+ * Paste these methods into your existing storage class / object.
+ * They depend on:
+ *   - `db`                from your drizzle connection (e.g. "../db")
+ *   - table references    from "@shared/schema"
+ *   - drizzle operators   from "drizzle-orm"
+ *
+ * After adding them, run a migration to create the two new tables:
+ *   channel_states   (channelStates)
+ *   pending_blocks   (pendingBlocks)
+ */
+
+  /**
+   * Returns the persisted game-loop state for a channel, or null if no row
+   * exists yet (first run before any session has ever started).
+   */
+  async getChannelState(channelId: string): Promise<ChannelStateRow | null> {
+    const [ row ] = await db
+      .select()
+      .from(channelStates)
+      .where(eq(channelStates.channelId, channelId));
+    return row ?? null;
+  }
+
+  /**
+   * Upserts game-loop state for a channel.  Pass only the fields you want to
+   * change; everything else is left as-is.  `updatedAt` is always refreshed.
+   *
+   * The initial `phaseEndsAt` / `decisionEndsAt` default to NOW() so the row
+   * is always valid even if called with a partial payload on first insert.
+   */
+  async upsertChannelState(
+    channelId: string,
+    data: Partial<Omit<InsertChannelState, "channelId">>
+  ): Promise<ChannelStateRow> {
+    const now = new Date();
+    const base: InsertChannelState = {
+      channelId,
+      currentPhase: "reading",
+      phaseEndsAt: now,
+      decisionEndsAt: now,
+      initialTimeToDecision: 0,
+      turnsToNextChoice: 3,
+      updatedAt: now,
+      ...data,
+    };
+
+    const [ row ] = await db
+      .insert(channelStates)
+      .values(base)
+      .onConflictDoUpdate({
+        target: channelStates.channelId,
+        set: { ...data, updatedAt: now },
+      })
+      .returning();
+
+    return row;
+  }
+
+  // ─── Distributed game-loop lock ───────────────────────────────────────────────
+  //
+  // These two helpers implement a lightweight advisory lock stored in the
+  // `processingLockedUntil` column.  The UPDATE is atomic at the DB level,
+  // so even if two instances call tryAcquireGameLock at the same millisecond
+  // only one will see a returned row.
+  //
+  // ttlMs: how long the lock is held before it expires automatically.
+  //        Set this longer than the worst-case AI generation time (e.g. 90 s).
+
+  /**
+   * Attempts to atomically claim the game-loop lock for `channelId`.
+   * Returns true if the lock was acquired, false if another instance holds it.
+   */
+  async tryAcquireGameLock(channelId: string, ttlMs: number): Promise<boolean> {
+    const expiry = new Date(Date.now() + ttlMs);
+    const result = await db
+      .update(channelStates)
+      .set({ processingLockedUntil: expiry, updatedAt: new Date() })
+      .where(
+        and(
+          eq(channelStates.channelId, channelId),
+          or(
+            isNull(channelStates.processingLockedUntil),
+            lt(channelStates.processingLockedUntil, new Date())
+          )
+        )
+      )
+      .returning({ channelId: channelStates.channelId });
+
+    return result.length > 0;
+  }
+
+  /**
+   * Releases the game-loop lock by clearing `processingLockedUntil`.
+   * Always call this in a `finally` block after acquiring the lock.
+   */
+  async releaseGameLock(channelId: string): Promise<void> {
+    await db
+      .update(channelStates)
+      .set({ processingLockedUntil: null, updatedAt: new Date() })
+      .where(eq(channelStates.channelId, channelId));
+  }
+
+  // ─── Pending Blocks ───────────────────────────────────────────────────────────
+
+  /**
+   * Looks up a pre-generated continuation for a given block + choice.
+   * Returns null if pre-generation hasn't finished yet (caller falls back to
+   * inline generation).
+   */
+  async getPendingBlock(forBlockId: number, choice: "A" | "B"): Promise<PendingBlock | null> {
+    const [ row ] = await db
+      .select()
+      .from(pendingBlocks)
+      .where(
+        and(
+          eq(pendingBlocks.forBlockId, forBlockId),
+          eq(pendingBlocks.choice, choice)
+        )
+      );
+    return row ?? null;
+  }
+
+  /**
+   * Persists a pre-generated story continuation.
+   * The INSERT is ignored on conflict so fire-and-forget callers can't create
+   * duplicates if triggered twice (e.g. after a restart that resumed mid-tick).
+   */
+  async savePendingBlock(data: InsertPendingBlock): Promise<PendingBlock> {
+    const [ row ] = await db
+      .insert(pendingBlocks)
+      .values(data)
+      .onConflictDoNothing()  // add UNIQUE(for_block_id, choice) in your migration
+      .returning();
+    return row;
+  }
+
+  /**
+   * Deletes all pending continuations for a block once it has been consumed
+   * (either used or superseded).  Call this when advancing to the next block.
+   */
+  async deletePendingBlocksForBlock(forBlockId: number): Promise<void> {
+    await db
+      .delete(pendingBlocks)
+      .where(eq(pendingBlocks.forBlockId, forBlockId));
+  }
+
+  // ─── Point-lookups (new, needed by the stateless game loop) ──────────────────
+
+  /**
+   * Fetches a single block by primary key.
+   * Used by the game loop instead of the in-memory `currentBlock` pointer.
+   */
+  async getBlockById(id: number): Promise<Block | null> {
+    const [ row ] = await db
+      .select()
+      .from(blocks)
+      .where(eq(blocks.id, id));
+    return row ?? null;
+  }
+
+  /**
+   * Fetches a single session by primary key.
+   * Used by the game loop instead of the in-memory `activeSession` pointer.
+   */
+  async getSessionById(id: number): Promise<Session | null> {
+    const [ row ] = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, id));
+    return row ?? null;
+  }
+
+  /**
+   * Pushes `scheduledEnd` forward (or backward) for a session.
+   * Used by the debug /resolve endpoint to trigger resolution immediately.
+   */
+  async updateSessionScheduledEnd(id: number, scheduledEnd: Date): Promise<void> {
+    await db
+      .update(sessions)
+      .set({ scheduledEnd })
+      .where(eq(sessions.id, id));
   }
 }
 

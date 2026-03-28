@@ -17,7 +17,31 @@ export const sessionResponseSchema = z.object({
   createdAt: z.string(),
 });
 
+export const channelSchema = z.object({
+  id: z.number(),
+  channelId: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  createdAt: z.string(),
+});
+
 export const api = {
+  channels: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/channels' as const,
+      responses: {
+        200: z.array(channelSchema),
+      },
+    },
+    active: {
+      method: 'GET' as const,
+      path: '/api/channels/active' as const,
+      responses: {
+        200: z.array(channelSchema),
+      },
+    },
+  },
   chat: {
     history: {
       method: 'GET' as const,
@@ -69,6 +93,27 @@ export const api = {
     },
   },
   admin: {
+    channels: {
+      list: {
+        method: 'GET' as const,
+        path: '/api/admin/channels' as const,
+        responses: {
+          200: z.array(channelSchema),
+        },
+      },
+      create: {
+        method: 'POST' as const,
+        path: '/api/admin/channels' as const,
+        body: z.object({
+          channelId: z.string(),
+          name: z.string(),
+          description: z.string().optional(),
+        }),
+        responses: {
+          201: channelSchema,
+        },
+      },
+    },
     sessions: {
       list: {
         method: 'GET' as const,
