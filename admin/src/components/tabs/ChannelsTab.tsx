@@ -9,7 +9,7 @@ const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'
 export default function ChannelsTab() {
   const { token } = useAdminToken()
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ name: '', description: '' })
+  const [editForm, setEditForm] = useState({ name: '', description: '', channelId: '' })
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null)
   const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null)
   const [scheduleForm, setScheduleForm] = useState({
@@ -17,6 +17,7 @@ export default function ChannelsTab() {
     scheduledTime: '19:00',
     intervalEnabled: true,
     timezone: 'America/Denver',
+    titleConfig: null as any,
   })
 
   const fetchChannels = useCallback(async () => {
@@ -27,13 +28,13 @@ export default function ChannelsTab() {
 
   const handleEdit = (channel: Channel) => {
     setEditingId(channel.id)
-    setEditForm({ name: channel.name, description: channel.description || '' })
+    setEditForm({ name: channel.name, description: channel.description || '', channelId: channel.channelId })
   }
 
   const handleSave = async (id: number) => {
     await adminFetch(`/channels/${id}`, token, {
       method: 'PATCH',
-      body: JSON.stringify(editForm),
+      body: JSON.stringify({ name: editForm.name, description: editForm.description, channelId: editForm.channelId }),
     })
     setEditingId(null)
     refresh()
@@ -82,6 +83,7 @@ export default function ChannelsTab() {
         scheduledTime: scheduleForm.scheduledTime,
         intervalEnabled: scheduleForm.intervalEnabled,
         timezone: scheduleForm.timezone,
+        titleConfig: scheduleForm.titleConfig,
       }),
     })
     setExpandedChannel(null)
@@ -90,6 +92,7 @@ export default function ChannelsTab() {
       scheduledTime: '19:00',
       intervalEnabled: true,
       timezone: 'America/Denver',
+      titleConfig: null,
     })
   }
 
@@ -101,6 +104,7 @@ export default function ChannelsTab() {
         scheduledTime: scheduleForm.scheduledTime,
         intervalEnabled: scheduleForm.intervalEnabled,
         timezone: scheduleForm.timezone,
+        titleConfig: scheduleForm.titleConfig,
       }),
     })
     setEditingScheduleId(null)
@@ -110,6 +114,7 @@ export default function ChannelsTab() {
       scheduledTime: '19:00',
       intervalEnabled: true,
       timezone: 'America/Denver',
+      titleConfig: null,
     })
   }
 
@@ -126,6 +131,7 @@ export default function ChannelsTab() {
       scheduledTime: schedule.scheduledTime || '19:00',
       intervalEnabled: schedule.intervalEnabled,
       timezone: schedule.timezone,
+      titleConfig: (schedule as any).titleConfig || null,
     })
   }
 
@@ -137,6 +143,7 @@ export default function ChannelsTab() {
       scheduledTime: '19:00',
       intervalEnabled: true,
       timezone: 'America/Denver',
+      titleConfig: null,
     })
   }
 
@@ -164,34 +171,40 @@ export default function ChannelsTab() {
         {channels?.map((channel) => (
           <div key={channel.id} className="border border-gray-200 rounded-lg p-4 bg-white">
             {editingId === channel.id ? (
-              <div className="space-y-2">
-                <input
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
-                  placeholder="Name"
-                />
-                <input
-                  value={editForm.description}
-                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                  className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
-                  placeholder="Description"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleSave(channel.id)}
-                    className="text-xs text-green-600 hover:underline"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setEditingId(null)}
-                    className="text-xs text-gray-500 hover:underline"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+               <div className="space-y-2">
+                 <input
+                   value={editForm.name}
+                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                   className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                   placeholder="Name"
+                 />
+                 <input
+                   value={editForm.description}
+                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                   className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                   placeholder="Description"
+                 />
+                 <input
+                   value={editForm.channelId}
+                   onChange={(e) => setEditForm({ ...editForm, channelId: e.target.value })}
+                   className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                   placeholder="Channel ID"
+                 />
+                 <div className="flex gap-2">
+                   <button
+                     onClick={() => handleSave(channel.id)}
+                     className="text-xs text-green-600 hover:underline"
+                   >
+                     Save
+                   </button>
+                   <button
+                     onClick={() => setEditingId(null)}
+                     className="text-xs text-gray-500 hover:underline"
+                   >
+                     Cancel
+                   </button>
+                 </div>
+               </div>
             ) : (
               <div>
                 <div className="flex justify-between items-start">

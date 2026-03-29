@@ -25,8 +25,8 @@ if (process.env.NODE_ENV === "development" && !(global as any)[ "__NARRATIVE_LAB
     if ((global as any)[ "__NARRATIVE_LAB_STARTED__" ] !== "pending") return;
 
     try {
-      const { startLabServer, configureNarrativeLab } = await import("narrative-engine/lab");
-      configureNarrativeLab(engine);
+      const { startLabServer, configureLabEngine } = await import("narrative-engine-lab");
+      configureLabEngine(engine);
       await startLabServer();
       (global as any)[ "__NARRATIVE_LAB_STARTED__" ] = true;
       console.log("[Lab] NarrativeEngine Lab ready");

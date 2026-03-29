@@ -26,6 +26,7 @@ export default defineConfig({
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
       "narrative-engine": path.resolve(import.meta.dirname, "packages/narrative-engine"),
+      "narrative-engine-lab": path.resolve(import.meta.dirname, "packages/narrative-engine-lab"),
     },
   },
   build: {

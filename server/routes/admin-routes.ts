@@ -282,6 +282,7 @@ export function registerAdminRoutes(app: Express): void {
       const scheduledTime = toString(req.body.scheduledTime);
       const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
       const timezone = toString(req.body.timezone);
+      const titleConfig = req.body.titleConfig;
 
       const schedule = await storage.createSchedule({
         channelId,
@@ -289,6 +290,7 @@ export function registerAdminRoutes(app: Express): void {
         scheduledTime,
         intervalEnabled: intervalEnabled ?? false,
         timezone: timezone ?? 'UTC',
+        titleConfig,
       });
       res.status(201).json(schedule);
     } catch (err) {
@@ -305,6 +307,7 @@ export function registerAdminRoutes(app: Express): void {
       const intervalEnabled = req.body.intervalEnabled as boolean | undefined;
       const timezone = toString(req.body.timezone);
       const nextRunAt = req.body.nextRunAt as string | undefined;
+      const titleConfig = req.body.titleConfig;
 
       const schedule = await storage.updateSchedule(id, {
         ...(scheduledDays !== undefined && { scheduledDays }),
@@ -312,6 +315,7 @@ export function registerAdminRoutes(app: Express): void {
         ...(intervalEnabled !== undefined && { intervalEnabled }),
         ...(timezone && { timezone }),
         ...(nextRunAt && { nextRunAt: new Date(nextRunAt) }),
+        ...(titleConfig !== undefined && { titleConfig }),
       });
       res.json(schedule);
     } catch (err) {

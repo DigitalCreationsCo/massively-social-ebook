@@ -49,7 +49,7 @@ Implement the `NarrativeProvider` to bridge your database (PostgreSQL, Supabase,
 **Crucial:** All search scores must be normalized to a `0.0` to `1.0` range.
 
 ```typescript
-import { NarrativeProvider, HybridCandidate, normalizeScore, configureNarrativeLab } from 'narrative-engine';
+import { NarrativeProvider, HybridCandidate, normalizeScore, configureLabEngine } from 'narrative-engine';
 
 class MyDatabaseProvider implements NarrativeProvider<MyStoryBlock> {
   async getHybridSearchCandidates(channelId, query, limit) {
@@ -71,7 +71,7 @@ const provider = new MyDatabaseProvider();
 const engine = new NarrativeEngine(provider);
 
 // Optional: Configure registry for the NarrativeEngine Test Lab
-configureNarrativeLab(engine);
+configureLabEngine(engine);
 
 const prompt = await engine.generateContext("channel-123", "User's current choice");
 ```

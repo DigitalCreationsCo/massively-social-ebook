@@ -14,11 +14,16 @@ import {
  * Used to ensure events are processed exactly once and maintain idempotency.
  */
 const CURSOR_KEY = 'notification_cursor';
+const SEEDING_CURSOR_KEY = 'seeding_cursor';
 
 /**
  * Interval at which the notification loop runs (every 30 seconds).
  */
 const LOOP_INTERVAL_MS = 30 * 1000;
+/**
+ * Interval at which the seeding lookahead loop runs (every 30 minutes).
+ */
+const SEEDING_INTERVAL_MS = 30 * 60 * 1000;
 
 /**
  * Maximum number of days into the future to pre-schedule sessions.
@@ -95,8 +100,13 @@ async function runNotificationLoop(): Promise<void> {
         // Process due schedules (create sessions for schedules whose nextRunAt has passed)
         await processDueSchedules();
 
-        // Ensure sessions exist within the 7-day lookahead window
-        await ensureSessionsExistWithinLookahead();
+        // Ensure sessions exist within the 7-day lookahead window (EVERY 30 MINUTES)
+        const lastSeedingStr = await storage.getSystemSetting(SEEDING_CURSOR_KEY);
+        const lastSeeding = lastSeedingStr ? parseInt(lastSeedingStr, 10) : 0;
+        if (now - lastSeeding >= SEEDING_INTERVAL_MS) {
+            await ensureSessionsExistWithinLookahead();
+            await storage.setSystemSetting(SEEDING_CURSOR_KEY, now.toString());
+        }
 
         // Process notification events (push warnings, weekly briefings)
         const events = await getEventsInWindow(lastProcessed, now);
@@ -143,7 +153,7 @@ async function processDueSchedules(): Promise<void> {
             const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
             const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
-            const session = await storage.createSession({
+            const session = await storage.createSessionWithScheduleUpdate({
                 channelId: schedule.channelId,
                 scheduleId: schedule.id,
                 title,
@@ -154,10 +164,7 @@ async function processDueSchedules(): Promise<void> {
                 seasonNumber,
                 episodeNumber,
                 subtitle: null,
-            });
-
-            // Persist the incremented count (must happen after createSession for consistency)
-            await storage.incrementScheduleSessionCount(schedule.id);
+            }, schedule.id);
 
             // Compute and store the next run time
             const nextRun = computeNextRunAt(schedule);
@@ -205,11 +212,12 @@ async function ensureSessionsExistWithinLookahead(): Promise<void> {
             // Find gaps (dates with no session)
             const existingDates = new Set(upcomingSessions.map(s => {
                 const d = new Date(s.scheduledStart);
-                return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+                // Return YYYY-MM-DD for a robust date comparison
+                return d.toISOString().split('T')[0];
             }));
 
             const gapDates = scheduledDates.filter(date => {
-                const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+                const key = date.toISOString().split('T')[0];
                 return !existingDates.has(key);
             });
 
@@ -225,7 +233,7 @@ async function ensureSessionsExistWithinLookahead(): Promise<void> {
                 const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
-                const session = await storage.createSession({
+                const session = await storage.createSessionWithScheduleUpdate({
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
                     title,
@@ -236,9 +244,8 @@ async function ensureSessionsExistWithinLookahead(): Promise<void> {
                     seasonNumber,
                     episodeNumber,
                     subtitle: null,
-                });
+                }, schedule.id);
 
-                await storage.incrementScheduleSessionCount(schedule.id);
                 await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
 
                 logger.info(`Seeded session "${title}" (gap-fill) for schedule ${schedule.id}`, 'scheduler');

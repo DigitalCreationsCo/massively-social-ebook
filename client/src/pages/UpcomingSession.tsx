@@ -221,8 +221,7 @@ export default function UpcomingSession() {
                                         <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
                                             <h2 className="text-2xl font-serif text-white text-center mb-4 leading-tight">{ nextSession.title }</h2>
                                             <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                                                A detective descends into a deep mystery. Step into a city where every shadow has a secret.
-                                                {/* description: { nextSession.description } */ }
+                                            { nextSession.description }
                                             </p>
                                         </div>
                                 </div>) }

@@ -80,6 +80,7 @@ export interface IStorage {
   getActiveSession(channelId: string): Promise<Session | undefined>;
   getSessionWithSchedule(sessionId: number): Promise<SessionWithSchedule | undefined>;
   createSession(data: InsertSession): Promise<Session>;
+  createSessionWithScheduleUpdate(sessionData: InsertSession, scheduleId: number): Promise<Session>;
   updateSession(id: number, data: Partial<Session>): Promise<Session>;
   updateSessionStatus(id: number, status: SessionStatus): Promise<Session>;
   listSessions(channelId?: string, status?: SessionStatus): Promise<Session[]>;
@@ -341,6 +342,19 @@ export class DatabaseStorage implements IStorage {
     console.log('[Storage] Creating session:', data.title, 'for channel', data.channelId);
     const [session] = await db.insert(sessions).values(data).returning();
     return session;
+  }
+
+  async createSessionWithScheduleUpdate(sessionData: InsertSession, scheduleId: number): Promise<Session> {
+    return await db.transaction(async (tx) => {
+        const [session] = await tx.insert(sessions).values(sessionData).returning();
+        await tx
+            .update(schedules)
+            .set({
+                sessionCount: sql`${schedules.sessionCount} + 1`,
+            })
+            .where(eq(schedules.id, scheduleId));
+        return session;
+    });
   }
 
   async updateSessionStatus(id: number, status: SessionStatus): Promise<Session> {

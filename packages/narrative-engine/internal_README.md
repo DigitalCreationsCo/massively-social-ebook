@@ -39,7 +39,7 @@ packages/narrative-engine/
 
 ```typescript
 export { NarrativeEngine } from "./engine";
-export { configureNarrativeLab } from "./lab";
+export { configureLabEngine } from "./lab";
 export type { NarrativeProvider, HybridCandidate } from "./provider";
 export type { TraceObject } from "./trace";
 ```
@@ -388,7 +388,7 @@ export function loggerNarrativeTrace(traceObject: TraceObject): void {
 **File**: `packages/narrative-engine/src/lab.ts`
 
 ```typescript
-export function configureNarrativeLab(engine: NarrativeEngine): void {
+export function configureLabEngine(engine: NarrativeEngine): void {
   // GET /__narrative_lab/traces
   // Returns all traces from .traces/narrative_ledger.jsonl
   

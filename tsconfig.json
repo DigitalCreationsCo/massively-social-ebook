@@ -22,6 +22,9 @@
       ],
       "narrative-engine": [
         "./packages/narrative-engine"
+      ],
+      "narrative-engine-lab": [
+        "./packages/narrative-engine-lab"
       ]
     }
   }

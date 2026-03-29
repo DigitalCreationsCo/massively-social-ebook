@@ -150,7 +150,6 @@ export default function SchedulesTab() {
         try {
             await adminFetch(`/schedules/${scheduleId}`, token, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ titleConfig: config }),
             });
             setEditingId(null);
