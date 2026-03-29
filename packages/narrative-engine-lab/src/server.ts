@@ -2,37 +2,15 @@ import express from "express";
 import * as fs from "fs";
 import * as path from "path";
 import type { Express, NextFunction, Request, Response } from "express";
-import { LabConfig, NarrativeEngine } from "./engine";
-import { InMemoryNarrativeProvider } from "./provider";
+import { LabConfig, NarrativeEngine, InMemoryNarrativeProvider } from "narrative-engine";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { randomUUID } from "crypto";
 import cors from "cors";
 import { createServer } from "node:http";
 
-// Lazy-load Vite only in development for the lab UI
-// This prevents Vite from being bundled in production builds
-let viteModule: any;
-async function getVite() {
-  if (!viteModule) {
-    viteModule = await import("vite");
-  }
-  return viteModule;
-}
-
-// labDir is available natively in CJS, but we need a fallback for ESM
-// This is evaluated at module load time - won't break in CJS bundles
-let moduleDir: string;
-try {
-  moduleDir = dirname(fileURLToPath(import.meta.url));
-} catch {
-  // CJS fallback - use global labDir which is available in CJS
-  moduleDir = (globalThis as any).labDir || process.cwd();
-}
-const labDir = moduleDir;
-
-const GLOBAL_KEY = Symbol.for("narrative.engine.registry");
-const LAB_TOKEN = Symbol.for("narrative.lab.token");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const verboseLog = {
   lab: (...args: unknown[]) => {
@@ -68,6 +46,9 @@ const verboseLog = {
   },
 };
 
+const GLOBAL_KEY = Symbol.for("narrative.engine.registry");
+const LAB_TOKEN = Symbol.for("narrative.lab.token");
+
 if (!(global as any)[ LAB_TOKEN ]) {
   (global as any)[ LAB_TOKEN ] = process.env.LAB_SECRET || `lab_${randomUUID()}`;
 }
@@ -96,15 +77,11 @@ export function securityGate(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-const traceDir = path.join(process.cwd(), ".traces");
-const ledgerPath = path.join(traceDir, "narrative_ledger.jsonl");
+const ledgerPath = path.join(process.cwd(), ".traces", "narrative_ledger.jsonl");
 
-
-
-export function configureNarrativeLab(engine: NarrativeEngine) {
+export function configureLabEngine(engine: NarrativeEngine) {
   verboseLog.lab("Configuring NarrativeEngine instance");
-  const engineInstance = engine;
-  (global as any)[ GLOBAL_KEY ] = engineInstance;
+  (global as any)[ GLOBAL_KEY ] = engine;
   verboseLog.lab("Engine registered to global registry");
 }
 
@@ -123,9 +100,6 @@ export function getActiveEngine(): NarrativeEngine {
   return new NarrativeEngine(provider);
 }
 
-/**
- * Internal function to boot the Express diagnostic surface.
- */
 export async function startLabServer(port: number = 5002): Promise<void> {
   const app = express();
   const server = createServer(app);
@@ -150,7 +124,6 @@ export async function startLabServer(port: number = 5002): Promise<void> {
   const engine = getActiveEngine();
   verboseLog.lab("Lab server initialized with engine");
 
-  // Diagnostic Routes
   app.get("/__narrative_lab/config", (req, res) => {
     verboseLog.request("GET", "/config");
     const startTime = Date.now();
@@ -171,7 +144,6 @@ export async function startLabServer(port: number = 5002): Promise<void> {
         engine.setLabConfig(config);
       }
 
-      // Handle new block addition for in-memory provider
       if (newBlock && newBlock.content) {
         const provider = engine[ 'provider' ];
         if (provider && typeof provider.addBlock === 'function') {
@@ -261,21 +233,23 @@ export async function startLabServer(port: number = 5002): Promise<void> {
     }
   });
 
+  const distPath = resolve(__dirname, "..", "dist", "ui");
+
   if (process.env.NODE_ENV === "development") {
     verboseLog.lab("Starting Vite dev server integration");
-    const vite = await getVite();
-    const viteConfig = await import("../lab/vite.config");
-    const server = await vite.createServer({
+    const vite = await import("vite");
+    const { default: viteConfig } = await import("../vite.config");
+    const devServer = await vite.createServer({
       ...viteConfig,
       server: { 
         middlewareMode: true,
         hmr: false,
       },
       appType: "spa",
-      root: resolve(labDir, "../lab"),
+      root: __dirname,
     });
 
-    app.use(server.middlewares);
+    app.use(devServer.middlewares);
     verboseLog.lab("Vite middleware attached");
 
     app.use(async (req, res, next) => {
@@ -287,23 +261,22 @@ export async function startLabServer(port: number = 5002): Promise<void> {
 
       try {
         let template = fs.readFileSync(
-          resolve(labDir, "../lab/index.html"),
+          path.join(__dirname, "index.html"),
           "utf-8"
         );
 
-        template = await vite.transformIndexHtml(url, template);
+        template = await devServer.transformIndexHtml(url, template);
 
         res.status(200).set({ "Content-Type": "text/html" }).end(template);
       } catch (e) {
-        vite.ssrFixStacktrace(e as Error);
+        devServer.ssrFixStacktrace(e as Error);
         next(e);
       }
     });
   } else {
     verboseLog.lab("Production mode: serving static files");
-    const distPath = resolve(labDir, "ui");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => res.sendFile(resolve(distPath, "index.html")));
+    app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
   server.listen(port, "127.0.0.1", () => {
