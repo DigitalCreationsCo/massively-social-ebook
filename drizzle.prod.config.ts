@@ -12,9 +12,11 @@ if (!process.env.DATABASE_URL) {
 export default defineConfig({
   out: "./migrations-prod",
   schema: "./shared/schema.ts",
+  schemaFilter: "public",
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL,
     ssl: true, // Force SSL for production connectivity
   },
+  verbose: true,
 });

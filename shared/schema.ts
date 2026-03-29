@@ -17,9 +17,9 @@ export const channels = pgTable("channels", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertChannelSchema = createInsertSchema(channels).omit({ id: true, createdAt: true });
 export type Channel = typeof channels.$inferSelect;
-export type InsertChannel = z.infer<typeof insertChannelSchema>;
+export const InsertChannel = createInsertSchema(channels);
+export type InsertChannel = z.infer<typeof InsertChannel>;
 
 // Schedules table - recurrence rules for sessions
 export const schedules = pgTable("schedules", {
