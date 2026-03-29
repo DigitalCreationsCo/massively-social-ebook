@@ -138,14 +138,17 @@ async function processDueSchedules(): Promise<void> {
     const now = new Date();
     const dueSchedules = await storage.getDueSchedules(now);
 
-    for (const schedule of dueSchedules) {
+     for (const schedule of dueSchedules) {
         try {
             const { start, end } = computeNextWindow(schedule);
 
             // Session number is incremented sessionCount + 1 (1-based, never 0)
             const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
 
-            const title = buildSessionTitle(schedule, nextSessionNumber, start);
+            // Get channel information for title and description
+            const channel = await storage.getChannel(schedule.channelId);
+
+            const title = buildSessionTitle(schedule, nextSessionNumber, start, channel);
 
             // Compute seasonal position for the session (stored for cheap querying)
             const config = schedule.titleConfig as TitleConfig | null;
@@ -307,12 +310,14 @@ function getScheduledDatesInWindow(schedule: Schedule, start: Date, end: Date): 
 /**
  * Builds the session title from the schedule's TitleConfig.
  *
- * Falls back to a plain date string when the schedule has no titleConfig,
+ * Falls back to the channel name when the schedule has no titleConfig and a channel is provided,
  * preserving backward-compatibility with schedules created before the title system.
+ * If no channel is provided, falls back to a date-based title.
  *
  * @param schedule - The schedule to derive the title from
  * @param nextSessionNumber - The session number (1-based)
  * @param scheduledStart - The scheduled start time of the session
+ * @param channel - The channel object (optional, for fallback title)
  * @returns The derived session title
  *
  * @internal
@@ -321,13 +326,19 @@ function buildSessionTitle(
     schedule: Schedule,
     nextSessionNumber: number,
     scheduledStart: Date,
+    channel?: Channel
 ): string {
     const config = schedule.titleConfig as TitleConfig | null;
 
     if (!config) {
-        // Legacy fallback
-        const dateStr = getMSTDateString(scheduledStart);
-        return `Session - ${dateStr}`;
+        if (channel) {
+            // Legacy fallback - use channel name
+            return channel.name;
+        } else {
+            // Original legacy fallback
+            const dateStr = getMSTDateString(scheduledStart);
+            return `Session - ${dateStr}`;
+        }
     }
 
     const ctx = computeTitleContext(nextSessionNumber, config, scheduledStart);
