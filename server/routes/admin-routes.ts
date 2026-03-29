@@ -141,8 +141,8 @@ export function registerAdminRoutes(app: Express): void {
   app.patch('/admin/api/channels/:id', isAdmin, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id));
-      const { name, description } = req.body;
-      const channel = await storage.updateChannel(id, { name, description });
+      const { channelId, name, description } = req.body;
+      const channel = await storage.updateChannel(id, { channelId, name, description });
       res.json(channel);
     } catch (err) {
       logger.error("Failed to update channel", "admin", err instanceof Error ? err : new Error(String(err)));

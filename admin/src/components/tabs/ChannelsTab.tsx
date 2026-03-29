@@ -2,7 +2,29 @@ import { useState, useCallback } from 'react'
 import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
 import { adminFetch } from '../../api/client';
-import { Channel, Schedule } from '@shared/schema'
+import { Channel, Schedule } from '@shared/schema';
+import TitleBuilder from '../TitleBuilder';
+import { deriveTitleFromConfig, type TitleConfig } from '@shared/title';
+
+// ─── Preview helper ───────────────────────────────────────────────────────────
+
+function getConfigPreview(config: TitleConfig | null | undefined): string {
+  if (!config) return 'No title config';
+  try {
+    const seasonSize = config.seasonSize ?? 30;
+    const ctx = {
+      sessionNumber: 4,
+      seasonNumber: 1,
+      episodeNumber: 4,
+      scheduledStart: new Date(),
+      subtitle: config.subtitle,
+      seasonSize
+    };
+    return deriveTitleFromConfig(config, ctx);
+  } catch {
+    return 'Invalid config';
+  }
+}
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
@@ -12,12 +34,13 @@ export default function ChannelsTab() {
   const [editForm, setEditForm] = useState({ name: '', description: '', channelId: '' })
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null)
   const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null)
+  const [showTitleBuilder, setShowTitleBuilder] = useState(false)
   const [scheduleForm, setScheduleForm] = useState({
     scheduledDays: [] as string[],
     scheduledTime: '19:00',
     intervalEnabled: true,
     timezone: 'America/Denver',
-    titleConfig: null as any,
+    titleConfig: null as TitleConfig | null,
   })
 
   const fetchChannels = useCallback(async () => {
@@ -75,6 +98,12 @@ export default function ChannelsTab() {
       return
     }
     
+    if (!scheduleForm.titleConfig || !scheduleForm.titleConfig.programName) {
+      alert('Please configure a title config (program name is required)')
+      setShowTitleBuilder(true)
+      return
+    }
+    
     await adminFetch('/schedules', token, {
       method: 'POST',
       body: JSON.stringify({
@@ -87,6 +116,7 @@ export default function ChannelsTab() {
       }),
     })
     setExpandedChannel(null)
+    setShowTitleBuilder(false)
     setScheduleForm({
       scheduledDays: [],
       scheduledTime: '19:00',
@@ -97,6 +127,12 @@ export default function ChannelsTab() {
   }
 
   const handleUpdateSchedule = async (scheduleId: number) => {
+    if (!scheduleForm.titleConfig || !scheduleForm.titleConfig.programName) {
+      alert('Please configure a title config (program name is required)')
+      setShowTitleBuilder(true)
+      return
+    }
+    
     await adminFetch(`/schedules/${scheduleId}`, token, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -109,6 +145,7 @@ export default function ChannelsTab() {
     })
     setEditingScheduleId(null)
     setExpandedChannel(null)
+    setShowTitleBuilder(false)
     setScheduleForm({
       scheduledDays: [],
       scheduledTime: '19:00',
@@ -125,7 +162,9 @@ export default function ChannelsTab() {
   }
 
   const openEditSchedule = (schedule: Schedule) => {
+    setExpandedChannel(schedule.channelId)
     setEditingScheduleId(schedule.id)
+    setShowTitleBuilder(false)
     setScheduleForm({
       scheduledDays: schedule.scheduledDays || [],
       scheduledTime: schedule.scheduledTime || '19:00',
@@ -135,15 +174,28 @@ export default function ChannelsTab() {
     })
   }
 
-  const openNewSchedule = (channelId: string) => {
+  const openNewSchedule = (channelId: string, channelName: string) => {
     setExpandedChannel(channelId)
     setEditingScheduleId(null)
+    setShowTitleBuilder(true)
     setScheduleForm({
       scheduledDays: [],
       scheduledTime: '19:00',
       intervalEnabled: true,
       timezone: 'America/Denver',
-      titleConfig: null,
+      titleConfig: {
+        format: 'numbered',
+        programName: channelName,
+        sessionLabel: 'Day',
+        subtitle: '',
+        numberSource: 'episode',
+        seasonSize: 30,
+        showSeason: false,
+        seasonLabel: 'S',
+        inWorldTemplate: '{n} Days Before The Heist',
+        inWorldMode: 'countup',
+        inWorldTotal: 30,
+      },
     })
   }
 
@@ -238,7 +290,7 @@ export default function ChannelsTab() {
                   <div className="flex justify-between items-center mb-3">
                     <h4 className="text-sm font-medium text-gray-700">Schedules</h4>
                     <button
-                      onClick={() => openNewSchedule(channel.channelId)}
+                      onClick={() => openNewSchedule(channel.channelId, channel.name)}
                       className="text-xs text-green-600 hover:underline"
                     >
                       + Add Schedule
@@ -313,7 +365,47 @@ export default function ChannelsTab() {
                           Enable recurring schedule
                         </label>
                       </div>
-                      <div className="flex gap-2 pt-2">
+                      
+                      <div className="border-t border-gray-200 pt-3 mt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs text-gray-600">Title Config</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowTitleBuilder(!showTitleBuilder)}
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            {showTitleBuilder ? 'Hide editor' : scheduleForm.titleConfig ? 'Edit title' : 'Configure title'}
+                          </button>
+                        </div>
+                        
+                        {scheduleForm.titleConfig ? (
+                          <div className="bg-white border border-gray-200 rounded p-2 text-xs">
+                            <div className="font-medium text-gray-700">
+                              {getConfigPreview(scheduleForm.titleConfig)}
+                            </div>
+                            <div className="text-gray-400 mt-1 capitalize">
+                              {scheduleForm.titleConfig.format?.replace('_', ' ')} · {scheduleForm.titleConfig.seasonSize ?? 30} per season
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 italic bg-gray-100 rounded p-2">
+                            No title configured - required to create schedule
+                          </div>
+                        )}
+                        
+                        {showTitleBuilder && (
+                          <div className="mt-3">
+                            <TitleBuilder
+                              initialConfig={scheduleForm.titleConfig}
+                              onChange={(config) => setScheduleForm(prev => ({ ...prev, titleConfig: config }))}
+                              onSave={() => setShowTitleBuilder(false)}
+                              onCancel={() => setShowTitleBuilder(false)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-2 pt-3">
                         <button
                           onClick={() => editingScheduleId 
                             ? handleUpdateSchedule(editingScheduleId) 
@@ -327,6 +419,7 @@ export default function ChannelsTab() {
                           onClick={() => {
                             setExpandedChannel(null)
                             setEditingScheduleId(null)
+                            setShowTitleBuilder(false)
                           }}
                           className="text-xs text-gray-500 hover:underline"
                         >
@@ -372,41 +465,51 @@ function ScheduleList({
 
   return (
     <div className="space-y-2">
-      {schedules.map((schedule) => (
-        <div key={schedule.id} className="flex justify-between items-center p-2 bg-gray-50 rounded text-xs">
-          <div>
-            <span className="font-medium">#{schedule.id}</span>
-            <span className="ml-2 text-gray-600">
-              {schedule.scheduledDays?.map(d => d.slice(0, 3)).join(', ')} @ {schedule.scheduledTime}
-            </span>
-            <span className="ml-2 text-gray-400">({schedule.timezone})</span>
-            {schedule.intervalEnabled ? (
-              <span className="ml-2 text-green-600">Active</span>
-            ) : (
-              <span className="ml-2 text-gray-400">Disabled</span>
-            )}
-            {schedule.nextRunAt && (
-              <div className="text-gray-400 mt-1">
-                Next: {new Date(schedule.nextRunAt).toLocaleString()}
-              </div>
-            )}
+      {schedules.map((schedule) => {
+        const config = schedule.titleConfig as TitleConfig | null
+        return (
+          <div key={schedule.id} className="flex justify-between items-center p-2 bg-gray-50 rounded text-xs">
+            <div>
+              <span className="font-medium">#{schedule.id}</span>
+              <span className="ml-2 text-gray-600">
+                {schedule.scheduledDays?.map(d => d.slice(0, 3)).join(', ')} @ {schedule.scheduledTime}
+              </span>
+              <span className="ml-2 text-gray-400">({schedule.timezone})</span>
+              {schedule.intervalEnabled ? (
+                <span className="ml-2 text-green-600">Active</span>
+              ) : (
+                <span className="ml-2 text-gray-400">Disabled</span>
+              )}
+              {config ? (
+                <div className="mt-1">
+                  <span className="text-gray-500">{getConfigPreview(config)}</span>
+                </div>
+              ) : (
+                <div className="mt-1 text-gray-400 italic">No title config</div>
+              )}
+              {schedule.nextRunAt && (
+                <div className="text-gray-400 mt-1">
+                  Next: {new Date(schedule.nextRunAt).toLocaleString()}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onEdit(schedule)}
+                className="text-blue-600 hover:underline"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => onDelete(schedule.id)}
+                className="text-red-600 hover:underline"
+              >
+                Delete
+              </button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => onEdit(schedule)}
-              className="text-blue-600 hover:underline"
-            >
-              Edit
-            </button>
-            <button
-              onClick={() => onDelete(schedule.id)}
-              className="text-red-600 hover:underline"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
