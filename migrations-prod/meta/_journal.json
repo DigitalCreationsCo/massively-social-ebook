@@ -15,6 +15,13 @@
       "when": 1774651279882,
       "tag": "0001_freezing_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774801521131,
+      "tag": "0002_unique_skreet",
+      "breakpoints": true
     }
   ]
 }

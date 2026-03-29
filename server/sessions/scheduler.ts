@@ -584,9 +584,9 @@ async function processEvent(event: ScheduledEvent, now: number): Promise<void> {
         return;
     }
 
-    // Skip if already sent
+    // Skip if already sent or previously failed
     const existing = await storage.getNotificationLog(event.type, event.targetId);
-    if (existing && existing.status === 'sent') {
+    if (existing && (existing.status === 'sent' || existing.status === 'failed')) {
         return;
     }
 

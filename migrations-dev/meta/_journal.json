@@ -22,6 +22,13 @@
       "when": 1774681169213,
       "tag": "0002_petite_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774800786306,
+      "tag": "0003_nifty_hiroim",
+      "breakpoints": true
     }
   ]
 }

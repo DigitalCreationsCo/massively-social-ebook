@@ -26,7 +26,7 @@ export const schedules = pgTable("schedules", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   scheduledDays: text("scheduled_days").array(),   // e.g. ['monday','wednesday','friday']
   scheduledTime: text("scheduled_time"),           // e.g. '14:30' (24h, local to timezone)
   intervalEnabled: boolean("interval_enabled").notNull().default(false),
@@ -97,7 +97,7 @@ export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   scheduleId: integer("schedule_id")
     .references(() => schedules.id, { onDelete: "set null" }), // nullable - one-off sessions have no schedule
   title: text("title").notNull(),
@@ -148,7 +148,7 @@ export const lore = pgTable("lore", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   content: text("content").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -163,7 +163,7 @@ export const blocks = pgTable("blocks", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   sessionId: integer("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
@@ -186,7 +186,7 @@ export const votes = pgTable("votes", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   sessionId: integer("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
@@ -207,7 +207,7 @@ export const chat = pgTable("chat", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   sessionId: integer("session_id")
     .references(() => sessions.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
   username: text("username").notNull(),
@@ -224,7 +224,7 @@ export const reactions = pgTable("reactions", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   sessionId: integer("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
@@ -306,7 +306,7 @@ export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
 //   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
 export const channelStates = pgTable("channel_states", {
   channelId: text("channel_id").primaryKey()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   currentPhase: text("current_phase").notNull().default('reading'),
   phaseEndsAt: timestamp("phase_ends_at").notNull(),
   decisionEndsAt: timestamp("decision_ends_at").notNull(),
@@ -342,7 +342,7 @@ export type InsertChannelState = typeof channelStates.$inferInsert;
 export const pendingBlocks = pgTable("pending_blocks", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull()
-    .references(() => channels.channelId, { onDelete: "cascade" }),
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   forBlockId: integer("for_block_id").notNull()
     .references(() => blocks.id, { onDelete: "cascade" }),
   choice: text("choice").notNull(), // 'A' | 'B'
