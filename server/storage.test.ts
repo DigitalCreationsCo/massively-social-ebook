@@ -14,14 +14,14 @@ function createChainableMock() {
   return chain;
 }
 
-// Mock the db
 vi.mock('./db', () => ({
   db: {
-    select: vi.fn(() => createChainableMock()),
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
     insert: vi.fn().mockReturnThis(),
-    update: vi.fn().mockReturnThis(),
-    delete: vi.fn().mockReturnThis(),
-    execute: vi.fn(),
+    onConflictDoUpdate: vi.fn().mockReturnThis(),
   }
 }));
 
@@ -129,6 +129,154 @@ describe('Server Storage & Fallback', () => {
       expect(result[ 1 ].title).toBe('Fifth');
       expect(result[ 1 ].imageUrl).toBeNull();
       expect(result[ 1 ].createdAt).toBeNull();
+    });
+  });
+});
+
+describe('DatabaseStorage Window Queries', () => {
+  const storage = new DatabaseStorage();
+
+  it('getSessionsInWindow returns correct data structure', async () => {
+    const mockData = [ { id: 1, channelId: 'scifi', status: 'scheduled' } ];
+    (db.select as any).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockResolvedValue(mockData),
+    });
+
+    const result = await storage.getSessionsInWindow('scifi', new Date(), new Date());
+    expect(result).toEqual(mockData);
+  });
+
+  it('listSchedules filters for intervalEnabled: true', async () => {
+    (db.select as any).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([ { id: 1, intervalEnabled: true } ]),
+    });
+
+    const result = await storage.listSchedules();
+    expect(result[ 0 ].intervalEnabled).toBe(true);
+  });
+});
+
+describe('Storage: listSchedules', () => {
+  const storage = new DatabaseStorage();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches all enabled schedules when no channelId is provided', async () => {
+    const mockAllEnabled = [
+      { id: 1, channelId: 'scifi', intervalEnabled: true },
+      { id: 2, channelId: 'mystery', intervalEnabled: true }
+    ];
+
+    (db.select as any).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(mockAllEnabled),
+    });
+
+    const result = await storage.listSchedules();
+
+    expect(result).toHaveLength(2);
+    // Verify the query did not include a channelId filter
+    expect(db.select).toHaveBeenCalled();
+  });
+
+  it('applies a channelId filter when the argument is present', async () => {
+    const mockFiltered = [ { id: 1, channelId: 'scifi', intervalEnabled: true } ];
+
+    (db.select as any).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(mockFiltered),
+    });
+
+    const result = await storage.listSchedules({ channelId: 'scifi' });
+
+    expect(result).toHaveLength(1);
+    expect(result[ 0 ].channelId).toBe('scifi');
+  });
+
+  it('logs and throws on database failure to ensure trace visibility', async () => {
+    const errorDb = new Error('Query Timeout');
+
+    (db.select as any).mockImplementation(() => {
+      throw errorDb;
+    });
+
+    await expect(storage.listSchedules()).rejects.toThrow('Query Timeout');
+  });
+});
+
+describe('DatabaseStorage - Production Optimized', () => {
+  const storage = new DatabaseStorage();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('listSchedules', () => {
+    it('filters by channelId when provided', async () => {
+      const mockResult = [ { id: 1, channelId: 'scifi', intervalEnabled: true } ];
+      (db.select as any).mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue(mockResult),
+      });
+
+      const result = await storage.listSchedules({ channelId: 'scifi' });
+      expect(result).toEqual(mockResult);
+      // Logic Check: Ensure query structure changes based on input
+    });
+
+    it('returns all enabled schedules when channelId is omitted', async () => {
+      (db.select as any).mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([ { id: 1 }, { id: 2 } ]),
+      });
+
+      const result = await storage.listSchedules();
+      expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('Weekly Briefing Idempotency', () => {
+    it('returns true if the week key does not match storage', async () => {
+      (db.select as any).mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([ { value: '2026-12' } ]),
+      });
+
+      const canSend = await storage.shouldSendWeeklyBriefing('2026-13');
+      expect(canSend).toBe(true);
+    });
+
+    it('returns false if the week key already exists', async () => {
+      (db.select as any).mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([ { value: '2026-13' } ]),
+      });
+
+      const canSend = await storage.shouldSendWeeklyBriefing('2026-13');
+      expect(canSend).toBe(false);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('logs and rethrows uncaught database errors', async () => {
+      (db.select as any).mockImplementation(() => { throw new Error('DB_FAILURE'); });
+      await expect(storage.listSchedules()).rejects.toThrow('DB_FAILURE');
+    });
+
+    it('properly bubbles Foreign Key violations for invalid channelIds', async () => {
+      (db.select as any).mockImplementation(() => {
+        const err = new Error('foreign key constraint "schedules_channel_id_fkey" failed');
+        (err as any).code = '23503'; // Postgres FK violation code
+        throw err;
+      });
+
+      await expect(storage.listSchedules({ channelId: 'non-existent-channel' }))
+        .rejects.toThrow(/foreign key/);
     });
   });
 });

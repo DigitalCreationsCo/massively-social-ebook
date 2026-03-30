@@ -2,7 +2,7 @@ import { storage } from '../storage';
 import { sendEmail, sendPushNotification } from '../notifications';
 import { type Session, type Schedule, type Channel } from '@shared/schema';
 import { logger } from '../logger';
-import { getMSTDateString, createMSTDate, formatMST } from '@shared/date';
+import { getMSTDateString, createMSTDate, formatMST, getYear, getISOWeek } from '@shared/date';
 import {
     computeTitleContext,
     deriveTitleFromConfig,
@@ -35,9 +35,8 @@ const SESSION_LOOKAHEAD_DAYS = 7;
  * Event types for scheduled notifications.
  * - SESSION_WARNING_5MIN: Push notification sent 5 minutes before a session starts
  * - WEEKLY_BRIEF: Email summary of upcoming sessions sent weekly (Monday 3pm MST)
- * - DAILY_SEEDING: DEPRECATED - retained for backwards compatibility
  */
-type EventType = 'SESSION_WARNING_5MIN' | 'WEEKLY_BRIEF' | 'DAILY_SEEDING';
+type EventType = 'SESSION_WARNING_5MIN' | 'WEEKLY_BRIEF';
 
 /**
  * Represents a scheduled event that needs to be processed by the notification loop.
@@ -142,11 +141,12 @@ async function processDueSchedules(): Promise<void> {
         try {
             const { start, end } = computeNextWindow(schedule);
 
+            // Get channel information for title and description
+            // TODO Avoid Repeated Channel Lookups: Inside the seeding loop, getChannel is often called per gap.Improvement: Fetch all required channels into a Map before entering the for (const schedule of ...) loop to avoid $N$ extra database round-trips.
+            const channel = await storage.getChannel(schedule.channelId);
+
             // Session number is incremented sessionCount + 1 (1-based, never 0)
             const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
-
-            // Get channel information for title and description
-            const channel = await storage.getChannel(schedule.channelId);
 
             const title = buildSessionTitle(schedule, nextSessionNumber, start, channel);
 
@@ -160,13 +160,13 @@ async function processDueSchedules(): Promise<void> {
                 channelId: schedule.channelId,
                 scheduleId: schedule.id,
                 title,
-                description: 'Upcoming session',
+                description: channel?.description || "Upcoming Session",
                 scheduledStart: start,
                 scheduledEnd: end,
                 sessionNumber: nextSessionNumber,
                 seasonNumber,
                 episodeNumber,
-                subtitle: null,
+                subtitle: config?.subtitle || null,
             }, schedule.id);
 
             // Compute and store the next run time
@@ -188,50 +188,55 @@ async function processDueSchedules(): Promise<void> {
  * 2. Calculate all scheduled days (based on scheduledDays) within the next 7 days
  * 3. Create sessions for any days that don't already have sessions
  *
- * This replaces the old DAILY_SEEDING logic with smarter gap-filling.
- *
  * @internal
  */
-async function ensureSessionsExistWithinLookahead(): Promise<void> {
-    const allSchedules = await storage.listSchedules();
-    const enabledSchedules = allSchedules.filter(s => s.intervalEnabled);
+export async function ensureSessionsExistWithinLookahead(): Promise<void> {
+
+    const enabledSchedules = await storage.listSchedules({ onlyEnabled: true });
 
     for (const schedule of enabledSchedules) {
         try {
-            // Get existing sessions for this schedule within the lookahead window
-            const existingSessions = await storage.getSessionsBySchedule(schedule.id);
+            console.debug({ scheduleId: schedule.id, schedule }, 'Analyzing lookahead gaps');
+
             const now = new Date();
             const lookaheadEnd = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
-            // Filter to sessions within the lookahead window
-            const upcomingSessions = existingSessions.filter(s => {
-                const start = new Date(s.scheduledStart);
-                return start >= now && start <= lookaheadEnd;
-            });
+            // FIX: Fetch ALL sessions for the channel within the window, not just ones tied to this scheduleId.
+            // This ensures manual sessions block automated seeding in the same timeslot.
+            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEnd, 'scheduled');
 
             // Calculate all dates this schedule should run on within the window
             const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEnd);
 
-            // Find gaps (dates with no session)
-            const existingDates = new Set(upcomingSessions.map(s => {
-                const d = new Date(s.scheduledStart);
-                // Return YYYY-MM-DD for a robust date comparison
-                return d.toISOString().split('T')[0];
-            }));
+            // FIX: Map exact Unix timestamps (timeslot granularity) instead of UTC YYYY-MM-DD
+            const timestampsExistingSessions = new Set(
+                allChannelSessionsWithinWindow.map(s => new Date(s.scheduledStart).getTime())
+            );
 
-            const gapDates = scheduledDates.filter(date => {
-                const key = date.toISOString().split('T')[0];
-                return !existingDates.has(key);
+            const datesNonScheduled = scheduledDates.filter(date => {
+                const isTimeslotFilled = timestampsExistingSessions.has(date.getTime());
+                if (isTimeslotFilled) {
+                    logger.debug(`Skipping seeding for ${date.toISOString()} - timeslot already occupied.`, 'scheduler');
+                }
+                return !isTimeslotFilled;
             });
 
+            if (datesNonScheduled.length === 0) {
+                logger.debug(`No gaps found for schedule ID: ${schedule.id}`, 'scheduler');
+                continue;
+            }
+
             // Create sessions for each gap date
-            for (const date of gapDates) {
+            for (const date of datesNonScheduled) {
+
+                const channel = await storage.getChannel(schedule.channelId);
+
                 const { start, end } = computeNextWindowForDate(schedule, date);
 
                 const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
                 const title = buildSessionTitle(schedule, nextSessionNumber, start);
-
                 const config = schedule.titleConfig as TitleConfig | null;
+
                 const seasonSize = config?.seasonSize ?? 30;
                 const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
@@ -240,13 +245,13 @@ async function ensureSessionsExistWithinLookahead(): Promise<void> {
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
                     title,
-                    description: 'Upcoming session',
+                    description: channel?.description || 'Upcoming session',
                     scheduledStart: start,
                     scheduledEnd: end,
                     sessionNumber: nextSessionNumber,
                     seasonNumber,
                     episodeNumber,
-                    subtitle: null,
+                    subtitle: config?.subtitle || null,
                 }, schedule.id);
 
                 await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
@@ -514,19 +519,6 @@ async function getEventsInWindow(start: number, end: number): Promise<ScheduledE
         nextBriefing = getNextWeeklyBriefingTime(nextBriefing);
     }
 
-    // DEPRECATED: Daily seeding - retained for backwards compatibility
-    // Now handled by ensureSessionsExistWithinLookahead()
-    let nextSeeding = getNextDailySeedingTime(start);
-    while (nextSeeding <= end) {
-        events.push({
-            type: 'DAILY_SEEDING',
-            targetId: 'global_seeding_' + nextBriefing,
-            scheduledTime: nextSeeding,
-            expirationTime: nextSeeding + 1 * 60 * 60 * 1000
-        });
-        nextSeeding = getNextDailySeedingTime(nextSeeding);
-    }
-
     return events;
 }
 
@@ -605,11 +597,7 @@ async function processEvent(event: ScheduledEvent, now: number): Promise<void> {
         if (event.type === 'SESSION_WARNING_5MIN') {
             await sendPushWarningsForSession(event.payload as Session);
         } else if (event.type === 'WEEKLY_BRIEF') {
-            await dispatchWeeklyBriefing();
-        } else if (event.type === 'DAILY_SEEDING') {
-            // DEPRECATED: Now handled by ensureSessionsExistWithinLookahead()
-            // Kept for backwards compatibility - no-op
-            logger.debug('DAILY_SEEDING event received (deprecated)', 'scheduler');
+            await checkAndSendWeeklyBriefing();
         }
 
         await storage.createNotificationLog({
@@ -682,6 +670,24 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
     }
 }
 
+export async function checkAndSendWeeklyBriefing(): Promise<void> {
+    const now = new Date();
+
+    // 1. Check Day/Time (Monday 3:00 PM MST)
+    const isMonday = now.getDay() === 1;
+    const isThreePM = now.getHours() === 15 && now.getMinutes() === 0;
+
+    if (isMonday && isThreePM) {
+        const weekKey = `${getYear(now)}-${getISOWeek(now)}`;
+
+        const needsSending = await storage.shouldSendWeeklyBriefing(weekKey);
+        if (!needsSending) return;
+
+        logger.info(`Executing weekly briefing for week ${weekKey}`, 'scheduler');
+        await dispatchWeeklyBriefing();
+        await storage.markWeeklyBriefingSent(weekKey);
+    }
+}
 /**
  * Dispatches the weekly briefing email to all users.
  *
@@ -752,16 +758,20 @@ async function sendPushWarningsForSession(session: Session): Promise<void> {
  */
 export async function checkAndSendPushWarnings(): Promise<void> {
     const now = new Date();
-    const allSessions = await storage.listSessions();
-    const startingSoon = allSessions.filter(s => {
-        const start = new Date(s.scheduledStart).getTime();
-        const diff = start - now.getTime();
-        return diff > 4 * 60 * 1000 && diff <= 5 * 60 * 1000 && s.status === 'scheduled';
-    });
+    const lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
+    const lastProcessed = lastProcessedStr ? new Date(lastProcessedStr) : new Date(now.getTime() - 5 * 60 * 1000);
+
+    const lookahead = new Date(now.getTime() + 5 * 60 * 1000);
+    const startingSoon = await storage.getGlobalSessionsInWindow(lastProcessed, lookahead, 'scheduled');
 
     for (const session of startingSoon) {
-        await sendPushWarningsForSession(session);
+        const start = new Date(session.scheduledStart).getTime();
+        if (start - now.getTime() <= 5 * 60 * 1000) {
+            await sendPushWarningsForSession(session);
+        }
     }
+
+    await storage.setSystemSetting(CURSOR_KEY, lookahead.toISOString());
 }
 
 // DEPRECATED: Export for backwards compatibility

@@ -42,7 +42,7 @@ import {
   users,
   systemSettings,
 } from "@shared/schema";
-import { desc, eq, and, asc, count, sql, lte, lt, isNull, or } from "drizzle-orm";
+import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzle-orm";
 
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
@@ -79,6 +79,9 @@ export interface IStorage {
   getNextSession(channelId: string): Promise<Session | undefined>;
   getActiveSession(channelId: string): Promise<Session | undefined>;
   getSessionWithSchedule(sessionId: number): Promise<SessionWithSchedule | undefined>;
+  getSessionsInWindow(channelId: string, dateStart: Date, dateEnd: Date, statusStr?: SessionStatus): Promise<Session[]>;
+  getGlobalSessionsInWindow(dateStart: Date, dateEnd: Date, statusStr?: SessionStatus): Promise<Session[]>;
+
   createSession(data: InsertSession): Promise<Session>;
   createSessionWithScheduleUpdate(sessionData: InsertSession, scheduleId: number): Promise<Session>;
   updateSession(id: number, data: Partial<Session>): Promise<Session>;
@@ -92,6 +95,7 @@ export interface IStorage {
   updateSchedule(id: number, data: Partial<InsertSchedule>): Promise<Schedule>;
   updateScheduleNextRunAt(id: number, nextRunAt: Date): Promise<void>;
   deleteSchedule(id: number): Promise<void>;
+  listSchedules(options?: { channelId?: string, onlyEnabled?: boolean; }): Promise<Schedule[]>;
   getDueSchedules(now: Date): Promise<Schedule[]>;
 
   getUsers(page?: number, limit?: number): Promise<{ users: User[]; total: number }>;
@@ -338,6 +342,50 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async getSessionsInWindow(
+    channelId: string,
+    dateStart: Date,
+    dateEnd: Date,
+    statusStr: SessionStatus = 'scheduled'
+  ): Promise<Session[]> {
+    console.debug(`[Trace] Fetching ${statusStr} sessions for channel ${channelId} between ${dateStart.toISOString()} and ${dateEnd.toISOString()}`, 'storage');
+    try {
+      return await db
+        .select()
+        .from(sessions)
+        .where(and(
+          eq(sessions.channelId, channelId),
+          eq(sessions.status, statusStr),
+          gte(sessions.scheduledStart, dateStart),
+          lte(sessions.scheduledStart, dateEnd)
+        ))
+        .orderBy(asc(sessions.scheduledStart));
+    } catch (errorUncaught) {
+      console.error(`Failed to fetch sessions in window for ${channelId}`, 'storage', errorUncaught instanceof Error ? errorUncaught : new Error(String(errorUncaught)));
+      throw errorUncaught;
+    }
+  }
+
+  async getGlobalSessionsInWindow(
+    dateStart: Date,
+    dateEnd: Date,
+    statusStr: SessionStatus = 'scheduled'
+  ): Promise<Session[]> {
+    try {
+      return await db
+        .select()
+        .from(sessions)
+        .where(and(
+          eq(sessions.status, statusStr),
+          gte(sessions.scheduledStart, dateStart),
+          lte(sessions.scheduledStart, dateEnd)
+        ));
+    } catch (errorUncaught) {
+      console.error(`Failed to fetch global sessions in window`, 'storage', errorUncaught instanceof Error ? errorUncaught : new Error(String(errorUncaught)));
+      throw errorUncaught;
+    }
+  }
+
   async createSession(data: InsertSession): Promise<Session> {
     console.log('[Storage] Creating session:', data.title, 'for channel', data.channelId);
     const [session] = await db.insert(sessions).values(data).returning();
@@ -430,8 +478,25 @@ export class DatabaseStorage implements IStorage {
     await db.delete(schedules).where(eq(schedules.id, id));
   }
 
-  async listSchedules(): Promise<Schedule[]> {
-    return await db.select().from(schedules);
+  async listSchedules(options?: { channelId?: string, onlyEnabled?: boolean; }): Promise<Schedule[]> {
+    try {
+      const conditions = [];
+      if (options?.onlyEnabled) conditions.push(eq(schedules.intervalEnabled, true));
+      if (options?.channelId) conditions.push(eq(schedules.channelId, options.channelId));
+
+      return await db
+        .select()
+        .from(schedules)
+        .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+    } catch (errorUncaught) {
+      console.error(
+        `Failed to list enabled schedules ${options?.channelId ? `for ${options.channelId}` : ''}`,
+        'storage',
+        errorUncaught instanceof Error ? errorUncaught : new Error(String(errorUncaught))
+      );
+      throw errorUncaught;
+    }
   }
 
   async getSessionsBySchedule(scheduleId: number): Promise<Session[]> {
@@ -725,6 +790,16 @@ export class DatabaseStorage implements IStorage {
       .update(sessions)
       .set({ scheduledEnd })
       .where(eq(sessions.id, id));
+  }
+
+  async shouldSendWeeklyBriefing(currentWeekYear: string): Promise<boolean> {
+    const lastSent = await this.getSystemSetting('last_weekly_briefing_week');
+    // currentWeekYear format: "2026-14" (Year-WeekNumber)
+    return lastSent !== currentWeekYear;
+  }
+
+  async markWeeklyBriefingSent(currentWeekYear: string): Promise<void> {
+    await this.setSystemSetting('last_weekly_briefing_week', currentWeekYear);
   }
 }
 
