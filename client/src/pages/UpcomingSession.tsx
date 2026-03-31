@@ -24,6 +24,8 @@ import { DEFAULT_CHANNEL_ID } from '@/App';
 import { Switch } from "@/components/ui/switch";
 import { motion, AnimatePresence } from "framer-motion";
 
+const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 export default function UpcomingSession() {
     const channelId = DEFAULT_CHANNEL_ID;
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
@@ -228,10 +230,10 @@ export default function UpcomingSession() {
                             <CardDescription className="text-white/80 font-sans text-lg">
                                 {isScheduled && (
                                     <span>
-                                        {isTodayInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Today" :
-                                            isTomorrowInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Tomorrow" :
-                                                formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "EEEE, MMMM do")
-                                        } at {formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "h:mm a")} {nextSession.timezone}
+                                        { isTodayInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Today" :
+                                            isTomorrowInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Tomorrow" :
+                                                formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "EEEE, MMMM do")
+                                        } at { formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "h:mm a") } { userTimeZone }
                                     </span>
                                 )}
                             </CardDescription>
@@ -370,16 +372,6 @@ export default function UpcomingSession() {
                                             </form>
                                         </DialogContent>
                                     </Dialog>
-
-                                    <DialogFooter>
-                                        <Button
-                                            type="submit"
-                                            disabled={reminding}
-                                            className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
-                                        >
-                                            Continue
-                                        </Button>
-                                    </DialogFooter>
 
                                     <Button
                                         variant="secondary"

@@ -9,8 +9,10 @@ import { nanoid } from "nanoid";
 const viteLogger = createLogger();
 
 export async function setupVite(server: Server, app: Express) {
-  const hmrPort = parseInt(process.env.HMR_PORT || "5000", 10);
-  
+  // Use the same port as the server for HMR to avoid websocket port mismatches
+  const serverPort = parseInt(process.env.PORT || "5001", 10);
+  const hmrPort = parseInt(process.env.HMR_PORT || String(serverPort), 10);
+   
   const serverOptions = {
     middlewareMode: true,
     hmr: { port: hmrPort, server },

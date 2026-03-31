@@ -150,91 +150,97 @@ export function useLiveState(channelId: string) {
     return () => clearInterval(interval);
   }, [activeSession, currentBlock?.phase]);
 
-  // WebSocket Connection
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = import.meta.env.VITE_WS_URL
-      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${channelId}`
-      : `${protocol}//${window.location.host}/ws?channelId=${channelId}`;
+   // WebSocket Connection
+   useEffect(() => {
+     let wsUrl: string;
+     if (import.meta.env.VITE_WS_URL) {
+       wsUrl = `${import.meta.env.VITE_WS_URL}/ws?channelId=${channelId}`;
+     } else {
+       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+       const host = window.location.hostname === 'localhost' 
+         ? `localhost:5001` 
+         : window.location.host;
+       wsUrl = `${protocol}//${host}/ws?channelId=${channelId}`;
+     }
 
-    const connect = () => {
-      const socket = new WebSocket(wsUrl);
-      wsRef.current = socket;
+     const connect = () => {
+       const socket = new WebSocket(wsUrl);
+       wsRef.current = socket;
 
-      socket.onopen = () => {
-        setWsConnected(true);
-        console.log('[LiveState] Connected to channel:', channelId);
-      };
+       socket.onopen = () => {
+         setWsConnected(true);
+         console.log('[LiveState] Connected to channel:', channelId);
+       };
 
-      socket.onclose = () => {
-        setWsConnected(false);
-        setSessionStatus('loading');
-        setTimeout(connect, 3000);
-      };
+       socket.onclose = () => {
+         setWsConnected(false);
+         setSessionStatus('loading');
+         setTimeout(connect, 3000);
+       };
 
-      socket.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
+       socket.onmessage = (event) => {
+         try {
+           const message = JSON.parse(event.data);
 
-          if (message.type === 'SYNC_STATE') {
+           if (message.type === 'SYNC_STATE') {
 
-            const payload = message.payload as StoryState;
+             const payload = message.payload as StoryState;
 
-            setLocalTurnsToNextChoice(payload.turnsToNextChoice);
-            if (payload.timeRemaining !== undefined) {
-              setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
-            }
-            if (payload.timeToNextDecision !== undefined) {
-              setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
-            }
-            if (payload.initialTimeToNextDecision !== undefined) {
-              setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
-            }
-          }
-          else if (message.type === 'CHAT_MESSAGE') {
-            const payload = message.payload as ChatMessage;
-            queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
-              if (old.some(m => m.id === payload.id)) return old;
-              return [...old, payload];
-            });
-          }
-          else if (message.type === 'VOTE_UPDATE') {
-            const payload = message.payload as VoteResults;
-            setVoteResults(payload);
-          }
-          else if (message.type === 'REACTION_RECEIVED') {
-            const payload = message.payload as Reaction;
-            setReactions(prev => [...prev, payload]);
-          }
-          else if (message.type === 'SESSION_STATUS') {
-            const payload = message.payload as { status: SessionStatus, session: Session | null; };
+             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+             if (payload.timeRemaining !== undefined) {
+               setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
+             }
+             if (payload.timeToNextDecision !== undefined) {
+               setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
+             }
+             if (payload.initialTimeToNextDecision !== undefined) {
+               setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
+             }
+           }
+           else if (message.type === 'CHAT_MESSAGE') {
+             const payload = message.payload as ChatMessage;
+             queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
+               if (old.some(m => m.id === payload.id)) return old;
+               return [...old, payload];
+             });
+           }
+           else if (message.type === 'VOTE_UPDATE') {
+             const payload = message.payload as VoteResults;
+             setVoteResults(payload);
+           }
+           else if (message.type === 'REACTION_RECEIVED') {
+             const payload = message.payload as Reaction;
+             setReactions(prev => [...prev, payload]);
+           }
+           else if (message.type === 'SESSION_STATUS') {
+             const payload = message.payload as { status: SessionStatus, session: Session | null; };
 
-            const now = Date.now();
-            const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
+             const now = Date.now();
+             const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
 
-            if (isPast) {
-              // If the server sends a session that is technically over, treat it as completed
-              setSessionStatus('completed');
-              setActiveSession(null);
-            } else {
-              setSessionStatus(payload.status);
-              setActiveSession(payload.session);
-              if (payload.status === 'active') {
-                queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
-              }
-            }
-          }
-        } catch (err) {
-          console.error('[LiveState] Failed to parse WS message:', err);
-        };
-      };
-    };
-    connect();
+             if (isPast) {
+               // If the server sends a session that is technically over, treat it as completed
+               setSessionStatus('completed');
+               setActiveSession(null);
+             } else {
+               setSessionStatus(payload.status);
+               setActiveSession(payload.session);
+               if (payload.status === 'active') {
+                 queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
+               }
+             }
+           }
+         } catch (err) {
+           console.error('[LiveState] Failed to parse WS message:', err);
+         };
+       };
+     };
+     connect();
 
-    return () => {
-      wsRef.current?.close();
-    };
-  }, [queryClient, channelId]);
+     return () => {
+       wsRef.current?.close();
+     };
+   }, [queryClient, channelId]);
 
   // Refine the Macro Phase calculation to be more robust
   useEffect(() => {
