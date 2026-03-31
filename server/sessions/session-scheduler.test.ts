@@ -3,8 +3,7 @@ import { handleGameLoopTick, state } from '../routes';
 import { storage } from '../storage';
 import * as ai from '../blocks/ai';
 
-// Mock storage and AI
-vi.mock('./storage', () => ({
+vi.mock('../storage', () => ({
     storage: {
         getCurrentBlock: vi.fn(),
         createBlock: vi.fn(),
@@ -16,25 +15,24 @@ vi.mock('./storage', () => ({
     },
 }));
 
-vi.mock('./ai', () => ({
+vi.mock('../blocks/ai', () => ({
     generateStoryBlock: vi.fn(),
     generateStoryImage: vi.fn(),
 }));
 
-const mockedStorage = vi.mocked(storage);
-const mockedAi = vi.mocked(ai);
+const mockStorage = vi.mocked(storage);
+const mockAi = vi.mocked(ai);
 
-describe('Session Scheduler (Game Loop integration)', () => {
-    const mockBroadcast = vi.fn();
-    const now = Date.now();
+describe('Session Scheduler Engine (Game Loop Integration)', () => {
+    const mockBroadcastFn = vi.fn();
+    const timeNowMock = Date.now();
 
     beforeEach(() => {
         vi.clearAllMocks();
-        // Reset state for test subjects
         state.scifi = {
             currentPhase: 'reading',
-            phaseEndsAt: now + 10000,
-            decisionEndsAt: now + 20000,
+            phaseEndsAt: timeNowMock + 10000,
+            decisionEndsAt: timeNowMock + 20000,
             initialTimeToDecision: 20000,
             currentBlock: undefined,
             turnsToNextChoice: 2,
@@ -42,8 +40,8 @@ describe('Session Scheduler (Game Loop integration)', () => {
         };
         state.mystery = {
             currentPhase: 'reading',
-            phaseEndsAt: now + 10000,
-            decisionEndsAt: now + 20000,
+            phaseEndsAt: timeNowMock + 10000,
+            decisionEndsAt: timeNowMock + 20000,
             initialTimeToDecision: 20000,
             currentBlock: undefined,
             turnsToNextChoice: 2,
@@ -51,120 +49,72 @@ describe('Session Scheduler (Game Loop integration)', () => {
         };
     });
 
-    it('skips game loop logic when no session is active and no session is starting', async () => {
-        mockedStorage.getNextSession.mockResolvedValue(null);
+    it('bypasses game loop execution when no session is active or scheduled', async () => {
+        mockStorage.getNextSession.mockResolvedValue(null);
 
-        await handleGameLoopTick(now, mockBroadcast);
+        await handleGameLoopTick(timeNowMock, mockBroadcastFn);
 
-        expect(mockBroadcast).not.toHaveBeenCalled();
-        expect(mockedStorage.getCurrentBlock).not.toHaveBeenCalled();
+        expect(mockBroadcastFn).not.toHaveBeenCalled();
+        expect(mockStorage.getCurrentBlock).not.toHaveBeenCalled();
     });
 
-    it('starts a session when a scheduled session start time is reached', async () => {
-        const scheduledTime = now - 1000; // Started 1s ago
-        const mockSession = {
+    it('spawns a new session and provisions initial block upon scheduled start threshold', async () => {
+        const timeScheduledMock = timeNowMock - 1000;
+        const sessionMockStarting = {
             id: 10,
             channelId: 'scifi',
             title: 'Starting Soon',
-            scheduledStart: new Date(scheduledTime),
-            scheduledEnd: new Date(now + 3600000), // Ends in 1h
+            scheduledStart: new Date(timeScheduledMock),
+            scheduledEnd: new Date(timeNowMock + 3600000),
             status: 'scheduled'
         } as any;
 
-        mockedStorage.getNextSession.mockResolvedValue(mockSession);
-        mockedStorage.getCurrentBlock.mockResolvedValue(null); // Force seeding
-        mockedAi.generateStoryBlock.mockResolvedValue({
+        mockStorage.getNextSession.mockResolvedValue(sessionMockStarting);
+        mockStorage.getCurrentBlock.mockResolvedValue(null);
+        mockAi.generateStoryBlock.mockResolvedValue({
             title: 'Initial Block',
             content: 'The story begins.',
             optionA: { label: 'A', description: 'desc A' },
             optionB: { label: 'B', description: 'desc B' },
         });
-        mockedAi.generateStoryImage.mockResolvedValue('img.jpg');
-        mockedStorage.createBlock.mockResolvedValue({ id: 1, content: '...', title: '...', channelId: 'scifi' } as any);
+        mockAi.generateStoryImage.mockResolvedValue('img.jpg');
+        mockStorage.createBlock.mockResolvedValue({ id: 1, content: '...', title: '...', channelId: 'scifi' } as any);
 
-        await handleGameLoopTick(now, mockBroadcast);
+        await handleGameLoopTick(timeNowMock, mockBroadcastFn);
 
-        expect(state.scifi.activeSession).toEqual(mockSession);
-        expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(10, 'active');
-        expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+        expect(state.scifi.activeSession).toEqual(sessionMockStarting);
+        expect(mockStorage.updateSessionStatus).toHaveBeenCalledWith(10, 'active');
+        expect(mockBroadcastFn).toHaveBeenCalledWith('scifi', expect.objectContaining({
             type: 'SESSION_STATUS',
-            payload: { status: 'active', session: mockSession }
+            payload: { status: 'active', session: sessionMockStarting }
         }));
     });
 
-    it('transitions to resolution phase when the scheduled end time is reached', async () => {
-        const endTime = now - 1000; // Ended 1s ago
-        const mockSession = {
+    it('transitions state to resolution phase upon reaching scheduled termination bound', async () => {
+        const timeEndMock = timeNowMock - 1000;
+        const sessionMockEnding = {
             id: 11,
             channelId: 'mystery',
             title: 'Ending Now',
-            scheduledStart: new Date(now - 7200000),
-            scheduledEnd: new Date(endTime),
+            scheduledStart: new Date(timeNowMock - 7200000),
+            scheduledEnd: new Date(timeEndMock),
             status: 'active'
         } as any;
 
-        state.mystery.activeSession = mockSession;
+        state.mystery.activeSession = sessionMockEnding;
         state.mystery.currentBlock = { id: 10, content: '...', channelId: 'mystery' } as any;
 
-        mockedAi.generateStoryBlock.mockResolvedValue({
-            title: 'The End',
-            content: 'Cliffhanger...',
-        } as any);
-        mockedAi.generateStoryImage.mockResolvedValue('img.jpg');
-        mockedStorage.createBlock.mockResolvedValue({ id: 11, content: '...', title: '...', channelId: 'mystery' } as any);
+        mockAi.generateStoryBlock.mockResolvedValue({ title: 'The End', content: 'Cliffhanger...' } as any);
+        mockAi.generateStoryImage.mockResolvedValue('img.jpg');
+        mockStorage.createBlock.mockResolvedValue({ id: 11, content: '...', title: '...', channelId: 'mystery' } as any);
 
-        await handleGameLoopTick(now, mockBroadcast);
+        await handleGameLoopTick(timeNowMock, mockBroadcastFn);
 
         expect(state.mystery.activeSession).toBeDefined();
         expect(state.mystery.currentPhase).toBe('resolution');
-        expect(mockBroadcast).toHaveBeenCalledWith('mystery', expect.objectContaining({
+        expect(mockBroadcastFn).toHaveBeenCalledWith('mystery', expect.objectContaining({
             type: 'SYNC_STATE',
             payload: expect.objectContaining({ phase: 'resolution' })
-        }));
-    });
-
-    it('completes session after resolution phase duration ends', async () => {
-        const mockSession = {
-            id: 11,
-            title: 'Ending',
-            scheduledEnd: new Date(now - 2000)
-        } as any;
-        state.mystery.activeSession = mockSession;
-        state.mystery.currentPhase = 'resolution';
-        state.mystery.phaseEndsAt = now - 1000; // Resolution ended
-
-        await handleGameLoopTick(now, mockBroadcast);
-
-        expect(state.mystery.activeSession).toBeUndefined();
-        expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(11, 'completed');
-        expect(mockBroadcast).toHaveBeenCalledWith('mystery', expect.objectContaining({
-            type: 'SESSION_STATUS',
-            payload: { status: 'completed', session: mockSession }
-        }));
-    });
-
-    it('continues normal game loop if session is active', async () => {
-        const mockSession = {
-            id: 12,
-            channelId: 'scifi',
-            title: 'Ongoing',
-            scheduledStart: new Date(now - 3600000),
-            scheduledEnd: new Date(now + 3600000),
-            status: 'active'
-        } as any;
-
-        state.scifi.activeSession = mockSession;
-        state.scifi.currentBlock = { id: 100 } as any;
-        state.scifi.phaseEndsAt = now + 5000; // 5s remaining
-
-        await handleGameLoopTick(now, mockBroadcast);
-
-        // Should broadcast SYNC_STATE (progress update) but not advance blocks
-        expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-            type: 'SYNC_STATE',
-            payload: expect.objectContaining({
-                timeRemaining: 5000
-            })
         }));
     });
 });

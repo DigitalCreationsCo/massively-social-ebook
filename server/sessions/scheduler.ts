@@ -212,75 +212,67 @@ async function processCompletedSessions(now: Date): Promise<void> {
  * @internal
  */
 export async function ensureSessionsExistWithinLookahead(): Promise<void> {
-
     const enabledSchedules = await storage.listSchedules({ onlyEnabled: true });
 
     for (const schedule of enabledSchedules) {
         try {
-            console.debug({ scheduleId: schedule.id, schedule }, 'Analyzing lookahead gaps');
+            logger.debug(`[Seeding] Analyzing lookahead gaps for scheduleId: ${schedule.id}`, 'scheduler');
 
             const now = new Date();
-            const lookaheadEnd = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+            const lookaheadEndBoundary = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
-            // FIX: Fetch ALL sessions for the channel within the window, not just ones tied to this scheduleId.
-            // This ensures manual sessions block automated seeding in the same timeslot.
-            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEnd, 'scheduled');
+            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEndBoundary, 'scheduled');
+            const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEndBoundary);
 
-            // Calculate all dates this schedule should run on within the window
-            const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEnd);
-
-            // FIX: Map exact Unix timestamps (timeslot granularity) instead of UTC YYYY-MM-DD
             const timestampsExistingSessions = new Set(
                 allChannelSessionsWithinWindow.map(s => new Date(s.scheduledStart).getTime())
             );
 
-            const datesNonScheduled = scheduledDates.filter(date => {
-                const isTimeslotFilled = timestampsExistingSessions.has(date.getTime());
+            const exactDatesNonScheduled = scheduledDates.filter(targetDate => {
+                const isTimeslotFilled = timestampsExistingSessions.has(targetDate.getTime());
                 if (isTimeslotFilled) {
-                    logger.debug(`Skipping seeding for ${date.toISOString()} - timeslot already occupied.`, 'scheduler');
+                    logger.debug(`[Seeding] Validated timeslot is already filled: ${targetDate.toISOString()}`, 'scheduler');
                 }
                 return !isTimeslotFilled;
             });
 
-            if (datesNonScheduled.length === 0) {
-                logger.debug(`No gaps found for schedule ID: ${schedule.id}`, 'scheduler');
-                continue;
-            }
+            if (exactDatesNonScheduled.length === 0) continue;
 
-            // Create sessions for each gap date
-            for (const date of datesNonScheduled) {
+            // Resolve N+1 query issue by hoisting outside the gap loop
+            const channelData = await storage.getChannel(schedule.channelId);
+            const durationMinutesTarget = (schedule as unknown as { durationMinutes?: number; }).durationMinutes ?? 25;
 
-                const channel = await storage.getChannel(schedule.channelId);
-
-                const { start, end } = computeNextWindowForDate(schedule, date);
+            for (const exactScheduledStartTimestamp of exactDatesNonScheduled) {
+                const exactScheduledEndTimestamp = new Date(exactScheduledStartTimestamp.getTime() + durationMinutesTarget * 60 * 1000);
 
                 const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
-                const title = buildSessionTitle(schedule, nextSessionNumber, start);
+                const title = buildSessionTitle(schedule, nextSessionNumber, exactScheduledStartTimestamp);
                 const config = schedule.titleConfig as TitleConfig | null;
 
                 const seasonSize = config?.seasonSize ?? 30;
                 const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
-                const session = await storage.createSessionWithScheduleUpdate({
+                await storage.createSessionWithScheduleUpdate({
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
                     title,
-                    description: channel?.description || 'Upcoming session',
-                    scheduledStart: start,
-                    scheduledEnd: end,
+                    description: channelData?.description || 'Upcoming session',
+                    scheduledStart: exactScheduledStartTimestamp,
+                    scheduledEnd: exactScheduledEndTimestamp,
                     sessionNumber: nextSessionNumber,
                     seasonNumber,
                     episodeNumber,
                     subtitle: config?.subtitle || null,
                 }, schedule.id);
 
+                // Recompute the next execution cursor strictly
                 await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
 
-                logger.info(`Seeded session "${title}" (gap-fill) for schedule ${schedule.id}`, 'scheduler');
+                logger.info(`[Seeding] Resolved gap. Spawned session "${title}" at ${exactScheduledStartTimestamp.toISOString()} for schedule ${schedule.id}`, 'scheduler');
             }
         } catch (err) {
-            logger.error(`Failed to ensure sessions for schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+            logger.error(`[Seeding] Uncaught error ensuring sessions for schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
         }
     }
 }
@@ -397,38 +389,30 @@ function computeNextWindow(schedule: Schedule): { start: Date; end: Date; } {
  * @internal
  */
 function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start: Date; end: Date; } {
-    const [hours, minutes] = (schedule.scheduledTime || '19:00').split(':').map(Number);
+    const [ hours, minutes ] = (schedule.scheduledTime || '19:00').split(':').map(Number);
+    const durationMinutesTarget = (schedule as unknown as { durationMinutes?: number; }).durationMinutes ?? 25;
+    const durationMs = durationMinutesTarget * 60 * 1000;
 
-    // Use durationMinutes from schedule if available, otherwise default to 25 minutes
-    const durationMinutes = (schedule as unknown as { durationMinutes?: number }).durationMinutes ?? 25;
-    const durationMs = durationMinutes * 60 * 1000;
+    // Establish the absolute start boundary for the target day
+    let computedStartBoundary = createZonedDate(targetDate, schedule.timezone, hours, minutes);
 
-    let date = createZonedDate(targetDate, schedule.timezone, hours, minutes);
-
-    // If scheduledDays is specified, find the next valid day
     if (schedule.scheduledDays && schedule.scheduledDays.length > 0) {
         const days = schedule.scheduledDays as string[];
-        const nextDay = getNextScheduledDay(targetDate, days);
-        if (nextDay) {
-            date = createZonedDate(nextDay, schedule.timezone, hours, minutes);
+
+        // If the calculated boundary is in the past, we must force a skip to the next day
+        const isTargetInPast = computedStartBoundary <= targetDate;
+        const nextValidDay = getNextScheduledDay(targetDate, days, !isTargetInPast);
+
+        if (nextValidDay) {
+            computedStartBoundary = createZonedDate(nextValidDay, schedule.timezone, hours, minutes);
         }
+    } else if (computedStartBoundary <= targetDate) {
+        // Daily fallback: push by exactly 24 hours if already passed
+        computedStartBoundary = new Date(computedStartBoundary.getTime() + 24 * 60 * 60 * 1000);
     }
 
-    // If the calculated date is in the past, advance to the next valid occurrence
-    if (date <= targetDate) {
-        if (schedule.scheduledDays && schedule.scheduledDays.length > 0) {
-            const days = schedule.scheduledDays as string[];
-            const nextDay = getNextScheduledDay(new Date(targetDate.getTime() + 24 * 60 * 60 * 1000), days);
-            if (nextDay) {
-                date = createZonedDate(nextDay, schedule.timezone, hours, minutes);
-            }
-        } else {
-            date = new Date(date.getTime() + 24 * 60 * 60 * 1000);
-        }
-    }
-
-    const end = new Date(date.getTime() + durationMs);
-    return { start: date, end };
+    const computedEndBoundary = new Date(computedStartBoundary.getTime() + durationMs);
+    return { start: computedStartBoundary, end: computedEndBoundary };
 }
 
 /**
@@ -440,7 +424,7 @@ function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start
  *
  * @internal
  */
-function getNextScheduledDay(from: Date, days: string[]): Date | null {
+function getNextScheduledDay(from: Date, days: string[], includeTodayIfValid: boolean = false): Date | null {
     if (!days.length) return null;
 
     const dayMap: Record<string, number> = {
@@ -448,12 +432,13 @@ function getNextScheduledDay(from: Date, days: string[]): Date | null {
         thursday: 4, friday: 5, saturday: 6
     };
 
-    const targetDays = days.map(d => dayMap[d.toLowerCase()]).filter(d => d !== undefined);
+    const targetDays = days.map(d => dayMap[ d.toLowerCase() ]).filter(d => d !== undefined);
     if (!targetDays.length) return null;
 
     const currentDay = from.getDay();
+    const startIndex = includeTodayIfValid ? 0 : 1;
 
-    for (let i = 1; i <= 7; i++) {
+    for (let i = startIndex; i <= 7; i++) {
         const checkDay = (currentDay + i) % 7;
         if (targetDays.includes(checkDay)) {
             const result = new Date(from);
@@ -476,21 +461,8 @@ function getNextScheduledDay(from: Date, days: string[]): Date | null {
  */
 export function computeNextRunAt(schedule: Schedule): Date {
     const now = new Date();
-    const [hours, minutes] = (schedule.scheduledTime || '19:00').split(':').map(Number);
-
-    if (schedule.scheduledDays && schedule.scheduledDays.length > 0) {
-        const days = schedule.scheduledDays as string[];
-        const nextDay = getNextScheduledDay(now, days);
-        if (nextDay) {
-            return createZonedDate(nextDay, schedule.timezone, hours, minutes);
-        }
-    }
-
-    let next = createZonedDate(now, schedule.timezone, hours, minutes);
-    if (next <= now) {
-        next = new Date(next.getTime() + 24 * 60 * 60 * 1000);
-    }
-    return next;
+    const { start } = computeNextWindowForDate(schedule, now);
+    return start;
 }
 
 /**

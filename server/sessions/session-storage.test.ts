@@ -1,54 +1,53 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DatabaseStorage } from '../storage';
 import { db } from '../db';
-import { sessions } from '@shared/schema';
 
-// Mock the db
-vi.mock('../db', () => ({
-    db: {
+vi.mock('../db', () => {
+    const mockChainDb = {
         select: vi.fn().mockReturnThis(),
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
         insert: vi.fn().mockReturnThis(),
         update: vi.fn().mockReturnThis(),
         execute: vi.fn(),
-    }
-}));
+    };
+    return { db: mockChainDb };
+});
 
-describe('Session Storage Core', () => {
-    const storage = new DatabaseStorage();
+describe('Database Storage Operations (Sessions)', () => {
+    const storageDb = new DatabaseStorage();
 
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    describe('getSessionsInWindow', () => {
-        it('fetches sessions strictly within the provided date bounds', async () => {
+    describe('Window Query Execution: getSessionsInWindow', () => {
+        it('fetches sessions strictly within the provided datetime bounds', async () => {
             const dateStartMock = new Date('2026-03-01T00:00:00Z');
             const dateEndMock = new Date('2026-03-07T00:00:00Z');
-            const arrMockSessionsValid = [
+            const arrSessionsValidMock = [
                 { id: 1, channelId: 'scifi', status: 'scheduled', scheduledStart: new Date('2026-03-02T12:00:00Z') },
             ];
 
-            (db.select as any).mockReturnValue({
-                from: vi.fn().mockReturnThis(),
-                where: vi.fn().mockReturnThis(),
-                orderBy: vi.fn().mockResolvedValue(arrMockSessionsValid),
-            });
+            (db.orderBy as any).mockResolvedValue(arrSessionsValidMock);
 
-            const arrResultSessions = await storage.getSessionsInWindow('scifi', dateStartMock, dateEndMock);
-            expect(arrResultSessions).toEqual(arrMockSessionsValid);
+            const arrResults = await storageDb.getSessionsInWindow('scifi', dateStartMock, dateEndMock);
+            expect(arrResults).toEqual(arrSessionsValidMock);
             expect(db.select).toHaveBeenCalled();
+            expect(db.where).toHaveBeenCalled();
         });
 
-        it('throws and logs uncaught errors gracefully during window fetch', async () => {
+        it('traps and bubbles database faults during fetch operations', async () => {
             const dateStartMock = new Date();
             const dateEndMock = new Date();
-            const errorMockDb = new Error('Connection lost');
+            const errorDbMock = new Error('Connection lost');
 
-            (db.select as any).mockImplementation(() => { throw errorMockDb; });
+            (db.select as any).mockImplementation(() => { throw errorDbMock; });
 
-            await expect(storage.getSessionsInWindow('scifi', dateStartMock, dateEndMock)).rejects.toThrow('Connection lost');
+            await expect(storageDb.getSessionsInWindow('scifi', dateStartMock, dateEndMock))
+                .rejects.toThrow('Connection lost');
         });
     });
-
-    // ... (Keep existing getNextSession, getActiveSession, listSessions tests)
 });
