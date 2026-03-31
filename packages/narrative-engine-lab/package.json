@@ -1,0 +1,41 @@
+{
+  "name": "narrative-engine-lab",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Visual laboratory for NarrativeEngine - provides a UI for testing and debugging the RAG pipeline",
+  "private": true,
+  "main": "./dist/src/server.js",
+  "exports": {
+    ".": "./dist/src/server.js",
+    "./server": "./dist/src/server.js"
+  },
+  "bin": {
+    "narrativeengine-lab": "./dist/src/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.server.json && vite build --outDir dist/ui --emptyOutDir",
+    "build:ui": "vite build --outDir dist/ui --emptyOutDir",
+    "dev": "vite",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "narrative-engine": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.27",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.20",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.0.1",
+    "postcss": "^8.4.47",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^2.6.1",
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.2"
+  }
+}

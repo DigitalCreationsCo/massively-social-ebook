@@ -1,39 +1,43 @@
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { addDays } from 'date-fns';
 
-export const TIMEZONE = 'America/Denver';
+export { getISOWeek, getYear } from 'date-fns';
 
-export function getMSTDateString(date: Date | number | string): string {
-    return formatInTimeZone(date, TIMEZONE, 'yyyy-MM-dd');
+// Removed global TIMEZONE constant to prevent accidental hardcoding
+
+export function getDateStringInTZ(date: Date | number | string, tz: string): string {
+    return formatInTimeZone(date, tz, 'yyyy-MM-dd');
 }
 
-export function formatMST(date: Date | number | string, formatStr: string): string {
-    return formatInTimeZone(date, TIMEZONE, formatStr);
+export function formatInTZ(date: Date | number | string, tz: string, formatStr: string): string {
+    return formatInTimeZone(date, tz, formatStr);
 }
 
-export function isTodayMST(date: Date | number | string): boolean {
-    const dateStr = getMSTDateString(date);
-    const nowStr = getMSTDateString(new Date());
+export function isTodayInTZ(date: Date | number | string, tz: string): boolean {
+    const dateStr = getDateStringInTZ(date, tz);
+    const nowStr = getDateStringInTZ(new Date(), tz);
     return dateStr === nowStr;
 }
 
-export function isTomorrowMST(date: Date | number | string): boolean {
-    const dateStr = getMSTDateString(date);
-    
-    const [y, m, d] = getMSTDateString(new Date()).split('-').map(Number);
+export function isTomorrowInTZ(date: Date | number | string, tz: string): boolean {
+    const targetDateStr = getDateStringInTZ(date, tz);
+
+    const [y, m, d] = getDateStringInTZ(new Date(), tz).split('-').map(Number);
     const tomorrow = new Date(y, m - 1, d + 1);
     
     const ty = tomorrow.getFullYear();
     const tm = tomorrow.getMonth() + 1;
     const td = tomorrow.getDate();
     const tomorrowStr = `${ty}-${tm.toString().padStart(2, '0')}-${td.toString().padStart(2, '0')}`;
-    
-    return dateStr === tomorrowStr;
+
+    return targetDateStr === tomorrowStr;
 }
 
-
-
-export function createMSTDate(date: Date | number | string, hour: number, minute: number = 0, second: number = 0): Date {
-    const mstStr = getMSTDateString(date);
-    const localStr = `${mstStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
-    return fromZonedTime(localStr, TIMEZONE);
+/**
+ * Creates a Date object from a specific time in a specific timezone
+ */
+export function createZonedDate(date: Date | number | string, tz: string, hour: number, minute: number = 0): Date {
+    const datePart = getDateStringInTZ(date, tz);
+    const timePart = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+    return fromZonedTime(`${datePart} ${timePart}`, tz);
 }

@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
-import { DEFAULT_CHANNEL } from '@shared/channels';
 import type { Session, Reaction } from '@shared/schema';
 import { trackEvent, identifyUser } from '@/lib/analytics';
 
@@ -45,15 +44,13 @@ export interface VoteResults {
 }
 
 export function useLiveState(channelId: string) {
+  if (!channelId) {
+    throw new Error('useLiveState: channelId is required. No default channel.');
+  }
+
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
-  // Ensure channelId is never undefined or empty
-  if (!channelId) {
-    console.warn(`[LiveState] Undefined channelId provided, defaulting to ${DEFAULT_CHANNEL}`);
-    channelId = DEFAULT_CHANNEL;
-  }
-  const normalizedChannelId = channelId;
   const [username] = useState(() => {
     const stored = sessionStorage.getItem('reader_name');
     if (stored) return stored;
@@ -83,18 +80,18 @@ export function useLiveState(channelId: string) {
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
-    queryKey: [ api.blocks.current.path, normalizedChannelId ],
+    queryKey: [ api.blocks.current.path, channelId ],
     queryFn: async () => {
-      const res = await fetch(`${api.blocks.current.path}?channelId=${normalizedChannelId}`);
+      const res = await fetch(`${api.blocks.current.path}?channelId=${channelId}`);
       if (!res.ok) throw new Error('Failed to fetch current block');
       return res.json() as Promise<StoryState>;
     },
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
-    queryKey: [ api.chat.history.path, normalizedChannelId ],
+    queryKey: [ api.chat.history.path, channelId ],
     queryFn: async () => {
-      const res = await fetch(`${api.chat.history.path}?channelId=${normalizedChannelId}`);
+      const res = await fetch(`${api.chat.history.path}?channelId=${channelId}`);
       if (!res.ok) throw new Error('Failed to fetch chat history');
       return res.json() as Promise<ChatMsg[]>;
     },
@@ -168,8 +165,8 @@ export function useLiveState(channelId: string) {
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = import.meta.env.VITE_WS_URL 
-      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${normalizedChannelId}`
-      : `${protocol}//${window.location.host}/ws?channelId=${normalizedChannelId}`;
+      ? `${import.meta.env.VITE_WS_URL}/ws?channelId=${channelId}`
+      : `${protocol}//${window.location.host}/ws?channelId=${channelId}`;
     
     const connect = () => {
       const socket = new WebSocket(wsUrl);
@@ -177,7 +174,7 @@ export function useLiveState(channelId: string) {
 
       socket.onopen = () => {
         setWsConnected(true);
-        console.log('[LiveState] Connected to channel:', normalizedChannelId);
+        console.log('[LiveState] Connected to channel:', channelId);
         };
 
       socket.onclose = () => {
@@ -219,7 +216,7 @@ export function useLiveState(channelId: string) {
           }
           else if (message.type === 'CHAT_MESSAGE') {
             const payload = message.payload as ChatMsg;
-            queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, normalizedChannelId ], (old = []) => {
+            queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, channelId ], (old = []) => {
               if (old.some(m => m.id === payload.id)) return old;
               return [...old, payload];
             });
@@ -234,11 +231,20 @@ export function useLiveState(channelId: string) {
           }
           else if (message.type === 'SESSION_STATUS') {
             const payload = message.payload as { status: SessionStatus, session: Session | null; };
-            setSessionStatus(payload.status);
-            setActiveSession(payload.session);
-            if (payload.status === 'active') {
-              // Refetch block if session just started
-              queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, normalizedChannelId ] });
+
+            const now = Date.now();
+            const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
+
+            if (isPast) {
+              // If the server sends a session that is technically over, treat it as completed
+              setSessionStatus('completed');
+              setActiveSession(null);
+            } else {
+              setSessionStatus(payload.status);
+              setActiveSession(payload.session);
+              if (payload.status === 'active') {
+                queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, channelId ] });
+              }
             }
           }
         } catch (err) {
@@ -251,7 +257,35 @@ export function useLiveState(channelId: string) {
     return () => {
       wsRef.current?.close();
     };
-  }, [ queryClient, normalizedChannelId ]);
+  }, [ queryClient, channelId ]);
+
+  // Refine the Macro Phase calculation to be more robust
+  useEffect(() => {
+    if (!activeSession) {
+      setMacroPhase('waiting');
+      return;
+    }
+
+    const updatePhase = () => {
+      const now = Date.now();
+      const start = new Date(activeSession.scheduledStart).getTime();
+      const end = new Date(activeSession.scheduledEnd).getTime();
+
+      if (now > end || currentBlock?.phase === 'resolution') {
+        setMacroPhase('afterparty');
+      } else if (now < start - 3 * 60 * 1000) {
+        setMacroPhase('waiting');
+      } else if (now < start) {
+        setMacroPhase('gathering');
+      } else {
+        setMacroPhase('reading');
+      }
+    };
+
+    updatePhase();
+    const interval = setInterval(updatePhase, 1000);
+    return () => clearInterval(interval);
+  }, [ activeSession, currentBlock?.phase ]);
 
   const submitChat = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -265,15 +299,15 @@ export function useLiveState(channelId: string) {
       text,
       createdAt: new Date().toISOString()
     };
-    queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, normalizedChannelId ], (old = []) => [ ...old, tempMsg ]);
+    queryClient.setQueryData<ChatMsg[]>([ api.chat.history.path, channelId ], (old = []) => [ ...old, tempMsg ]);
 
-    trackEvent('Chat Message Sent', { channel: normalizedChannelId });
+    trackEvent('Chat Message Sent', { channel: channelId });
 
     wsRef.current.send(JSON.stringify({
       type: 'SUBMIT_CHAT',
       payload: { username, text }
     }));
-  }, [ username, queryClient, toast, normalizedChannelId ]);
+  }, [ username, queryClient, toast, channelId ]);
 
   const submitVote = useCallback((choice: 'A' | 'B') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -282,7 +316,7 @@ export function useLiveState(channelId: string) {
     }
     
     
-    sessionStorage.setItem(`voted_${normalizedChannelId}_${currentBlock?.id}`, choice);
+    sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
     
     wsRef.current.send(JSON.stringify({
       type: 'SUBMIT_VOTE',
@@ -301,12 +335,12 @@ export function useLiveState(channelId: string) {
       description: `You chose ${currentBlock?.optionA && choice === 'A' ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
       duration: 2000 
     });
-  }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, normalizedChannelId ]);
+  }, [ currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, channelId ]);
 
   const submitReaction = useCallback((blockId: number, emoji: string, paragraphIndex: number) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       
-      trackEvent('Reaction Sent', { channel: normalizedChannelId, emoji, blockId });
+      trackEvent('Reaction Sent', { channel: channelId, emoji, blockId });
       
       wsRef.current.send(JSON.stringify({
           type: 'SUBMIT_REACTION',
@@ -316,7 +350,7 @@ export function useLiveState(channelId: string) {
       // Optimistic update
       setReactions(prev => [...prev, {
           id: Date.now(), // Temporary ID
-          channelId: normalizedChannelId,
+          channelId: channelId,
           sessionId: activeSession?.id || 0,
           blockId,
           userId: username,
@@ -324,9 +358,9 @@ export function useLiveState(channelId: string) {
           paragraphIndex,
           createdAt: new Date()
       }]);
-  }, [username, normalizedChannelId, activeSession]);
+  }, [username, channelId, activeSession]);
 
-  const hasVotedCurrent = sessionStorage.getItem(`voted_${normalizedChannelId}_${currentBlock?.id}`) !== null;
+  const hasVotedCurrent = sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
 
   // Get most recent chat message
   const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;

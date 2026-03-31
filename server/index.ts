@@ -1,8 +1,9 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerAdminRoutes } from "./routes/admin-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { startRecurringScheduler } from "./scheduler";
+import { startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
 import { PartitionManager } from "./partition-manager";
 
@@ -51,6 +52,7 @@ app.use(createRequestLogger());
   await PartitionManager.initializePartitions();
 
   await registerRoutes(httpServer, app);
+  registerAdminRoutes(app);
   startRecurringScheduler();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -74,6 +76,8 @@ app.use(createRequestLogger());
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+  console.log(`mode: ${process.env.NODE_ENV}`);
+
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -84,7 +88,7 @@ app.use(createRequestLogger());
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5001 if not specified.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5001", 10);
+  const port = parseInt(process.env.PORT || "5001", 10);  
   httpServer.listen(
     {
       port,

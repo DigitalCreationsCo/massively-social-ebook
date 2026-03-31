@@ -1,0 +1,10 @@
+{
+  "dialect": "postgres",
+  "id": "ca28dd62-cbe3-4c1b-ad3d-1b9b0e941767",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "version": "8",
+  "ddl": [],
+  "renames": []
+}

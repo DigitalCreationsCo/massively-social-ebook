@@ -1,18 +1,22 @@
 {
   "name": "the-25th-chapter",
-  "version": "0.1.14",
+  "version": "0.3.4",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "CC BY-NC-SA",
   "scripts": {
-    "dev": "tsx watch -r dotenv/config server/index.ts",
-    "build": "tsx scripts/build.ts",
+    "dev": "rm -rf node_modules/.vite && NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
+    "build": "NODE_ENV=production tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "release:patch": "npm version patch && git push origin main --tags",
     "release:minor": "npm version minor && git push origin main --tags",
     "release:major": "npm version major && git push origin main --tags",
     "check": "tsc",
     "test": "vitest",
-    "db:push": "drizzle-kit push",
+    "db:push": "drizzle-kit --config drizzle.dev.config.ts push",
+    "db:push:prod": "drizzle-kit --config drizzle.prod.config.ts push",
     "prepare": "husky",
     "email:dev": "email dev"
   },
@@ -60,8 +64,8 @@
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.3.1",
-    "drizzle-orm": "^0.39.3",
-    "drizzle-zod": "^0.7.0",
+    "drizzle-orm": "^1.0.0-beta.12-a5629fb",
+    "drizzle-zod": "^1.0.0-beta.12-a5629fb",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.0.1",
     "express-session": "^1.18.1",
@@ -73,6 +77,8 @@
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "mixpanel-browser": "^2.75.0",
+    "narrative-engine": "^0.1.0",
+    "narrative-engine-lab": "^0.1.0",
     "next-themes": "^0.4.6",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
@@ -95,8 +101,8 @@
     "web-streams-polyfill": "^4.2.0",
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
-    "zod": "^3.24.2",
-    "zod-validation-error": "^3.4.0"
+    "zod": "^4.3.6",
+    "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
     "@react-email/preview-server": "5.2.9",
@@ -121,7 +127,7 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
-    "drizzle-kit": "^0.31.8",
+    "drizzle-kit": "^1.0.0-beta.12-a5629fb",
     "esbuild": "^0.25.0",
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
@@ -131,13 +137,5 @@
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
     "vite": "^7.3.0"
-  },
-  "overrides": {
-    "drizzle-kit": {
-      "@esbuild-kit/esm-loader": "npm:tsx@^4.20.4"
-    }
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.8"
   }
 }

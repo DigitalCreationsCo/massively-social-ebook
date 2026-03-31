@@ -54,7 +54,8 @@ jobs:
         run: |
           flyctl deploy --remote-only --no-cache \
             --build-arg APP_BUILD_TAG=${{ steps.validator.outputs.full_tag }} \
-            --build-arg VITE_MIXPANEL_TOKEN=${{ secrets.VITE_MIXPANEL_TOKEN }}
+            --build-arg VITE_MIXPANEL_TOKEN=${{ secrets.VITE_MIXPANEL_TOKEN }} \
+            --build-arg ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 

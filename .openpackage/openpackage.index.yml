@@ -1,0 +1,10 @@
+# This file is managed by OpenPackage. Do not edit manually.
+
+packages:
+  massively-social-ebook:
+    files:
+      agents/storyblock-writer.md:
+        - .cursor/agents/storyblock-writer.md
+        - .opencode/agents/storyblock-writer.md
+    path: ./.openpackage
+    version: 0.0.0

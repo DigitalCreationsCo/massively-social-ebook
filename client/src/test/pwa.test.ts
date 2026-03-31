@@ -4,12 +4,9 @@ import path from 'path';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-/**
- * Validates the integrity and structure of the manifest.json file.
- * Essential for maintaining narrative continuity in Cinematic Canvas.
- */
 describe('Manifest Integrity Suite', () => {
-  const pathManifestFile = resolve(__dirname, './manifest.json');
+  // manifest.json is in client/public/, not in src/test/
+  const pathManifestFile = resolve(__dirname, '../../public/manifest.json');
 
   it('should exist in the expected directory', () => {
     const isManifestPresent = existsSync(pathManifestFile);
@@ -37,12 +34,12 @@ describe('Manifest Integrity Suite', () => {
     }
   });
 
-  it('should contain required fields for Cinematic Canvas', () => {
+  it('should contain required fields', () => {
     const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
     const parsedManifestBody = JSON.parse(contentManifestRaw);
 
-    // Explicitly defining required schema keys
-    const listRequiredKeys = [ 'name', 'version', 'manifest_version' ];
+    // Required fields for a valid PWA manifest (Web Manifest spec)
+    const listRequiredKeys = [ 'name', 'short_name', 'start_url', 'display', 'icons' ];
 
     listRequiredKeys.forEach(strKey => {
       const hasKey = Object.prototype.hasOwnProperty.call(parsedManifestBody, strKey);
