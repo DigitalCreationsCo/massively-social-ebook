@@ -7,4 +7,5 @@ vite.config.ts.*
 coverage
 client/coverage
 logs
-.env
+.env.local
+.env.production.local

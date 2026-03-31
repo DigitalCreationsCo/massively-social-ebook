@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleGameLoopTick, state, computeDecisionEndsAt, NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS } from './routes';
 import { storage } from './storage';
-import * as ai from './ai';
+import * as ai from './blocks/ai';
 
 // Mock storage and AI
 vi.mock('./storage', () => ({
@@ -235,8 +235,8 @@ describe('handleGameLoopTick', () => {
 
         await handleGameLoopTick(now + 5000, mockBroadcast);
 
-        const call = mockBroadcast.mock.calls[ 0 ];
-        const payload = call[ 1 ].payload;
+        const call = mockBroadcast.mock.calls[0];
+        const payload = call[1].payload;
         expect(payload.timeRemaining).toBe(5000);
         expect(payload.timeToNextDecision).toBe(5000);
     });

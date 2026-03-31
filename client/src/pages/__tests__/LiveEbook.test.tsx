@@ -4,7 +4,6 @@ import LiveEbook from '../LiveEbook';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 
-// Mock the hooks
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),

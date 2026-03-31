@@ -4,7 +4,7 @@ import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Bell, Loader2, BookOpen, Mail } from "lucide-react";
-import { formatMST, isTodayMST, isTomorrowMST } from "@shared/date";
+import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
@@ -20,26 +20,28 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DEFAULT_CHANNEL_ID } from '@/App';
 import { Switch } from "@/components/ui/switch";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function UpcomingSession({ channelId = 'mystery' }: { channelId?: string; }) {
+export default function UpcomingSession() {
+    const channelId = DEFAULT_CHANNEL_ID;
     const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
     const { toast } = useToast();
-    const [ reminding, setReminding ] = useState(false);
-    const [ email, setEmail ] = useState("");
-    const [ isDialogOpen, setIsDialogOpen ] = useState(false);
-    const [ subscribeToUpdates, setSubscribeToUpdates ] = useState(true);
-    const [ subscribeToStories, setSubscribeToStories ] = useState(true);
-    const [ _, setLocation ] = useLocation();
-    const [ step, setStep ] = useState<1 | 2>(1);
+    const [reminding, setReminding] = useState(false);
+    const [email, setEmail] = useState("");
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+    const [subscribeToUpdates, setSubscribeToUpdates] = useState(true);
+    const [subscribeToStories, setSubscribeToStories] = useState(true);
+    const [_, setLocation] = useLocation();
+    const [step, setStep] = useState<1 | 2>(1);
 
     useEffect(() => {
         if (!isDialogOpen) {
             const t = setTimeout(() => setStep(1), 300);
             return () => clearTimeout(t);
         }
-    }, [ isDialogOpen ]);
+    }, [isDialogOpen]);
 
     const [timeLeft, setTimeLeft] = useState("");
 
@@ -47,20 +49,20 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
         if (!nextSession?.scheduledStart) return;
 
         const target = new Date(nextSession.scheduledStart).getTime();
-        
+
         const updateTimer = () => {
             const now = new Date().getTime();
             const diff = target - now;
-            
+
             if (diff <= 0) {
                 setTimeLeft("00:00:00");
                 return;
             }
-            
+
             const hours = Math.floor(diff / (1000 * 60 * 60));
             const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
             const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-            
+
             setTimeLeft(
                 `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
             );
@@ -69,14 +71,14 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [ nextSession?.scheduledStart ]);
+    }, [nextSession?.scheduledStart]);
 
     // Auto-redirect if session becomes active
     useEffect(() => {
         if (sessionStatus === 'active') {
-            setLocation('/');
+            setLocation('/live');
         }
-    }, [ sessionStatus, setLocation ]);
+    }, [sessionStatus, setLocation]);
 
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;
@@ -111,8 +113,8 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
             if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
 
             const message = await res.json();
-            const description = message.message?.split(". ")[ 1 ] ?? message.message?.split(". ")[ 0 ] ?? `You'll receive an email with the next session schedule.`;
-            const title = message.message?.split(". ")[ 1 ] ? message.message?.split(". ")[ 0 ] : `You're on the list.`; 
+            const description = message.message?.split(". ")[1] ?? message.message?.split(". ")[0] ?? `You'll receive an email with the next session schedule.`;
+            const title = message.message?.split(". ")[1] ? message.message?.split(". ")[0] : `You're on the list.`;
 
             trackEvent('Set Reminder Success', { channel: channelId, sessionId: nextSession?.id, email });
             toast({
@@ -194,7 +196,7 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                     <h1 className="text-4xl font-serif text-white tracking-tight">The Room Is Open</h1>
                     <p className="text-white/60 font-serif">Starting...</p>
                     <Button
-                        onClick={ () => setLocation('/') }
+                        onClick={() => setLocation('/')}
                         className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-sans uppercase tracking-widest py-6"
                     >
                         Join
@@ -213,66 +215,65 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                 />
             )}
 
-            {/* Hero Section */ }
+            {/* Hero Section */}
             <div className="min-h-screen max-w-3xl w-full flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
                 <div className="max-w-xl w-full">
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
                         <CardHeader className="text-center pb-0 pt-12">
 
-                                    <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
+                            <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
                                 The next story starts soon.
-                                    </CardTitle>
-                                    <CardDescription className="text-white/80 font-sans text-lg">
-                                { isScheduled && (
-                                    <>
-                                        { isTodayMST(new Date(nextSession.scheduledStart)) ? "Today" :
-                                            isTomorrowMST(new Date(nextSession.scheduledStart)) ? "Tomorrow" :
-                                                    formatMST(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
-                                        } at <span>{ formatMST(new Date(nextSession.scheduledStart), "h:mm a") } MST</span>
-                                    </>
-                                ) }
+                            </CardTitle>
+                            <CardDescription className="text-white/80 font-sans text-lg">
+                                {isScheduled && (
+                                    <span>
+                                        {isTodayInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Today" :
+                                            isTomorrowInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Tomorrow" :
+                                                formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "EEEE, MMMM do")
+                                        } at {formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "h:mm a")} {nextSession.timezone}
+                                    </span>
+                                )}
                             </CardDescription>
                         </CardHeader>
 
                         <CardContent className="space-y-10 pt-8 pb-12 px-8">
-                                <div className="space-y-10">
-                                { nextSession && (<div className="space-y-4">
-                                        <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
-                                        <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                            <h2 className="text-2xl font-serif text-white text-center mb-4 leading-tight">{ nextSession.title }</h2>
-                                            <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                                                A detective descends into a deep mystery. Step into a city where every shadow has a secret.
-                                                {/* description: { nextSession.description } */ }
-                                            </p>
-                                        </div>
-                                </div>) }
+                            <div className="space-y-10">
+                                {nextSession && (<div className="space-y-4">
+                                    <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
+                                    <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
+                                        <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
+                                        <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
+                                            {nextSession.description}
+                                        </p>
+                                    </div>
+                                </div>)}
 
-                                    <div className="space-y-4">
-                                        <Dialog open={ isDialogOpen } onOpenChange={ setIsDialogOpen }>
-                                            <DialogTrigger asChild>
-                                                <Button
-                                                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
-                                                >
-                                                    Remind me
-                                                </Button>
-                                            </DialogTrigger>
-                                            <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
-                                                <DialogHeader>
-                                                    <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
+                                <div className="space-y-4">
+                                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                                        <DialogTrigger asChild>
+                                            <Button
+                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
+                                            >
+                                                Remind me
+                                            </Button>
+                                        </DialogTrigger>
+                                        <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
+                                            <DialogHeader>
+                                                <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
                                                 <DialogDescription className="text-white/60 font-sans text-sm">
                                                     Enter your email address to receive an invitation to the next session.
-                                                    </DialogDescription>
-                                                </DialogHeader>
-                                            <form onSubmit={ handleFormSubmit } className="py-2 overflow-visible px-1 -mx-1">
-                                                <AnimatePresence mode="wait" initial={ false }>
-                                                    { step === 1 && (
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <form onSubmit={handleFormSubmit} className="py-2 overflow-visible px-1 -mx-1">
+                                                <AnimatePresence mode="wait" initial={false}>
+                                                    {step === 1 && (
                                                         <motion.div
                                                             key="step1"
-                                                            initial={ { opacity: 0, x: -20 } }
-                                                            animate={ { opacity: 1, x: 0 } }
-                                                            exit={ { opacity: 0, x: -20 } }
-                                                            transition={ { duration: 0.2 } }
+                                                            initial={{ opacity: 0, x: -20 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            exit={{ opacity: 0, x: -20 }}
+                                                            transition={{ duration: 0.2 }}
                                                             className="space-y-6"
                                                         >
                                                             <div className="space-y-3 mt-4">
@@ -282,8 +283,8 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                     type="email"
                                                                     placeholder="youraddress@email.com"
                                                                     required
-                                                                    value={ email }
-                                                                    onChange={ (e) => setEmail(e.target.value) }
+                                                                    value={email}
+                                                                    onChange={(e) => setEmail(e.target.value)}
                                                                     className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
                                                                 />
                                                             </div>
@@ -296,15 +297,15 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                 </Button>
                                                             </DialogFooter>
                                                         </motion.div>
-                                                    ) }
+                                                    )}
 
-                                                    { step === 2 && (
+                                                    {step === 2 && (
                                                         <motion.div
                                                             key="step2"
-                                                            initial={ { opacity: 0, x: 20 } }
-                                                            animate={ { opacity: 1, x: 0 } }
-                                                            exit={ { opacity: 0, x: 20 } }
-                                                            transition={ { duration: 0.2 } }
+                                                            initial={{ opacity: 0, x: 20 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            exit={{ opacity: 0, x: 20 }}
+                                                            transition={{ duration: 0.2 }}
                                                             className="space-y-6 mt-4"
                                                         >
                                                             <div className="space-y-4">
@@ -314,8 +315,8 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                         <p className="text-xs text-white/50">Weekly email about new features</p>
                                                                     </div>
                                                                     <Switch
-                                                                        checked={ subscribeToUpdates }
-                                                                        onCheckedChange={ setSubscribeToUpdates }
+                                                                        checked={subscribeToUpdates}
+                                                                        onCheckedChange={setSubscribeToUpdates}
                                                                     />
                                                                 </div>
 
@@ -325,17 +326,16 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                         <p className="text-xs text-white/50">Be notified about new stories</p>
                                                                     </div>
                                                                     <Switch
-                                                                        checked={ subscribeToStories }
-                                                                        onCheckedChange={ setSubscribeToStories }
+                                                                        checked={subscribeToStories}
+                                                                        onCheckedChange={setSubscribeToStories}
                                                                     />
                                                                 </div>
 
-                                                                {/* <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
                                                                     <div className="flex flex-col space-y-1">
                                                                         <Label className="text-sm font-medium text-white">Follow us on X</Label>
-                                                                        <p className="text-xs text-white/50">Stay up-to-date with news</p>
                                                                     </div>
-                                                                    <a href="https://x.com" target="_blank" rel="noopener noreferrer">
+                                                                    <a href="https://x.com/25thchptr" target="_blank" rel="noopener noreferrer">
                                                                         <Button
                                                                             variant="outline"
                                                                             size="sm"
@@ -345,13 +345,13 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                             Follow
                                                                         </Button>
                                                                     </a>
-                                                                </div> */}
+                                                                </div>
                                                             </div>
 
                                                             <DialogFooter className="flex-col sm:flex-col gap-3">
                                                                 <Button
                                                                     type="submit"
-                                                                    disabled={ reminding }
+                                                                    disabled={reminding}
                                                                     className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
                                                                 >
                                                                     Confirm
@@ -359,28 +359,38 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                                                 <Button
                                                                     type="button"
                                                                     variant="ghost"
-                                                                    onClick={ () => setStep(1) }
+                                                                    onClick={() => setStep(1)}
                                                                     className="w-full text-white/50 hover:text-white h-12"
                                                                 >
                                                                     Back
                                                                 </Button>
                                                             </DialogFooter>
                                                         </motion.div>
-                                                    ) }
+                                                    )}
                                                 </AnimatePresence>
-                                                </form>
-                                            </DialogContent>
-                                        </Dialog>
+                                            </form>
+                                        </DialogContent>
+                                    </Dialog>
 
-                                        <Button 
+                                    <DialogFooter>
+                                        <Button
+                                            type="submit"
+                                            disabled={reminding}
+                                            className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
+                                        >
+                                            Continue
+                                        </Button>
+                                    </DialogFooter>
+
+                                    <Button
                                         variant="secondary"
                                         className="w-full font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
-                                            onClick={ () => {
-                                        trackEvent('Preview Chapter Clicked', { channel: channelId });
-                                                document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
-                                            } }
-                                        >
-                                            Preview chapter
+                                        onClick={() => {
+                                            trackEvent('Preview Chapter Clicked', { channel: channelId });
+                                            document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
+                                        }}
+                                    >
+                                        Preview chapter
                                     </Button>
                                 </div>
                             </div>
@@ -390,19 +400,19 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                 </p>
                             </div>
                         </CardContent>
-                    </Card>
-                </div>
-            </div>
+                    </Card >
+                </div >
+            </div >
 
-            {/* Preview Section */ }
-            <section id="preview" className="w-full px-6 mx-auto my-32">
+            {/* Preview Section */}
+            < section id="preview" className="w-full px-6 mx-auto my-32" >
                 <div className="flex flex-col gap-16 justify-center items-center">
-                    {/* Mockup Display */ }
+                    {/* Mockup Display */}
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
-                        <div className="space-y-4">
-                            <h2 className="text-4xl font-serif text-white tracking-tight">The 25th Chapter</h2>
+                        <div className="space-y-4 px-6 mx-auto">
+                            <h2 className="text-4xl font-serif text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
-                                Join a room of fellow readers and unfold the narrative.
+                                Join fellow readers in a live session to unfold the narrative.
                             </p>
                         </div>
                         <div className="relative group flex-grow min-h-0 flex justify-center">
@@ -415,10 +425,10 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                         </div>
                     </div>
 
-                    {/* FAQ Aside */ }
+                    {/* FAQ Aside */}
                     <aside id="faq" className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                         <div className="space-y-4">
-                            <h2 className="text-3xl font-serif text-white">FAQ</h2>
+                            <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
                         </div>
 
@@ -434,7 +444,7 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                 <h3 className="text-lg font-serif text-white">Can I read missed chapters?</h3>
                                 <p className="text-white/50 font-sans text-sm leading-relaxed">
                                     All chapters are saved and will be available soon.
-                                    {/* The archives are open to all "Remembrance" holders. Missing a session means missing the live decisions, but not the story. */ }
+                                    {/* The archives are open to all "Remembrance" holders. Missing a session means missing the live decisions, but not the story. */}
                                 </p>
                             </div>
 
@@ -444,18 +454,18 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                                     Readers decide on key plot points with a community vote. The path with the most votes becomes part of the story.
                                 </p>
                             </div>
-                             <div className="space-y-3">
+                            <div className="space-y-3">
                                 <h3 className="text-lg font-serif text-white">How can I download the app?</h3>
                                 <p className="text-white/50 font-sans text-sm leading-relaxed">
                                     You can add The 25th Chapter to your home screen for a native app-like experience.
                                     Click below for a simple guide.
                                 </p>
                                 <div className="pt-2">
-                                  <Link to="/install">
-                                    <Button variant="outline" size="sm" className="border-white/20 bg-white/5 hover:bg-white/10">
-                                        Installation Instructions
-                                    </Button>
-                                  </Link>
+                                    <Link to="/install">
+                                        <Button variant="outline" size="sm" className="border-white/20 bg-white/5 hover:bg-white/10">
+                                            Installation Instructions
+                                        </Button>
+                                    </Link>
                                 </div>
                             </div>
                         </div>
@@ -463,16 +473,16 @@ export default function UpcomingSession({ channelId = 'mystery' }: { channelId?:
                         <Button
                             variant="secondary"
                             className="w-full bg-white/10 hover:bg-white/20 text-white font-serif tracking-widest py-6 border border-white/10"
-                            onClick={ () => {
+                            onClick={() => {
                                 trackEvent('Return to Top Clicked');
                                 window.scrollTo({ top: 0, behavior: 'smooth' });
-                            } }
+                            }}
                         >
                             Return to top
                         </Button>
                     </aside>
                 </div>
-            </section>
-        </div>
+            </section >
+        </div >
     );
 }
