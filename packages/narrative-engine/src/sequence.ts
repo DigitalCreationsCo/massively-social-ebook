@@ -66,3 +66,42 @@ export const sequenceToBlockIndices = (sequence: number[]): number[] => {
     const unique = Array.from(new Set(rounded));
     return unique.sort((a, b) => a - b);
 };
+
+
+/**
+ * Window size for clustered block fetching.
+ * Fetches [index - 1, index, index + 1] around each milestone
+ * to provide connective tissue (setup, action, resolution).
+ */
+export const RAG_CLUSTER_WINDOW = 1;
+
+/**
+ * Expands block indices to include surrounding blocks for micro-context.
+ * This provides narrative connective tissue around each selected milestone.
+ *
+ * @param indices - The selected milestone indices from reciprocal sequence.
+ * @param totalBlocks - Total number of blocks in the story.
+ * @param windowSize - Number of blocks to include before/after each index.
+ * @returns Sorted, unique set of indices including windows.
+ */
+export const expandToClusteredIndices = (
+  indices: number[],
+  totalBlocks: number,
+  windowSize: number = RAG_CLUSTER_WINDOW
+): number[] => {
+  const windowedIndices = new Set<number>();
+
+  for (const idx of indices) {
+    // Add blocks from (idx - windowSize) to (idx + windowSize), bounded by story range
+    for (let offset = -windowSize; offset <= windowSize; offset++) {
+      const targetIdx = idx + offset;
+      // Ensure we stay within valid block range (1 to totalBlocks)
+      if (targetIdx >= 1 && targetIdx <= totalBlocks) {
+        windowedIndices.add(targetIdx);
+      }
+    }
+  }
+
+  // Return sorted array
+  return Array.from(windowedIndices).sort((a, b) => a - b);
+};

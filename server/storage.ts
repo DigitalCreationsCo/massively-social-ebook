@@ -16,7 +16,6 @@ import {
   lore,
   channels,
   schedules,
-  notificationLogs,
   type Block,
   type InsertBlock,
   type Vote,
@@ -41,6 +40,7 @@ import {
   type InsertNotificationLog,
   users,
   systemSettings,
+  notificationLogs,
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzle-orm";
 
@@ -200,7 +200,7 @@ export class DatabaseStorage implements IStorage {
       WHERE s.channel_id = ${channelId}
     `);
 
-    const numberedRows = (result.rows as any[]).filter(row => 
+    const numberedRows = (result.rows as any[]).filter(row =>
       indices.includes(row.row_num)
     ).sort((a, b) => a.row_num - b.row_num);
 
@@ -424,14 +424,14 @@ export class DatabaseStorage implements IStorage {
 
   async createSessionWithScheduleUpdate(sessionData: InsertSession, scheduleId: number): Promise<Session> {
     return await db.transaction(async (tx) => {
-        const [session] = await tx.insert(sessions).values(sessionData).returning();
-        await tx
-            .update(schedules)
-            .set({
-                sessionCount: sql`${schedules.sessionCount} + 1`,
-            })
-            .where(eq(schedules.id, scheduleId));
-        return session;
+      const [session] = await tx.insert(sessions).values(sessionData).returning();
+      await tx
+        .update(schedules)
+        .set({
+          sessionCount: sql`${schedules.sessionCount} + 1`,
+        })
+        .where(eq(schedules.id, scheduleId));
+      return session;
     });
   }
 
@@ -655,7 +655,7 @@ export class DatabaseStorage implements IStorage {
    * exists yet (first run before any session has ever started).
    */
   async getChannelState(channelId: string): Promise<ChannelStateRow | null> {
-    const [ row ] = await db
+    const [row] = await db
       .select()
       .from(channelStates)
       .where(eq(channelStates.channelId, channelId));
@@ -685,7 +685,7 @@ export class DatabaseStorage implements IStorage {
       ...data,
     };
 
-    const [ row ] = await db
+    const [row] = await db
       .insert(channelStates)
       .values(base)
       .onConflictDoUpdate({
@@ -749,7 +749,7 @@ export class DatabaseStorage implements IStorage {
    * inline generation).
    */
   async getPendingBlock(forBlockId: number, choice: "A" | "B"): Promise<PendingBlock | null> {
-    const [ row ] = await db
+    const [row] = await db
       .select()
       .from(pendingBlocks)
       .where(
@@ -767,7 +767,7 @@ export class DatabaseStorage implements IStorage {
    * duplicates if triggered twice (e.g. after a restart that resumed mid-tick).
    */
   async savePendingBlock(data: InsertPendingBlock): Promise<PendingBlock> {
-    const [ row ] = await db
+    const [row] = await db
       .insert(pendingBlocks)
       .values(data)
       .onConflictDoNothing()  // add UNIQUE(for_block_id, choice) in your migration
@@ -792,7 +792,7 @@ export class DatabaseStorage implements IStorage {
    * Used by the game loop instead of the in-memory `currentBlock` pointer.
    */
   async getBlockById(id: number): Promise<Block | null> {
-    const [ row ] = await db
+    const [row] = await db
       .select()
       .from(blocks)
       .where(eq(blocks.id, id));
@@ -804,7 +804,7 @@ export class DatabaseStorage implements IStorage {
    * Used by the game loop instead of the in-memory `activeSession` pointer.
    */
   async getSessionById(id: number): Promise<Session | null> {
-    const [ row ] = await db
+    const [row] = await db
       .select()
       .from(sessions)
       .where(eq(sessions.id, id));
