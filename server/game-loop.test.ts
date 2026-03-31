@@ -235,8 +235,8 @@ describe('handleGameLoopTick', () => {
 
         await handleGameLoopTick(now + 5000, mockBroadcast);
 
-        const call = mockBroadcast.mock.calls[ 0 ];
-        const payload = call[ 1 ].payload;
+        const call = mockBroadcast.mock.calls[0];
+        const payload = call[1].payload;
         expect(payload.timeRemaining).toBe(5000);
         expect(payload.timeToNextDecision).toBe(5000);
     });
