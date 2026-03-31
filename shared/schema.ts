@@ -1,21 +1,17 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, bigserial, bigint, boolean, customType, index, primaryKey, char } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType, index, char, primaryKey, vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
 
-const vector = (name: string, { dimensions }: { dimensions: number; }) =>
-  customType<{ data: number[]; }>({
-    dataType: () => `vector(${dimensions})`,
-  })(name);
 
-// Channels table - stores channel metadata
+
 export const channels = pgTable("channels", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull().unique(),
   name: text("name").notNull(),
   description: text("description"),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export type Channel = typeof channels.$inferSelect;
@@ -32,7 +28,7 @@ export const schedules = pgTable("schedules", {
   scheduledTime: text("scheduled_time"),           // e.g. '14:30' (24h, local to timezone)
   intervalEnabled: boolean("interval_enabled").notNull().default(false),
   timezone: text("timezone").notNull().default("UTC"),
-  nextRunAt: timestamp("next_run_at"),             // computed by scheduler, updated after each spawn
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),             // computed by scheduler, updated after each spawn
 
   // ── Title composition ──────────────────────────────────────────────────
   //
@@ -90,7 +86,8 @@ export const insertScheduleSchema = createInsertSchema(schedules, {
 export type Schedule = typeof schedules.$inferSelect;
 export type InsertSchedule = z.infer<typeof insertScheduleSchema>;
 
-// Session status type
+export type Phase = 'reading' | 'voting' | 'resolution';
+export type MacroPhase = 'waiting' | 'gathering' | 'reading' | 'afterparty';
 export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
 
 // Sessions table - individual session occurrences
@@ -159,7 +156,7 @@ export const lore = pgTable("lore", {
     .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   content: text("content").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, createdAt: true });
@@ -224,7 +221,7 @@ export const chat = pgTable("chat", {
     .references(() => sessions.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
   username: text("username").notNull(),
   text: text("text").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
@@ -246,7 +243,7 @@ export const reactions = pgTable("reactions", {
   userId: text("user_id").notNull(),
   emoji: text("emoji").notNull(),
   paragraphIndex: integer("paragraph_index").default(0),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
@@ -259,7 +256,7 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   pushToken: text("push_token"),
   isBanned: boolean("is_banned").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
@@ -270,28 +267,25 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
-
-export type SystemSetting = typeof systemSettings.$inferSelect;
-export type InsertSystemSetting = typeof systemSettings.$inferInsert;
 
 // Separated Notification Tables
 export const notificationsSessionWarning = pgTable("notifications_session_warning", {
-  id: bigserial("id", { mode: 'number' }).primaryKey(),
-  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull(),
   userId: text("user_id").notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
 });
 
 export const notificationsDaily = pgTable("notifications_daily", {
-  id: bigserial("id", { mode: 'number' }).primaryKey(),
+  id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
 });
 
 export const notificationsWeekly = pgTable("notifications_weekly", {
-  id: bigserial("id", { mode: 'number' }).primaryKey(),
+  id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
 });
@@ -300,6 +294,7 @@ export const notificationsWeekly = pgTable("notifications_weekly", {
 export type NotificationTargetType = 'session' | 'user' | 'schedule';
 
 // Notification Logs table
+// Kept for backward compatibility
 export const notificationLogs = pgTable("notification_logs", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(), // '5_min_warning', 'session_started', 'session_ended', 'weekly_brief'

@@ -298,7 +298,6 @@ export default function UpcomingSession() {
                                                             </DialogFooter>
                                                         </motion.div>
                                                     )}
-
                                                     {step === 2 && (
                                                         <motion.div
                                                             key="step2"
@@ -466,9 +465,9 @@ export default function UpcomingSession() {
                                             Installation Instructions
                                         </Button>
                                     </Link>
-                                </div >
-                            </div >
-                        </div >
+                                </div>
+                            </div>
+                        </div>
 
                         <Button
                             variant="secondary"
