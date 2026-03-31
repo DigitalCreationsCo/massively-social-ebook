@@ -218,11 +218,12 @@ describe('Notification System', () => {
 
         await dispatchWeeklyBriefing();
 
-        expect(sendEmail).toHaveBeenCalledWith(
-            'test@example.com',
-            'Your Weekly 25th Chapter Schedule',
-            expect.stringContaining('Sunday Story')
-        );
+expect(sendEmail).toHaveBeenCalledWith(
+'test@example.com',
+'Your Weekly 25th Chapter Schedule',
+            expect.stringContaining('Sunday Story'),
+            expect.any(String)
+);
     });
 });
 

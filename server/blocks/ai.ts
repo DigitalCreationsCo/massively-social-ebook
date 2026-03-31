@@ -5,6 +5,7 @@ import { createStoryBlockInstructions } from "../../prompts/storyblock-instructi
 import { createImageInstructions } from "../../prompts/image-instructions";
 import { NarrativeEngine } from "narrative-engine";
 import { RagProvider } from './rag';
+import { storage } from "../storage";
 
 export const ai = new GoogleGenAI({});
 
@@ -47,6 +48,7 @@ export interface StoryBlockResult {
   content: string;
   optionA?: { label: string; description: string; };
   optionB?: { label: string; description: string; };
+  newNotableEvent?: string;
 }
 
 async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<string> {
@@ -57,6 +59,7 @@ async function generateContextWithTimeout(channelId: string, inputQuery: string)
 }
 
 export async function generateStoryBlock(channelId: string, previousContext: string, isResolving: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
+
   // Enrich context with RAG (transparently falls back to previousContext on error)
   let enrichedContext = previousContext;
 
@@ -93,9 +96,13 @@ export async function generateStoryBlock(channelId: string, previousContext: str
           description: { type: Type.STRING, description: "Description of the second choice." }
         },
         required: ["label", "description"]
+      },
+      isNotable: {
+        type: Type.BOOLEAN,
+        description: "Whether this block is notable. Only include for major plot points, discoveries, character changes, or significant story developments. Omit if nothing notable happened."
       }
     },
-    required: ["title", "content"] // optionA and optionB are no longer strictly required at schema level for resolution
+    required: ["title", "content", "isNotable"]
   };
 
   const response = await ai.models.generateContent({
@@ -113,7 +120,6 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 
   const result = JSON.parse(response.text) as StoryBlockResult;
 
-  // Ensure options are present if not resolution, or removed if resolution
   if (isResolving) {
     delete result.optionA;
     delete result.optionB;
@@ -167,7 +173,6 @@ export async function generateStoryImage(description: string): Promise<string> {
       throw new Error("No image data returned.");
     }
 
-    // Return data URL directly (no filesystem write)
     return `data:image/jpeg;base64,${base64Image}`;
   } catch (err) {
     console.warn("Failed to generate image, using fallback:", err);

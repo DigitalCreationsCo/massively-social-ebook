@@ -39,8 +39,6 @@ import {
   users,
   systemSettings,
   notificationLogs,
-  type InsertNotificationLog,
-  type NotificationLog,
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzle-orm";
 

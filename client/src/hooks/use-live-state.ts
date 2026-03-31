@@ -3,17 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
-import type { Session, Reaction } from '@shared/schema';
+import type { Session, Reaction, Phase, MacroPhase, SessionStatus, ChatMessage } from '@shared/schema';
 import { trackEvent, identifyUser } from '@/lib/analytics';
-
-export type Phase = 'reading' | 'voting' | 'resolution';
-export type MacroPhase = 'waiting' | 'gathering' | 'reading' | 'afterparty';
-export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
-
-export interface VoteOption {
-  label: string;
-  description: string;
-}
 
 export interface StoryState {
   id: number;
@@ -31,11 +22,9 @@ export interface StoryState {
   turnsToNextChoice: number;
 }
 
-export interface ChatMsg {
-  id: number;
-  username: string;
-  text: string;
-  createdAt: string;
+export interface VoteOption {
+  label: string;
+  description: string;
 }
 
 export interface VoteResults {
@@ -93,7 +82,7 @@ export function useLiveState(channelId: string) {
     queryFn: async () => {
       const res = await fetch(`${api.chat.history.path}?channelId=${channelId}`);
       if (!res.ok) throw new Error('Failed to fetch chat history');
-      return res.json() as Promise<ChatMsg[]>;
+      return res.json() as Promise<ChatMessage[]>;
     },
   });
 
@@ -188,6 +177,7 @@ export function useLiveState(channelId: string) {
           const message = JSON.parse(event.data);
 
           if (message.type === 'SYNC_STATE') {
+
             const payload = message.payload as StoryState;
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeRemaining !== undefined) {
@@ -201,8 +191,8 @@ export function useLiveState(channelId: string) {
             }
           }
           else if (message.type === 'CHAT_MESSAGE') {
-            const payload = message.payload as ChatMsg;
-            queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => {
+            const payload = message.payload as ChatMessage;
+            queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
               if (old.some(m => m.id === payload.id)) return old;
               return [...old, payload];
             });
@@ -279,13 +269,15 @@ export function useLiveState(channelId: string) {
       return;
     }
 
-    const tempMsg: ChatMsg = {
+    const tempMsg: ChatMessage = {
       id: Date.now(),
+      channelId,
+      sessionId: activeSession?.id || null,
       username,
       text,
-      createdAt: new Date().toISOString()
+      createdAt: new Date()
     };
-    queryClient.setQueryData<ChatMsg[]>([api.chat.history.path, channelId], (old = []) => [...old, tempMsg]);
+    queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => [...old, tempMsg]);
 
     trackEvent('Chat Message Sent', { channel: channelId });
 
