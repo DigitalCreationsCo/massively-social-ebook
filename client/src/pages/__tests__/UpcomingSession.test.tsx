@@ -5,7 +5,6 @@ import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { useToast } from '@/hooks/use-toast';
 
-// Mock the hooks
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),
@@ -14,7 +13,6 @@ vi.mock('@/hooks/use-toast', () => ({
     useToast: vi.fn(),
 }));
 
-// Mock fetch
 global.fetch = vi.fn();
 
 describe('UpcomingSession Component', () => {
@@ -97,7 +95,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/');
+        expect(mockSetLocation).toHaveBeenCalledWith('/live');
     });
 
     it('handles reminder download', async () => {
@@ -113,7 +111,6 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        // Mock successful fetch
         (global.fetch as any).mockResolvedValue({
             ok: true,
             json: () => Promise.resolve({ message: "You're on the list." })
@@ -122,7 +119,6 @@ describe('UpcomingSession Component', () => {
         const button = screen.getByText(/Remind me/i);
         fireEvent.click(button);
 
-        // Fill email and submit
         const emailInput = screen.getByLabelText(/Email Address/i);
         fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
 

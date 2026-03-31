@@ -1,0 +1,1 @@
+He counts to sixty. Then thirty more. Only when the street falls silent does he creep toward the alley's far end—where a chain-link fence blocks his path, rusted and tall.

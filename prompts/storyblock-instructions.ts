@@ -58,15 +58,15 @@ const authorFlair = [
     "Author Flair:",
     "Show, don't tell. Don't use 'She was afraid', use 'Her hand found the wall'.",
 
-    "Use Simple language. Don't use 'luminescence', use 'glow'.",
-
     "Communicate one idea per story block. Less is more.",
+
+    "Use Simple language. Don't use 'luminescence', use 'glow'.",
 
     "Use literal over abstract language. Don't use 'Her focus sharpened', use 'Her eyes narrowed on the door'.",
 
     "Use simple descriptions. Don't use 'A tiny, almost invisible inscription was etched into the silver frame.', use 'A small inscription was etched into the silver frame.'.",
 
-    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.',",
+    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.'",
 
     "Characters are complete and flawed. They each react uniquely. They can make mistakes. They can hesitate. They want things they won't say out loud.",
 
@@ -94,19 +94,19 @@ export const createStoryBlockInstructions = ({
     chronicle,
     summary,
 }: {
-        previousBlock: string;
-        ragContext?: string;
-        isResolving?: boolean;
-        genre?: keyof typeof GENRE_RULES;
-        chronicle?: string[];
-        summary?: string;
+    previousBlock: string;
+    ragContext?: string;
+    isResolving?: boolean;
+    genre?: keyof typeof GENRE_RULES;
+    chronicle?: string[];
+    summary?: string;
 }) => {
 
     const previousContext = ragContext
         ? ragContext
         : previousBlock;
 
-    const storyRules = GENRE_RULES[ genre ] ?? GENRE_RULES.adventure;
+    const storyRules = GENRE_RULES[genre] ?? GENRE_RULES.adventure;
 
     // Build the chronicle/summary section if available
     const chronicleSection = [];

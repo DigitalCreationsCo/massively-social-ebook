@@ -17,3 +17,15 @@ if (typeof window !== 'undefined') {
     })),
   });
 }
+
+// Mock mixpanel to prevent errors in tests
+vi.mock('mixpanel-browser', () => ({
+  default: {
+    init: vi.fn(),
+    track: vi.fn(),
+    identify: vi.fn(),
+    people: {
+      set: vi.fn(),
+    },
+  },
+}));

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { insertChatSchema, insertVoteSchema } from './schema';
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),
@@ -14,11 +13,36 @@ export const sessionResponseSchema = z.object({
   description: z.string().nullable(),
   scheduledStart: z.string(),
   scheduledEnd: z.string(),
+  timezone: z.string(),
   status: z.enum([ 'scheduled', 'active', 'completed', 'cancelled' ]),
   createdAt: z.string(),
 });
 
+export const channelSchema = z.object({
+  id: z.number(),
+  channelId: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  createdAt: z.string(),
+});
+
 export const api = {
+  channels: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/channels' as const,
+      responses: {
+        200: z.array(channelSchema),
+      },
+    },
+    active: {
+      method: 'GET' as const,
+      path: '/api/channels/active' as const,
+      responses: {
+        200: z.array(channelSchema),
+      },
+    },
+  },
   chat: {
     history: {
       method: 'GET' as const,
@@ -70,6 +94,27 @@ export const api = {
     },
   },
   admin: {
+    channels: {
+      list: {
+        method: 'GET' as const,
+        path: '/api/admin/channels' as const,
+        responses: {
+          200: z.array(channelSchema),
+        },
+      },
+      create: {
+        method: 'POST' as const,
+        path: '/api/admin/channels' as const,
+        body: z.object({
+          channelId: z.string(),
+          name: z.string(),
+          description: z.string().optional(),
+        }),
+        responses: {
+          201: channelSchema,
+        },
+      },
+    },
     sessions: {
       list: {
         method: 'GET' as const,
