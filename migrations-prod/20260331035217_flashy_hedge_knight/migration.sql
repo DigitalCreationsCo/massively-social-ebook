@@ -1,0 +1,1 @@
+CREATE INDEX "idx_sessions_active_cleanup" ON "sessions" ("scheduled_end") WHERE status IN ('active', 'scheduled');

@@ -2,7 +2,7 @@ import { storage } from '../storage';
 import { sendEmail, sendPushNotification } from '../notifications';
 import { type Session, type Schedule, type Channel } from '@shared/schema';
 import { logger } from '../logger';
-import { getMSTDateString, createMSTDate, formatMST, getYear, getISOWeek } from '@shared/date';
+import { getDateStringInTZ, createZonedDate, formatInTZ, getYear, getISOWeek } from '@shared/date';
 import {
     computeTitleContext,
     deriveTitleFromConfig,
@@ -84,6 +84,7 @@ export function startRecurringScheduler(): void {
 async function runNotificationLoop(): Promise<void> {
     try {
         const now = Date.now();
+        const nowDate = new Date(now);
 
         let lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
 
@@ -98,6 +99,9 @@ async function runNotificationLoop(): Promise<void> {
 
         // Process due schedules (create sessions for schedules whose nextRunAt has passed)
         await processDueSchedules();
+
+        // Transition finished sessions to 'completed' status
+        await processCompletedSessions(nowDate);
 
         // Ensure sessions exist within the 7-day lookahead window (EVERY 30 MINUTES)
         const lastSeedingStr = await storage.getSystemSetting(SEEDING_CURSOR_KEY);
@@ -177,6 +181,23 @@ async function processDueSchedules(): Promise<void> {
         } catch (err) {
             logger.error(`Failed to process schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
         }
+    }
+}
+
+/**
+ * Identifies sessions that have passed their end time and marks them as completed.
+ * This prevents stale sessions from appearing as 'active' in the UI.
+ */
+async function processCompletedSessions(now: Date): Promise<void> {
+    try {
+        const expiredSessions = await storage.getExpiredActiveSessions(now);
+
+        for (const session of expiredSessions) {
+            await storage.updateSessionStatus(session.id, 'completed');
+            logger.info(`Session ${session.id} ("${session.title}") marked as completed.`, 'scheduler');
+        }
+    } catch (err) {
+        logger.error('Failed to process completed sessions', 'scheduler', err);
     }
 }
 
@@ -285,7 +306,7 @@ function getScheduledDatesInWindow(schedule: Schedule, start: Date, end: Date): 
         current.setHours(0, 0, 0, 0);
 
         while (current <= end) {
-            dates.push(createMSTDate(current, hours, minutes, 0));
+            dates.push(createZonedDate(current, schedule.timezone, hours, minutes));
             current.setDate(current.getDate() + 1);
         }
         return dates;
@@ -303,7 +324,7 @@ function getScheduledDatesInWindow(schedule: Schedule, start: Date, end: Date): 
         const targetDays = scheduledDays.map(d => dayMap[d.toLowerCase()]).filter(d => d !== undefined);
 
         if (targetDays.includes(current.getDay())) {
-            dates.push(createMSTDate(current, hours, minutes, 0));
+            dates.push(createZonedDate(current, schedule.timezone, hours, minutes));
         }
 
         current.setDate(current.getDate() + 1);
@@ -341,7 +362,7 @@ function buildSessionTitle(
             return channel.name;
         } else {
             // Original legacy fallback
-            const dateStr = getMSTDateString(scheduledStart);
+            const dateStr = getDateStringInTZ(scheduledStart, schedule.timezone);
             return `Session - ${dateStr}`;
         }
     }
@@ -382,14 +403,14 @@ function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start
     const durationMinutes = (schedule as unknown as { durationMinutes?: number }).durationMinutes ?? 25;
     const durationMs = durationMinutes * 60 * 1000;
 
-    let date = createMSTDate(targetDate, hours, minutes, 0);
+    let date = createZonedDate(targetDate, schedule.timezone, hours, minutes);
 
     // If scheduledDays is specified, find the next valid day
     if (schedule.scheduledDays && schedule.scheduledDays.length > 0) {
         const days = schedule.scheduledDays as string[];
         const nextDay = getNextScheduledDay(targetDate, days);
         if (nextDay) {
-            date = createMSTDate(nextDay, hours, minutes, 0);
+            date = createZonedDate(nextDay, schedule.timezone, hours, minutes);
         }
     }
 
@@ -399,7 +420,7 @@ function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start
             const days = schedule.scheduledDays as string[];
             const nextDay = getNextScheduledDay(new Date(targetDate.getTime() + 24 * 60 * 60 * 1000), days);
             if (nextDay) {
-                date = createMSTDate(nextDay, hours, minutes, 0);
+                date = createZonedDate(nextDay, schedule.timezone, hours, minutes);
             }
         } else {
             date = new Date(date.getTime() + 24 * 60 * 60 * 1000);
@@ -461,11 +482,11 @@ export function computeNextRunAt(schedule: Schedule): Date {
         const days = schedule.scheduledDays as string[];
         const nextDay = getNextScheduledDay(now, days);
         if (nextDay) {
-            return createMSTDate(nextDay, hours, minutes, 0);
+            return createZonedDate(nextDay, schedule.timezone, hours, minutes);
         }
     }
 
-    let next = createMSTDate(now, hours, minutes, 0);
+    let next = createZonedDate(now, schedule.timezone, hours, minutes);
     if (next <= now) {
         next = new Date(next.getTime() + 24 * 60 * 60 * 1000);
     }
@@ -688,6 +709,7 @@ export async function checkAndSendWeeklyBriefing(): Promise<void> {
         await storage.markWeeklyBriefingSent(weekKey);
     }
 }
+
 /**
  * Dispatches the weekly briefing email to all users.
  *
@@ -715,7 +737,7 @@ export async function dispatchWeeklyBriefing(): Promise<void> {
     }
 
     const scheduleList = upcoming
-        .map(s => `- ${s.title}: ${formatMST(s.scheduledStart, "EEEE, MMMM do 'at' h:mm a")} MST`)
+        .map(s => `- ${s.title}: ${formatInTZ(s.scheduledStart, s.timezone, "EEEE, MMMM do 'at' h:mm a")} ${s.timezone}`)
         .join('\n');
 
     const subject = "Your Weekly 25th Chapter Schedule";

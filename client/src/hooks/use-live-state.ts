@@ -218,11 +218,20 @@ export function useLiveState(channelId: string) {
           }
           else if (message.type === 'SESSION_STATUS') {
             const payload = message.payload as { status: SessionStatus, session: Session | null; };
-            setSessionStatus(payload.status);
-            setActiveSession(payload.session);
-            if (payload.status === 'active') {
-              // Refetch block if session just started
-              queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, channelId ] });
+
+            const now = Date.now();
+            const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
+
+            if (isPast) {
+              // If the server sends a session that is technically over, treat it as completed
+              setSessionStatus('completed');
+              setActiveSession(null);
+            } else {
+              setSessionStatus(payload.status);
+              setActiveSession(payload.session);
+              if (payload.status === 'active') {
+                queryClient.invalidateQueries({ queryKey: [ api.blocks.current.path, channelId ] });
+              }
             }
           }
         } catch (err) {
@@ -236,6 +245,34 @@ export function useLiveState(channelId: string) {
       wsRef.current?.close();
     };
   }, [ queryClient, channelId ]);
+
+  // Refine the Macro Phase calculation to be more robust
+  useEffect(() => {
+    if (!activeSession) {
+      setMacroPhase('waiting');
+      return;
+    }
+
+    const updatePhase = () => {
+      const now = Date.now();
+      const start = new Date(activeSession.scheduledStart).getTime();
+      const end = new Date(activeSession.scheduledEnd).getTime();
+
+      if (now > end || currentBlock?.phase === 'resolution') {
+        setMacroPhase('afterparty');
+      } else if (now < start - 3 * 60 * 1000) {
+        setMacroPhase('waiting');
+      } else if (now < start) {
+        setMacroPhase('gathering');
+      } else {
+        setMacroPhase('reading');
+      }
+    };
+
+    updatePhase();
+    const interval = setInterval(updatePhase, 1000);
+    return () => clearInterval(interval);
+  }, [ activeSession, currentBlock?.phase ]);
 
   const submitChat = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {

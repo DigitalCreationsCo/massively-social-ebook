@@ -13,6 +13,7 @@ export default function SessionsTab() {
     description: '',
     scheduledStart: '',
     scheduledEnd: '',
+    timezone: 'UTC',
     channelId: '',
     scheduleId: null as number | null,
   })
@@ -23,6 +24,7 @@ export default function SessionsTab() {
     channelId: '',
     scheduledStart: '',
     scheduledEnd: '',
+    timezone: 'UTC',
     scheduleId: null as number | null,
   })
 
@@ -57,6 +59,7 @@ export default function SessionsTab() {
       scheduledEnd: session.scheduledEnd instanceof Date
         ? session.scheduledEnd.toISOString().slice(0, 16)
         : new Date(session.scheduledEnd).toISOString().slice(0, 16),
+      timezone: session.timezone || 'UTC',
       channelId: session.channelId,
       scheduleId: session.scheduleId,
     })
@@ -70,6 +73,7 @@ export default function SessionsTab() {
         description: editForm.description,
         scheduledStart: editForm.scheduledStart,
         scheduledEnd: editForm.scheduledEnd,
+        timezone: editForm.timezone,
         scheduleId: editForm.scheduleId,
       }),
     })
@@ -91,6 +95,7 @@ export default function SessionsTab() {
         channelId: createForm.channelId,
         scheduledStart: createForm.scheduledStart,
         scheduledEnd: createForm.scheduledEnd,
+        timezone: createForm.timezone,
         scheduleId: createForm.scheduleId,
       }),
     })
@@ -101,6 +106,7 @@ export default function SessionsTab() {
       channelId: channels?.[0]?.channelId || '',
       scheduledStart: '',
       scheduledEnd: '',
+      timezone: 'UTC',
       scheduleId: null,
     })
     refresh()
@@ -214,6 +220,22 @@ export default function SessionsTab() {
                 className="border border-gray-300 rounded px-2 py-1 w-full"
               />
             </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Timezone *</label>
+              <select
+                value={createForm.timezone}
+                onChange={(e) => setCreateForm({ ...createForm, timezone: e.target.value })}
+                className="border border-gray-300 rounded px-2 py-1 w-full"
+              >
+                <option value="America/Denver">Mountain Time (America/Denver)</option>
+                <option value="America/New_York">Eastern Time (America/New_York)</option>
+                <option value="America/Los_Angeles">Pacific Time (America/Los_Angeles)</option>
+                <option value="UTC">UTC</option>
+                <option value="Europe/London">London</option>
+                <option value="Europe/Paris">Paris</option>
+                <option value="Asia/Tokyo">Tokyo</option>
+              </select>
+            </div>
             <div className="col-span-2">
               <label className="block text-xs text-gray-600 mb-1">Description</label>
               <input
@@ -254,6 +276,7 @@ export default function SessionsTab() {
               <th className="text-left py-2 px-2">Title</th>
               <th className="text-left py-2 px-2">Start</th>
               <th className="text-left py-2 px-2">End</th>
+              <th className="text-left py-2 px-2">Timezone</th>
               <th className="text-left py-2 px-2">Status</th>
               <th className="text-left py-2 px-2">Schedule ID</th>
               <th className="text-left py-2 px-2">Actions</th>
@@ -301,6 +324,21 @@ export default function SessionsTab() {
                       />
                     </td>
                     <td className="py-2 px-2">
+                      <select
+                        value={editForm.timezone}
+                        onChange={(e) => setEditForm({ ...editForm, timezone: e.target.value })}
+                        className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                      >
+                        <option value="America/Denver">America/Denver</option>
+                        <option value="America/New_York">America/New_York</option>
+                        <option value="America/Los_Angeles">America/Los_Angeles</option>
+                        <option value="UTC">UTC</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Paris">Paris</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                      </select>
+                    </td>
+                    <td className="py-2 px-2">
                       <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>
                         {session.status}
                       </span>
@@ -334,6 +372,7 @@ export default function SessionsTab() {
                     <td className="py-2 px-2 font-medium">{session.title}</td>
                     <td className="py-2 px-2">{formatDate(session.scheduledStart)}</td>
                     <td className="py-2 px-2">{formatDate(session.scheduledEnd)}</td>
+                    <td className="py-2 px-2">{session.timezone}</td>
                     <td className="py-2 px-2">
                       <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>
                         {session.status}

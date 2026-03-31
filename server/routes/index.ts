@@ -9,7 +9,7 @@ import { trackUserEmail } from "../analytics";
 import { CalendarService } from "../calendar";
 import { isAdmin, isDevOnly } from "../middleware/auth";
 import { logger } from "../logger";
-import { formatMST } from "@shared/date";
+import { formatInTZ } from "@shared/date";
 
 type ChannelId = string;
 
@@ -251,13 +251,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post(api.admin.sessions.create.path, isAdmin, async (req, res) => {
-    const { channelId, title, description, scheduledStart, scheduledEnd } = req.body;
+    const { channelId, title, description, scheduledStart, scheduledEnd, timezone } = req.body;
     const session = await storage.createSession({
       channelId,
       title,
       description,
       scheduledStart: new Date(scheduledStart),
       scheduledEnd: new Date(scheduledEnd),
+      timezone: timezone || 'UTC',
     });
     res.status(201).json(session);
   });
@@ -783,7 +784,7 @@ export async function handleGameLoopTick(
               logger.info(`Advanced story to block ${newBlock.id}`, "gameloop");
               logger.debug(
                 `Narrative turn. Turns remaining: ${newTurns}, ` +
-                `Next phase ends at: ${formatMST(newPhaseEndsAt.getTime(), "h:mm:ss a")} MST, ` +
+                `Next phase ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC, ` +
                 `Time to decision: ${Math.round((newDecisionEndsAt.getTime() - now) / 1000)}s`,
                 "gameloop"
               );
@@ -812,7 +813,7 @@ export async function handleGameLoopTick(
               });
 
               logger.info(
-                `ENTERING VOTING PHASE. Ends at: ${formatMST(newPhaseEndsAt.getTime(), "h:mm:ss a")} MST`,
+                `ENTERING VOTING PHASE. Ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
                 "gameloop"
               );
 
@@ -921,7 +922,7 @@ export async function handleGameLoopTick(
 
             logger.info(
               `VOTING ENDED. Starting reading phase with ${newTurns} turns. ` +
-              `Overall ends at: ${formatMST(newDecisionEndsAt.getTime(), "h:mm:ss a")} MST`,
+              `Overall ends at: ${formatInTZ(newDecisionEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
               "gameloop"
             );
 

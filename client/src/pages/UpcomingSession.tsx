@@ -4,7 +4,7 @@ import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Bell, Loader2, BookOpen, Mail } from "lucide-react";
-import { formatMST, isTodayMST, isTomorrowMST } from "@shared/date";
+import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
@@ -204,12 +204,12 @@ export default function UpcomingSession() {
                                     </CardTitle>
                                     <CardDescription className="text-white/80 font-sans text-lg">
                                 { isScheduled && (
-                                    <>
-                                        { isTodayMST(new Date(nextSession.scheduledStart)) ? "Today" :
-                                            isTomorrowMST(new Date(nextSession.scheduledStart)) ? "Tomorrow" :
-                                                    formatMST(new Date(nextSession.scheduledStart), "EEEE, MMMM do")
-                                        } at <span>{ formatMST(new Date(nextSession.scheduledStart), "h:mm a") } MST</span>
-                                    </>
+                                    <span>
+                                        { isTodayInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Today" :
+                                            isTomorrowInTZ(new Date(nextSession.scheduledStart), nextSession.timezone) ? "Tomorrow" :
+                                                    formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "EEEE, MMMM do")
+                                        } at { formatInTZ(new Date(nextSession.scheduledStart), nextSession.timezone, "h:mm a") } { nextSession.timezone }
+                                    </span>
                                 ) }
                             </CardDescription>
                         </CardHeader>
@@ -219,7 +219,7 @@ export default function UpcomingSession() {
                                 { nextSession && (<div className="space-y-4">
                                         <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
                                         <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                            <h2 className="text-2xl font-serif text-white text-center mb-4 leading-tight">{ nextSession.title }</h2>
+                                        <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{ nextSession.title }</h2>
                                             <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
                                             { nextSession.description }
                                             </p>
@@ -297,7 +297,7 @@ export default function UpcomingSession() {
                     {/* Mockup Display */ }
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
                         <div className="space-y-4 px-6 mx-auto">
-                            <h2 className="text-4xl font-serif text-white tracking-tight whitespace-nowrap">The 25th Chapter</h2>
+                            <h2 className="text-4xl font-serif text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
                                 Join fellow readers in a live session to unfold the narrative.
                             </p>
@@ -315,7 +315,7 @@ export default function UpcomingSession() {
                     {/* FAQ Aside */ }
                     <aside className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                         <div className="space-y-4">
-                            <h2 className="text-3xl font-serif text-white">FAQ</h2>
+                            <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
                         </div>
 

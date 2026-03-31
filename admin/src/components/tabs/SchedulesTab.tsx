@@ -57,7 +57,7 @@ function ScheduleRow({
                 <td className="py-2 px-3 text-sm text-gray-500">#{ schedule.id }</td>
                 <td className="py-2 px-3 text-sm font-medium">{ schedule.channelId }</td>
                 <td className="py-2 px-3 text-sm text-gray-600 capitalize">{ days }</td>
-                <td className="py-2 px-3 text-sm text-gray-600">{ schedule.scheduledTime ?? '—' }</td>
+                <td className="py-2 px-3 text-sm text-gray-600">{ schedule.scheduledTime ?? '—' } ({ schedule.timezone })</td>
                 <td className="py-2 px-3">
                     <span className={ `px-2 py-0.5 rounded text-xs font-medium ${schedule.intervalEnabled
                         ? 'text-green-700 bg-green-50'

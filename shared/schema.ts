@@ -1,7 +1,8 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, customType, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
+import { sql } from "drizzle-orm";
 
 const vector = (name: string, { dimensions }: { dimensions: number; }) =>
   customType<{ data: number[]; }>({
@@ -104,6 +105,7 @@ export const sessions = pgTable("sessions", {
   description: text("description"),
   scheduledStart: timestamp("scheduled_start").notNull(),
   scheduledEnd: timestamp("scheduled_end").notNull(),
+  timezone: text("timezone").notNull().default("UTC"),
   status: text("status").notNull().default('scheduled'), // SessionStatus
   notifyCount: integer("notify_count").notNull().default(0),
 
@@ -132,6 +134,12 @@ export const sessions = pgTable("sessions", {
   subtitle: text("subtitle"),
 
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    idxSessionsActiveCleanup: index("idx_sessions_active_cleanup")
+      .on(table.scheduledEnd)
+      .where(sql`status IN ('active', 'scheduled')`),
+  };
 });
 
 export const insertSessionSchema = createInsertSchema(sessions).omit({

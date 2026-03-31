@@ -1,8 +1,8 @@
+import { formatInTZ } from "@shared/date";
 import type { Session } from "@shared/schema";
 
 /**
- * Formats a Date to iCalendar DATETIME format: YYYYMMDDTHHmmssZ
- * All times are converted to UTC.
+ * Formats a Date to iCalendar DATETIME format in UTC: YYYYMMDDTHHmmssZ
  */
 export function formatICSDate(date: Date): string {
   const y = date.getUTCFullYear();
@@ -12,6 +12,10 @@ export function formatICSDate(date: Date): string {
   const min = String(date.getUTCMinutes()).padStart(2, '0');
   const s = String(date.getUTCSeconds()).padStart(2, '0');
   return `${y}${m}${d}T${h}${min}${s}Z`;
+}
+
+export function formatICSDateLocal(date: Date, tz: string): string {
+    return formatInTZ(date, tz, "yyyyMMdd'T'HHmmss");
 }
 
 /**
@@ -61,8 +65,8 @@ export function foldLine(line: string): string {
 export function generateICS(session: Session, baseUrl?: string): string {
   const now = new Date();
   const uid = `session-${session.id}@massively-social-ebook`;
-  const dtStart = formatICSDate(session.scheduledStart);
-  const dtEnd = formatICSDate(session.scheduledEnd);
+  const dtStart = formatICSDateLocal(session.scheduledStart, session.timezone);
+  const dtEnd = formatICSDateLocal(session.scheduledEnd, session.timezone);
   const dtStamp = formatICSDate(now);
   const summary = escapeICSText(`The 25th Chapter: ${session.title}`);
   const description = escapeICSText(
@@ -78,8 +82,8 @@ export function generateICS(session: Session, baseUrl?: string): string {
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${dtStamp}`,
-    `DTSTART:${dtStart}`,
-    `DTEND:${dtEnd}`,
+    `DTSTART;TZID=${session.timezone}:${dtStart}`,
+    `DTEND;TZID=${session.timezone}:${dtEnd}`,
     `SUMMARY:${summary}`,
     `DESCRIPTION:${description}`,
   ];

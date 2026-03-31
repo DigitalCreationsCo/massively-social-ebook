@@ -81,6 +81,7 @@ export interface IStorage {
   getSessionWithSchedule(sessionId: number): Promise<SessionWithSchedule | undefined>;
   getSessionsInWindow(channelId: string, dateStart: Date, dateEnd: Date, statusStr?: SessionStatus): Promise<Session[]>;
   getGlobalSessionsInWindow(dateStart: Date, dateEnd: Date, statusStr?: SessionStatus): Promise<Session[]>;
+  getExpiredActiveSessions(now: Date): Promise<Session[]>;
 
   createSession(data: InsertSession): Promise<Session>;
   createSessionWithScheduleUpdate(sessionData: InsertSession, scheduleId: number): Promise<Session>;
@@ -383,6 +384,35 @@ export class DatabaseStorage implements IStorage {
     } catch (errorUncaught) {
       console.error(`Failed to fetch global sessions in window`, 'storage', errorUncaught instanceof Error ? errorUncaught : new Error(String(errorUncaught)));
       throw errorUncaught;
+    }
+  }
+
+  /**
+ * Retrieves all sessions that are past their scheduled end time 
+ * but have not yet been marked as 'completed'.
+ * * @param now - The current cutoff Date (usually Date.now())
+ * @returns Array of expired sessions requiring status updates
+ */
+  async getExpiredActiveSessions(now: Date): Promise<Session[]> {
+    try {
+      return await db
+        .select()
+        .from(sessions)
+        .where(
+          and(
+            // Only target sessions that haven't been closed out yet
+            or(
+              eq(sessions.status, 'active'),
+              eq(sessions.status, 'scheduled')
+            ),
+            // Ensure we only grab sessions where the end time has passed
+            lt(sessions.scheduledEnd, now)
+          )
+        )
+        .execute();
+    } catch (error) {
+      console.error('Failed to query expired sessions', 'storage', { error, now });
+      throw error;
     }
   }
 

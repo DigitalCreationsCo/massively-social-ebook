@@ -54,6 +54,7 @@ export function registerAdminRoutes(app: Express): void {
       const description = req.body.description as string | undefined;
       const scheduledStart = req.body.scheduledStart as string;
       const scheduledEnd = req.body.scheduledEnd as string;
+      const timezone = req.body.timezone as string | undefined;
       const scheduleId = req.body.scheduleId as number | undefined;
 
       const session = await storage.createSession({
@@ -62,6 +63,7 @@ export function registerAdminRoutes(app: Express): void {
         description,
         scheduledStart: new Date(scheduledStart),
         scheduledEnd: new Date(scheduledEnd),
+        timezone: timezone || 'UTC',
         scheduleId,
       });
       res.status(201).json(session);
@@ -78,6 +80,7 @@ export function registerAdminRoutes(app: Express): void {
       const description = req.body.description as string | undefined;
       const scheduledStart = toString(req.body.scheduledStart);
       const scheduledEnd = toString(req.body.scheduledEnd);
+      const timezone = toString(req.body.timezone);
       const scheduleId = req.body.scheduleId as number | null | undefined;
 
       const session = await storage.updateSession(id, {
@@ -85,6 +88,7 @@ export function registerAdminRoutes(app: Express): void {
         ...(description !== undefined && { description }),
         ...(scheduledStart && { scheduledStart: new Date(scheduledStart) }),
         ...(scheduledEnd && { scheduledEnd: new Date(scheduledEnd) }),
+        ...(timezone && { timezone }),
         ...(scheduleId !== undefined && { scheduleId }),
       });
       res.json(session);

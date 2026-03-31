@@ -13,6 +13,7 @@ export const sessionResponseSchema = z.object({
   description: z.string().nullable(),
   scheduledStart: z.string(),
   scheduledEnd: z.string(),
+  timezone: z.string(),
   status: z.enum([ 'scheduled', 'active', 'completed', 'cancelled' ]),
   createdAt: z.string(),
 });
