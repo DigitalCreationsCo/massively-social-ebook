@@ -60,11 +60,13 @@ const authorFlair = [
 
     "Use Simple language. Don't use 'luminescence', use 'glow'.",
 
+    "Communicate one idea per story block. Less is more.",
+
     "Use literal over abstract language. Don't use 'Her focus sharpened', use 'Her eyes narrowed on the door'.",
 
     "Use simple descriptions. Don't use 'A tiny, almost invisible inscription was etched into the silver frame.', use 'A small inscription was etched into the silver frame.'.",
 
-    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.'",
+    "Use active voice and strong verbs. Don't use 'She hauled herself up over the ledge, lungs burning.', use 'She hauled herself up over the ledge. Her lungs burned.',",
 
     "Characters are complete and flawed. They each react uniquely. They can make mistakes. They can hesitate. They want things they won't say out loud.",
 
@@ -88,11 +90,16 @@ export const createStoryBlockInstructions = ({
     ragContext,
     isResolving,
     genre = "crime",
+    // Stateful Chronicle RAG parameters
+    chronicle,
+    summary,
 }: {
         previousBlock: string;
-    ragContext?: string;
+        ragContext?: string;
         isResolving?: boolean;
         genre?: keyof typeof GENRE_RULES;
+        chronicle?: string[];
+        summary?: string;
 }) => {
 
     const previousContext = ragContext
@@ -101,10 +108,29 @@ export const createStoryBlockInstructions = ({
 
     const storyRules = GENRE_RULES[ genre ] ?? GENRE_RULES.adventure;
 
+    // Build the chronicle/summary section if available
+    const chronicleSection = [];
+    if (summary) {
+        chronicleSection.push(`SUMMARY (Earlier Events):\n${summary}`);
+    }
+    if (chronicle && chronicle.length > 0) {
+        chronicleSection.push(`NOTABLE EVENTS:`);
+        chronicle.forEach(event => {
+            chronicleSection.push(`- ${event}`);
+        });
+    }
+
+    const chronicleText = chronicleSection.length > 0
+        ? chronicleSection.join("\n") + "\n\n"
+        : "";
+
     const instructions = [
         `You are a best-selling author writing an intriguing, continuous story. Make the reader interested to continue reading.`,
 
         ...storyRules,
+
+        // Insert chronicle/summary before the story content
+        chronicleText,
 
         previousContext,
 

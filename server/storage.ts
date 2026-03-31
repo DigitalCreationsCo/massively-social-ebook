@@ -5,6 +5,7 @@ import {
   chat,
   reactions,
   sessions,
+  storyState,
   type Block,
   type InsertBlock,
   type Vote,
@@ -23,6 +24,8 @@ import {
   notificationLogs,
   type InsertNotificationLog,
   type NotificationLog,
+  type StoryState,
+  type InsertStoryState,
 } from "@shared/schema";
 import { desc, eq, and, asc, count, sql } from "drizzle-orm";
 
@@ -53,6 +56,10 @@ export interface IStorage {
   setSystemSetting(key: string, value: string): Promise<void>;
   createNotificationLog(log: InsertNotificationLog): Promise<void>;
   getNotificationLog(type: string, targetId: string): Promise<NotificationLog | undefined>;
+  // Story State methods (Stateful Chronicle RAG)
+  getStoryState(sessionId: number, channelId: string): Promise<StoryState | undefined>;
+  createStoryState(data: InsertStoryState): Promise<StoryState>;
+  updateStoryState(sessionId: number, channelId: string, data: Partial<Pick<StoryState, 'summary' | 'chronicle'>>): Promise<StoryState>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -289,6 +296,44 @@ export class DatabaseStorage implements IStorage {
       ))
       .limit(1);
     return log;
+  }
+
+  // ─── Story State Methods (Stateful Chronicle RAG) ───────────────────────
+
+  async getStoryState(sessionId: number, channelId: string): Promise<StoryState | undefined> {
+    const [state] = await db
+      .select()
+      .from(storyState)
+      .where(and(
+        eq(storyState.sessionId, sessionId),
+        eq(storyState.channelId, channelId)
+      ))
+      .limit(1);
+    return state;
+  }
+
+  async createStoryState(data: InsertStoryState): Promise<StoryState> {
+    const [state] = await db.insert(storyState).values(data).returning();
+    return state;
+  }
+
+  async updateStoryState(
+    sessionId: number,
+    channelId: string,
+    data: Partial<Pick<StoryState, 'summary' | 'chronicle'>>
+  ): Promise<StoryState> {
+    const [state] = await db
+      .update(storyState)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(storyState.sessionId, sessionId),
+        eq(storyState.channelId, channelId)
+      ))
+      .returning();
+    return state;
   }
 }
 

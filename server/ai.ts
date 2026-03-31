@@ -4,6 +4,8 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../prompts/storyblock-instructions";
 import { createImageInstructions } from "../prompts/image-instructions";
 import { buildRAGContext } from "./rag";
+import { addNotableEvent } from "./state-manager";
+import { storage } from "./storage";
 
 export const ai = new GoogleGenAI({});
 
@@ -17,11 +19,16 @@ export interface StoryBlockResult {
   content: string;
   optionA?: { label: string; description: string; };
   optionB?: { label: string; description: string; };
+  newNotableEvent?: string;
 }
 
-export async function generateStoryBlock(channelId: string, previousContext: string, isResolving: boolean = false, sessionId?: number): Promise<StoryBlockResult> {
-  // Enrich context with RAG (transparently falls back to previousContext on error)
-  const enrichedContext = await buildRAGContext(channelId, previousContext);
+export async function generateStoryBlock(
+  channelId: string, 
+  previousContext: string, 
+  isResolving: boolean = false, 
+  sessionId?: number
+): Promise<StoryBlockResult> {
+  const enrichedContext = await buildRAGContext(channelId, previousContext, sessionId);
 
   const prompt = createStoryBlockInstructions({
     previousBlock: previousContext,
@@ -49,9 +56,13 @@ export async function generateStoryBlock(channelId: string, previousContext: str
           description: { type: Type.STRING, description: "Description of the second choice." }
         },
         required: [ "label", "description" ]
+      },
+      newNotableEvent: {
+        type: Type.STRING,
+        description: "A brief description of a notable event that occurred in this block. Only include for major plot points, discoveries, character changes, or significant story developments. Omit if nothing notable happened."
       }
     },
-    required: [ "title", "content" ] // optionA and optionB are no longer strictly required at schema level for resolution
+    required: [ "title", "content" ]
   };
 
   const response = await ai.models.generateContent({
@@ -69,10 +80,20 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 
   const result = JSON.parse(response.text) as StoryBlockResult;
 
-  // Ensure options are present if not resolution, or removed if resolution
   if (isResolving) {
     delete result.optionA;
     delete result.optionB;
+  }
+
+  if (sessionId && result.newNotableEvent && result.newNotableEvent.trim()) {
+    try {
+      const blockCount = await storage.getBlockCount(channelId);
+      const eventText = `Block ${blockCount}: ${result.newNotableEvent}`;
+      await addNotableEvent(sessionId, channelId, eventText);
+      console.debug(`[RAG] Added notable event for session ${sessionId}: "${eventText}"`);
+    } catch (err) {
+      console.warn(`[RAG] Failed to add notable event for session ${sessionId}:`, err);
+    }
   }
 
   try {
@@ -123,7 +144,6 @@ export async function generateStoryImage(description: string): Promise<string> {
       throw new Error("No image data returned.");
     }
 
-    // Return data URL directly (no filesystem write)
     return `data:image/jpeg;base64,${base64Image}`;
   } catch (err) {
     console.warn("Failed to generate image, using fallback:", err);

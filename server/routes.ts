@@ -163,7 +163,13 @@ async function startSessionForChannel(channelId: Channel, session: Session, broa
 export async function registerRoutes(
   httpServer: Server,
   app: Express
-): Promise<Server> {
+) {
+
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+
+  // Map to store which channel a client is connected to
+  const clientChannels = new Map<WebSocket, Channel>();
+
 
   // Static state seeding (now managed by sessions, but we can keep basic init)
   for (const channelId of CHANNELS) {
@@ -405,14 +411,11 @@ export async function registerRoutes(
     }
   });
 
-  // REST API
   app.get(api.blocks.current.path, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    
-    const rawChannelId = String(req.query.channelId || '');
-  app.get(api.blocks.current.path, async (req, res) => {
+
     const rawChannelId = String(req.query.channelId || '');
     const channelId = getChannelId(rawChannelId) as Channel;
     const channelState = state[channelId];
@@ -449,12 +452,6 @@ export async function registerRoutes(
       createdAt: m.createdAt?.toISOString() ?? new Date().toISOString()
     })));
   });
-
-  // WebSocket Setup
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-
-  // Map to store which channel a client is connected to
-  const clientChannels = new Map<WebSocket, Channel>();
 
   function broadcast(channelId: Channel, message: WsMessage) {
     const payload = JSON.stringify(message);

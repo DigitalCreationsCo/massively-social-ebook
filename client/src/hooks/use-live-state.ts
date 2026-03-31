@@ -196,9 +196,6 @@ export function useLiveState(channelId: string) {
             // console.log("Received SYNC_STATE payload", payload.id, payload.phase);
 
             setLocalTurnsToNextChoice(payload.turnsToNextChoice);
-            const payload = message.payload as StoryState;
-
-            setLocalTurnsToNextChoice(payload.turnsToNextChoice);
             if (payload.timeRemaining !== undefined) {
               setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
             }

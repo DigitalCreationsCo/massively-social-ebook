@@ -71,6 +71,21 @@ export const sessions = pgTable("sessions", {
   };
 });
 
+/**
+ * Story State for Stateful Chronicle RAG
+ * Stores the running summary and notable events chronicle
+ * for long-tail story context without token bloat.
+ */
+export const storyState = pgTable("story_state", {
+  id: serial("id").primaryKey(),
+  sessionId: bigint("session_id", { mode: 'number' }).notNull(),
+  channelId: text("channel_id").notNull(),
+  summary: text("summary"), // Compressed summary of older events
+  chronicle: jsonb("chronicle"), // Array of notable event strings
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").unique(),
@@ -120,6 +135,7 @@ export const insertVoteSchema = createInsertSchema(votes).omit({ createdAt: true
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true, createdAt: true, status: true });
+export const insertStoryStateSchema = createInsertSchema(storyState).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({ updatedAt: true });
 export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({ id: true, sentAt: true });
@@ -139,6 +155,10 @@ export type InsertReaction = z.infer<typeof insertReactionSchema>;
 
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<typeof insertSessionSchema>;
+
+/** Story State for Stateful Chronicle RAG */
+export type StoryState = typeof storyState.$inferSelect;
+export type InsertStoryState = Omit<z.infer<typeof insertStoryStateSchema>, 'id' | 'createdAt' | 'updatedAt'>;
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
