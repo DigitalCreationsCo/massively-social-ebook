@@ -3,6 +3,7 @@ import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
 import { adminFetch } from '../../api/client';
 import { Session, Channel } from '@shared/schema';
+import { TIMEZONE_OPTIONS, utcToDatetimeLocal, formatDisplayDate } from '@shared/date';
 
 export default function SessionsTab() {
   const { token } = useAdminToken()
@@ -49,17 +50,21 @@ export default function SessionsTab() {
   const { data: sessions, loading, error, refresh, lastUpdated } = usePolling(fetchSessions, 10000, [token, channelFilter])
 
   const handleEdit = (session: Session) => {
+    const tz = session.timezone || 'UTC'
+    const scheduledStartDate = session.scheduledStart instanceof Date 
+      ? session.scheduledStart 
+      : new Date(session.scheduledStart)
+    const scheduledEndDate = session.scheduledEnd instanceof Date
+      ? session.scheduledEnd
+      : new Date(session.scheduledEnd)
+    
     setEditingId(session.id)
     setEditForm({
       title: session.title,
       description: session.description || '',
-      scheduledStart: session.scheduledStart instanceof Date 
-        ? session.scheduledStart.toISOString().slice(0, 16)
-        : new Date(session.scheduledStart).toISOString().slice(0, 16),
-      scheduledEnd: session.scheduledEnd instanceof Date
-        ? session.scheduledEnd.toISOString().slice(0, 16)
-        : new Date(session.scheduledEnd).toISOString().slice(0, 16),
-      timezone: session.timezone || 'UTC',
+      scheduledStart: utcToDatetimeLocal(scheduledStartDate, tz),
+      scheduledEnd: utcToDatetimeLocal(scheduledEndDate, tz),
+      timezone: tz,
       channelId: session.channelId,
       scheduleId: session.scheduleId,
     })
@@ -124,7 +129,10 @@ export default function SessionsTab() {
     refresh()
   }
 
-  const formatDate = (date: string | Date) => {
+  const formatDate = (date: string | Date, tz?: string) => {
+    if (tz) {
+      return formatDisplayDate(date, tz)
+    }
     const d = date instanceof Date ? date : new Date(date)
     return d.toLocaleString()
   }
@@ -227,13 +235,9 @@ export default function SessionsTab() {
                 onChange={(e) => setCreateForm({ ...createForm, timezone: e.target.value })}
                 className="border border-gray-300 rounded px-2 py-1 w-full"
               >
-                <option value="America/Denver">Mountain Time (America/Denver)</option>
-                <option value="America/New_York">Eastern Time (America/New_York)</option>
-                <option value="America/Los_Angeles">Pacific Time (America/Los_Angeles)</option>
-                <option value="UTC">UTC</option>
-                <option value="Europe/London">London</option>
-                <option value="Europe/Paris">Paris</option>
-                <option value="Asia/Tokyo">Tokyo</option>
+                {TIMEZONE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
             <div className="col-span-2">
@@ -329,13 +333,9 @@ export default function SessionsTab() {
                         onChange={(e) => setEditForm({ ...editForm, timezone: e.target.value })}
                         className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
                       >
-                        <option value="America/Denver">America/Denver</option>
-                        <option value="America/New_York">America/New_York</option>
-                        <option value="America/Los_Angeles">America/Los_Angeles</option>
-                        <option value="UTC">UTC</option>
-                        <option value="Europe/London">London</option>
-                        <option value="Europe/Paris">Paris</option>
-                        <option value="Asia/Tokyo">Tokyo</option>
+                        {TIMEZONE_OPTIONS.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </td>
                     <td className="py-2 px-2">
@@ -370,8 +370,8 @@ export default function SessionsTab() {
                     <td className="py-2 px-2">{session.id}</td>
                     <td className="py-2 px-2">{session.channelId}</td>
                     <td className="py-2 px-2 font-medium">{session.title}</td>
-                    <td className="py-2 px-2">{formatDate(session.scheduledStart)}</td>
-                    <td className="py-2 px-2">{formatDate(session.scheduledEnd)}</td>
+                    <td className="py-2 px-2">{formatDate(session.scheduledStart, session.timezone)}</td>
+                    <td className="py-2 px-2">{formatDate(session.scheduledEnd, session.timezone)}</td>
                     <td className="py-2 px-2">{session.timezone}</td>
                     <td className="py-2 px-2">
                       <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>

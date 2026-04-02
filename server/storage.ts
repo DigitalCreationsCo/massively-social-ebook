@@ -47,6 +47,9 @@ import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzl
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
   createBlock(block: InsertBlock): Promise<Block>;
+  getBlocks(channelId?: string): Promise<Block[]>;
+  updateBlock(id: number, data: Partial<InsertBlock>): Promise<Block>;
+  deleteBlock(id: number): Promise<void>;
 
   createVote(vote: InsertVote): Promise<Vote>;
   getVotesForBlock(blockId: number): Promise<Vote[]>;
@@ -129,6 +132,36 @@ export class DatabaseStorage implements IStorage {
     const [newBlock] = await db.insert(blocks).values(block).returning();
     enqueueEmbeddingTask(newBlock.id, newBlock.content, newBlock.title ?? undefined);
     return newBlock;
+  }
+
+  async getBlocks(channelId?: string): Promise<Block[]> {
+    if (channelId) {
+      return await db
+        .select()
+        .from(blocks)
+        .where(eq(blocks.channelId, channelId))
+        .orderBy(desc(blocks.id));
+    }
+    return await db
+      .select()
+      .from(blocks)
+      .orderBy(desc(blocks.id));
+  }
+
+  async updateBlock(id: number, data: Partial<InsertBlock>): Promise<Block> {
+    const [updated] = await db
+      .update(blocks)
+      .set(data)
+      .where(eq(blocks.id, id))
+      .returning();
+    if (!updated) {
+      throw new Error(`Block with id ${id} not found`);
+    }
+    return updated;
+  }
+
+  async deleteBlock(id: number): Promise<void> {
+    await db.delete(blocks).where(eq(blocks.id, id));
   }
 
   async getVotesForBlock(blockId: number): Promise<Vote[]> {

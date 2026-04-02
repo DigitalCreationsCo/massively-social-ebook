@@ -5,6 +5,7 @@ import { adminFetch } from '../../api/client';
 import { Channel, Schedule } from '@shared/schema';
 import TitleBuilder from '../TitleBuilder';
 import { deriveTitleFromConfig, type TitleConfig } from '@shared/title';
+import { TIMEZONE_OPTIONS, formatDisplayDate } from '@shared/date';
 
 // ─── Preview helper ───────────────────────────────────────────────────────────
 
@@ -344,13 +345,9 @@ export default function ChannelsTab() {
                           onChange={(e) => setScheduleForm(prev => ({ ...prev, timezone: e.target.value }))}
                           className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
                         >
-                          <option value="America/Denver">Mountain Time (America/Denver)</option>
-                          <option value="America/New_York">Eastern Time (America/New_York)</option>
-                          <option value="America/Los_Angeles">Pacific Time (America/Los_Angeles)</option>
-                          <option value="UTC">UTC</option>
-                          <option value="Europe/London">London</option>
-                          <option value="Europe/Paris">Paris</option>
-                          <option value="Asia/Tokyo">Tokyo</option>
+                          {TIMEZONE_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="flex items-center gap-2">
@@ -489,7 +486,7 @@ function ScheduleList({
               )}
               {schedule.nextRunAt && (
                 <div className="text-gray-400 mt-1">
-                  Next: {new Date(schedule.nextRunAt).toLocaleString()}
+                  Next: {formatDisplayDate(schedule.nextRunAt, schedule.timezone)}
                 </div>
               )}
             </div>

@@ -8,6 +8,7 @@ import UsersTab from './components/tabs/UsersTab';
 import ChatTab from './components/tabs/ChatTab';
 import DebugTab from './components/tabs/DebugTab';
 import { useAdminToken } from './hooks/useAdminToken';
+import BlocksTab from './components/tabs/BlocksTab';
 
 type Tab = 'sessions' | 'schedules' | 'channels' | 'lore' | 'blocks' | 'users' | 'chat' | 'debug';
 
@@ -67,19 +68,10 @@ export default function App() {
       { activeTab === 'schedules' && <SchedulesTab /> }
       { activeTab === 'channels' && <ChannelsTab /> }
       { activeTab === 'lore' && <LoreTab /> }
-      { activeTab === 'blocks' && <BlocksTabPlaceholder /> }
+      { activeTab === 'blocks' && <BlocksTab /> }
       { activeTab === 'users' && <UsersTab /> }
       { activeTab === 'chat' && <ChatTab /> }
       { activeTab === 'debug' && <DebugTab /> }
     </Layout>
-  );
-}
-
-function BlocksTabPlaceholder() {
-  return (
-    <div className="p-4">
-      <h2 className="text-lg font-semibold mb-4">Blocks</h2>
-      <p className="text-gray-500">Block management coming soon</p>
-    </div>
   );
 }

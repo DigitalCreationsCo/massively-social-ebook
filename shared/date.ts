@@ -1,8 +1,25 @@
-import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 export { getISOWeek, getYear } from 'date-fns';
 
-// Removed global TIMEZONE constant to prevent accidental hardcoding
+// Common timezone options for UI dropdowns
+export const TIMEZONE_OPTIONS = [
+    { value: 'America/New_York', label: 'Eastern Time (ET)' },
+    { value: 'America/Chicago', label: 'Central Time (CT)' },
+    { value: 'America/Denver', label: 'Mountain Time (MT)' },
+    { value: 'America/Los_Angeles', label: 'Pacific Time (PT)' },
+    { value: 'America/Phoenix', label: 'Arizona (MST)' },
+    { value: 'America/Anchorage', label: 'Alaska (AKT)' },
+    { value: 'Pacific/Honolulu', label: 'Hawaii (HST)' },
+    { value: 'UTC', label: 'UTC' },
+    { value: 'Europe/London', label: 'London (GMT/BST)' },
+    { value: 'Europe/Paris', label: 'Paris (CET/CEST)' },
+    { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)' },
+    { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+    { value: 'Asia/Shanghai', label: 'Shanghai (CST)' },
+    { value: 'Asia/Singapore', label: 'Singapore (SGT)' },
+    { value: 'Australia/Sydney', label: 'Sydney (AEST/AEDT)' },
+] as const;
 
 export function getDateStringInTZ(date: Date | number | string, tz: string): string {
     return formatInTimeZone(date, tz, 'yyyy-MM-dd');
@@ -39,4 +56,52 @@ export function createZonedDate(date: Date | number | string, tz: string, hour: 
     const datePart = getDateStringInTZ(date, tz);
     const timePart = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
     return fromZonedTime(`${datePart} ${timePart}`, tz);
+}
+
+/**
+ * Converts a Date object to a specific timezone, returning a new Date representing
+ * that moment in the target timezone
+ */
+export function toTimezone(date: Date, tz: string): Date {
+    return toZonedTime(date, tz);
+}
+
+/**
+ * Converts a datetime-local input value (YYYY-MM-DDTHH:mm) in a specific timezone
+ * to a UTC Date object for storage
+ */
+export function datetimeLocalToUTC(datetimeLocal: string, tz: string): Date {
+    return fromZonedTime(datetimeLocal, tz);
+}
+
+/**
+ * Converts a UTC Date to a datetime-local string (YYYY-MM-DDTHH:mm) in the specified timezone
+ */
+export function utcToDatetimeLocal(utcDate: Date, tz: string): string {
+    return formatInTimeZone(utcDate, tz, "yyyy-MM-dd'T'HH:mm");
+}
+
+/**
+ * Formats a date for display in a specific timezone using a human-readable format
+ */
+export function formatDisplayDate(date: Date | string | number | null | undefined, tz: string): string {
+    if (!date) return '—'
+    try {
+        return formatInTimeZone(date, tz, "EEE, MMM d, yyyy 'at' h:mm a zzz");
+    } catch {
+        return '—';
+    }
+}
+
+/**
+ * Formats a date for display in a specific timezone using ISO-like format
+ */
+export function formatRelativeDate(date: Date | string | number | null | undefined, tz: string): string {
+    if (!date) return '—'
+    try {
+        const d = typeof date === 'string' || typeof date === 'number' ? new Date(date) : date;
+        return formatInTimeZone(d, tz, "MMM d, h:mm a zzz");
+    } catch {
+        return '—';
+    }
 }

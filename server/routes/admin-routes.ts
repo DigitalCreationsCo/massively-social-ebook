@@ -3,9 +3,18 @@ import { storage } from "../storage";
 import { isAdmin } from "../middleware/auth";
 import { logger } from "../logger";
 import type { InsertSchedule, ScheduleDay } from "@shared/schema";
+import { datetimeLocalToUTC } from "@shared/date";
 
 function toString(val: unknown): string | undefined {
   return typeof val === 'string' ? val : undefined;
+}
+
+/**
+ * Parses a datetime-local value (YYYY-MM-DDTHH:mm) from the frontend
+ * and converts it to a UTC Date using the specified timezone.
+ */
+function parseDateTimeLocal(dt: string, tz: string): Date {
+  return datetimeLocalToUTC(dt, tz);
 }
 
 function parseDatabaseUrl(url: string | undefined): { name: string; host: string; connected: boolean; } {
@@ -52,18 +61,18 @@ export function registerAdminRoutes(app: Express): void {
       const channelId = req.body.channelId as string;
       const title = req.body.title as string;
       const description = req.body.description as string | undefined;
-      const scheduledStart = req.body.scheduledStart as string;
-      const scheduledEnd = req.body.scheduledEnd as string;
-      const timezone = req.body.timezone as string | undefined;
+      const scheduledStartStr = req.body.scheduledStart as string;
+      const scheduledEndStr = req.body.scheduledEnd as string;
+      const timezone = (req.body.timezone as string) || 'UTC';
       const scheduleId = req.body.scheduleId as number | undefined;
 
       const session = await storage.createSession({
         channelId,
         title,
         description,
-        scheduledStart: new Date(scheduledStart),
-        scheduledEnd: new Date(scheduledEnd),
-        timezone: timezone || 'UTC',
+        scheduledStart: parseDateTimeLocal(scheduledStartStr, timezone),
+        scheduledEnd: parseDateTimeLocal(scheduledEndStr, timezone),
+        timezone,
         scheduleId,
       });
       res.status(201).json(session);
@@ -83,11 +92,15 @@ export function registerAdminRoutes(app: Express): void {
       const timezone = toString(req.body.timezone);
       const scheduleId = req.body.scheduleId as number | null | undefined;
 
+      // Get current session to know the timezone for conversion
+      const currentSession = await storage.getSessionById(id);
+      const tz = timezone || currentSession?.timezone || 'UTC';
+
       const session = await storage.updateSession(id, {
         ...(title && { title }),
         ...(description !== undefined && { description }),
-        ...(scheduledStart && { scheduledStart: new Date(scheduledStart) }),
-        ...(scheduledEnd && { scheduledEnd: new Date(scheduledEnd) }),
+        ...(scheduledStart && { scheduledStart: parseDateTimeLocal(scheduledStart, tz) }),
+        ...(scheduledEnd && { scheduledEnd: parseDateTimeLocal(scheduledEnd, tz) }),
         ...(timezone && { timezone }),
         ...(scheduleId !== undefined && { scheduleId }),
       });
@@ -196,6 +209,89 @@ export function registerAdminRoutes(app: Express): void {
     } catch (err) {
       logger.error("Failed to delete lore", "admin", err instanceof Error ? err : new Error(String(err)));
       res.status(500).json({ message: "Failed to delete lore" });
+    }
+  });
+
+  // Blocks CRUD
+  app.get('/admin/api/blocks', isAdmin, async (req, res) => {
+    try {
+      const channelId = toString(req.query.channelId);
+      const blocks = await storage.getBlocks(channelId);
+      res.json(blocks);
+    } catch (err) {
+      logger.error("Failed to list blocks", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to list blocks" });
+    }
+  });
+
+  app.get('/admin/api/blocks/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const block = await storage.getBlockById(id);
+      if (!block) {
+        return res.status(404).json({ message: "Block not found" });
+      }
+      res.json(block);
+    } catch (err) {
+      logger.error("Failed to get block", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to get block" });
+    }
+  });
+
+  app.post('/admin/api/blocks', isAdmin, async (req, res) => {
+    try {
+      const { channelId, sessionId, title, content, imageUrl, optionA, optionB, isNotable } = req.body;
+      
+      if (!channelId || !sessionId || !content) {
+        return res.status(400).json({ message: "channelId, sessionId, and content are required" });
+      }
+      
+      const block = await storage.createBlock({
+        channelId,
+        sessionId,
+        title: title || null,
+        content,
+        imageUrl: imageUrl || null,
+        optionA: optionA || null,
+        optionB: optionB || null,
+        isNotable: isNotable ?? false,
+      });
+      res.status(201).json(block);
+    } catch (err) {
+      logger.error("Failed to create block", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to create block" });
+    }
+  });
+
+  app.patch('/admin/api/blocks/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const { title, content, imageUrl, optionA, optionB, isNotable } = req.body;
+      
+      const updateData: Record<string, unknown> = {};
+      if (title !== undefined) updateData.title = title;
+      if (content !== undefined) updateData.content = content;
+      if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+      if (optionA !== undefined) updateData.optionA = optionA;
+      if (optionB !== undefined) updateData.optionB = optionB;
+      if (isNotable !== undefined) updateData.isNotable = isNotable;
+      
+      const block = await storage.updateBlock(id, updateData);
+      res.json(block);
+    } catch (err) {
+      logger.error("Failed to update block", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to update block" });
+    }
+  });
+
+  app.delete('/admin/api/blocks/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      await storage.deleteBlock(id);
+      res.status(204).send();
+    } catch (err) {
+      logger.error("Failed to delete block", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to delete block" });
     }
   });
 
