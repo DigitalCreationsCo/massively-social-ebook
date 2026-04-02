@@ -1,7 +1,7 @@
 import express from "express";
 import * as fs from "fs";
 import * as path from "path";
-import type { Express, NextFunction, Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { LabConfig, NarrativeEngine, InMemoryNarrativeProvider } from "narrative-engine";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
@@ -233,12 +233,12 @@ export async function startLabServer(port: number = 5002): Promise<void> {
     }
   });
 
-  const distPath = resolve(__dirname, "..", "dist", "ui");
+  const distPath = resolve(__dirname, "..", "dist");
 
   if (process.env.NODE_ENV === "development") {
     verboseLog.lab("Starting Vite dev server integration");
     const vite = await import("vite");
-    const { default: viteConfig } = await import("../vite.config");
+    const { default: viteConfig } = await import("./vite.config");
     const devServer = await vite.createServer({
       ...viteConfig,
       server: { 
@@ -276,7 +276,7 @@ export async function startLabServer(port: number = 5002): Promise<void> {
   } else {
     verboseLog.lab("Production mode: serving static files");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
+    app.get('/{*splat}', (req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
   server.listen(port, "127.0.0.1", () => {

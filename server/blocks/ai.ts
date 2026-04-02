@@ -5,7 +5,6 @@ import { createStoryBlockInstructions } from "../../prompts/storyblock-instructi
 import { createImageInstructions } from "../../prompts/image-instructions";
 import { NarrativeEngine } from "narrative-engine";
 import { RagProvider } from './rag';
-import { storage } from "../storage";
 
 export const ai = new GoogleGenAI({});
 

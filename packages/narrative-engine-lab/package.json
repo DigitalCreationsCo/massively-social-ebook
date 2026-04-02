@@ -4,17 +4,17 @@
   "type": "module",
   "description": "Visual laboratory for NarrativeEngine - provides a UI for testing and debugging the RAG pipeline",
   "private": true,
-  "main": "./dist/src/server.js",
+  "main": "./dist/server.js",
   "exports": {
-    ".": "./dist/src/server.js",
-    "./server": "./dist/src/server.js"
+    ".": "./dist/server.js",
+    "./server": "./dist/server.js"
   },
   "bin": {
-    "narrativeengine-lab": "./dist/src/server.js"
+    "narrativeengine-lab": "./dist/server.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.server.json && vite build --outDir dist/ui --emptyOutDir",
-    "build:ui": "vite build --outDir dist/ui --emptyOutDir",
+    "build": "npm run build:ui && tsc -p tsconfig.server.json",
+    "build:ui": "vite build --outDir dist --emptyOutDir",
     "dev": "vite",
     "check": "tsc --noEmit"
   },

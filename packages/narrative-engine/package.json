@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc && npm run build:server && npm run build:cli",
     "build:server": "tsup",
-    "build:cli": "node --import tsx/esm --no-warnings bin/cli.ts 2>/dev/null; npx esbuild bin/cli.ts --bundle --platform=node --outfile=dist/cli.cjs --format=cjs --external:narrative-engine-lab --external:narrative-engine && mv dist/cli.cjs dist/cli.js",
+    "build:cli": "tsup --config tsup.cli.ts",
     "check": "tsc --noEmit",
     "dev": "NODE_ENV=development tsx bin/cli.ts -- lab"
   },
