@@ -5,6 +5,7 @@
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
     "noEmit": true,
+    "target": "ES2022",
     "module": "ESNext",
     "strict": true,
     "lib": ["esnext", "dom", "dom.iterable"],
@@ -17,15 +18,10 @@
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./client/src/*"],
-      "@shared/*": [
-        "./shared/*"
-      ],
-      "narrative-engine": [
-        "./packages/narrative-engine"
-      ],
-      "narrative-engine-lab": [
-        "./packages/narrative-engine-lab"
-      ]
+      "@shared/*": ["./shared/*"],
+      "@assets/*": ["./attached_assets/*"],
+      "narrative-engine": ["./packages/narrative-engine"],
+      "narrative-engine-lab": ["./packages/narrative-engine-lab"]
     }
   }
 }

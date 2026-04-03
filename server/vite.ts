@@ -1,5 +1,5 @@
 import { type Express } from "express";
-import { createServer as createViteServer, createLogger } from "vite";
+import { createServer as createViteServer, createLogger, type LogErrorOptions } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
 import fs from "fs";
@@ -9,13 +9,15 @@ import { nanoid } from "nanoid";
 const viteLogger = createLogger();
 
 export async function setupVite(server: Server, app: Express) {
-  // Use the same port as the server for HMR to avoid websocket port mismatches
-  const serverPort = parseInt(process.env.PORT || "5001", 10);
-  const hmrPort = parseInt(process.env.HMR_PORT || String(serverPort), 10);
-   
+  // Bug fix: When both `port` and `server` are set in hmr config, Vite tries to
+  // open a *separate* standalone WebSocket server on that port. Since Express
+  // already owns the port, the bind fails and the client WS connection is
+  // immediately rejected ("WebSocket closed without opened").
+  // Fix: pass only `server` so Vite attaches its WS upgrade handler to the
+  // existing HTTP server — no separate port needed.
   const serverOptions = {
     middlewareMode: true,
-    hmr: { port: hmrPort, server },
+    hmr: { server },
     allowedHosts: true as const,
   };
 
@@ -24,9 +26,18 @@ export async function setupVite(server: Server, app: Express) {
     configFile: false,
     customLogger: {
       ...viteLogger,
-      error: (msg, options) => {
+      // Bug fix: previously called process.exit(1) for ANY Vite error message,
+      // including transient/non-fatal warnings that Vite elevates to "error"
+      // level (e.g. missing optional deps, peer dep mismatches). This killed
+      // the entire Express dev server on unrelated noise.
+      // Fix: only exit when the call includes an actual Error object, which
+      // Vite uses exclusively for build-breaking failures.
+      error: (msg: string, options?: LogErrorOptions) => {
         viteLogger.error(msg, options);
-        process.exit(1);
+        if (options?.error) {
+          console.error("[vite] Fatal build error — shutting down dev server.");
+          process.exit(1);
+        }
       },
     },
     server: serverOptions,
@@ -46,7 +57,7 @@ export async function setupVite(server: Server, app: Express) {
         "index.html",
       );
 
-      // always reload the index.html file from disk incase it changes
+      // always reload the index.html file from disk in case it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(
         `src="/src/main.tsx"`,

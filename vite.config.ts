@@ -3,30 +3,40 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+// Resolve optional Replit plugins at module level using ESM top-level await.
+// This keeps the `defineConfig` call synchronous (required by vitest/config)
+// while still supporting dynamic async plugin imports.
+// NOTE: Previously these awaits were embedded inside the plugins array spread
+// inside the defineConfig object literal — they still ran as top-level await
+// in ESM mode but the intent was implicit and easy to misread.
+const replitPlugins =
+  process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
+    ? [
+        await import("@replit/vite-plugin-cartographer").then((m) =>
+          m.cartographer(),
+        ),
+        await import("@replit/vite-plugin-dev-banner").then((m) =>
+          m.devBanner(),
+        ),
+      ]
+    : [];
+
 export default defineConfig({
   root: "client",
-  plugins: [
-    react(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer(),
-          ),
-          await import("@replit/vite-plugin-dev-banner").then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
-  ],
+  plugins: [react(), runtimeErrorOverlay(), ...replitPlugins],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
-      "narrative-engine": path.resolve(import.meta.dirname, "packages/narrative-engine"),
-      "narrative-engine-lab": path.resolve(import.meta.dirname, "packages/narrative-engine-lab"),
+      "narrative-engine": path.resolve(
+        import.meta.dirname,
+        "packages/narrative-engine",
+      ),
+      "narrative-engine-lab": path.resolve(
+        import.meta.dirname,
+        "packages/narrative-engine-lab",
+      ),
     },
   },
   build: {
@@ -49,12 +59,19 @@ export default defineConfig({
       // Only include src from packages, not dist (dist contains old compiled tests)
       "../packages/**/src/**/*.{test,spec}.?(c|m)[jt]s?(x)",
     ],
-    setupFiles: [ path.resolve(import.meta.dirname, "client/src/test/setup.ts") ],
+    setupFiles: [
+      path.resolve(import.meta.dirname, "client/src/test/setup.ts"),
+    ],
     coverage: {
       provider: "v8",
-      reporter: [ "text", "json", "html" ],
-      include: [ "client/src/**", "server/**" ],
-      exclude: [ "node_modules/**", "client/src/test/setup.ts", "**/*.test.ts", "**/dist/**" ],
+      reporter: ["text", "json", "html"],
+      include: ["client/src/**", "server/**"],
+      exclude: [
+        "node_modules/**",
+        "client/src/test/setup.ts",
+        "**/*.test.ts",
+        "**/dist/**",
+      ],
     },
   },
 });
