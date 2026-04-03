@@ -141,9 +141,14 @@ async function processDueSchedules(): Promise<void> {
     const now = new Date();
     const dueSchedules = await storage.getDueSchedules(now);
 
+    if (dueSchedules.length > 0) {
+        logger.info(`[Scheduler] Found ${dueSchedules.length} due schedule(s) to process`, 'scheduler');
+    }
+
      for (const schedule of dueSchedules) {
         try {
             const { start, end } = computeNextWindow(schedule);
+            logger.info(`[Scheduler] Processing schedule ${schedule.id}, next window: ${start.toISOString()} - ${end.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
 
             // Get channel information for title and description
             // TODO Avoid Repeated Channel Lookups: Inside the seeding loop, getChannel is often called per gap.Improvement: Fetch all required channels into a Map before entering the for (const schedule of ...) loop to avoid $N$ extra database round-trips.
@@ -160,6 +165,7 @@ async function processDueSchedules(): Promise<void> {
             const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
             const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
+            logger.info(`[Scheduler] Creating session "${title}" at ${start.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
             const session = await storage.createSessionWithScheduleUpdate({
                 channelId: schedule.channelId,
                 scheduleId: schedule.id,
@@ -167,6 +173,7 @@ async function processDueSchedules(): Promise<void> {
                 description: channel?.description || "Upcoming Session",
                 scheduledStart: start,
                 scheduledEnd: end,
+                timezone: schedule.timezone,
                 sessionNumber: nextSessionNumber,
                 seasonNumber,
                 episodeNumber,
@@ -253,6 +260,7 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
                 const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
+                logger.info(`[Seeding] Creating session "${title}" at ${exactScheduledStartTimestamp.toISOString()} (tz: ${schedule.timezone}) for schedule ${schedule.id}`, 'scheduler');
                 await storage.createSessionWithScheduleUpdate({
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
@@ -260,6 +268,7 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
                     description: channelData?.description || 'Upcoming session',
                     scheduledStart: exactScheduledStartTimestamp,
                     scheduledEnd: exactScheduledEndTimestamp,
+                    timezone: schedule.timezone,
                     sessionNumber: nextSessionNumber,
                     seasonNumber,
                     episodeNumber,
@@ -632,7 +641,7 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
         const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
         const needsSeedSchedule = existing.some(s => s.intervalEnabled && !s.scheduledDays);
 
-        if (needsSeedSchedule) {
+            if (needsSeedSchedule) {
             const baseHour = 19;
             const hour = baseHour + i;
 
@@ -645,6 +654,7 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
                 showSeason: false,
             };
 
+            logger.info(`Creating default schedule for channel ${channel.channelId} at ${hour}:00 America/Denver`, 'scheduler');
             const schedule = await storage.createSchedule({
                 channelId: channel.channelId,
                 scheduledDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],

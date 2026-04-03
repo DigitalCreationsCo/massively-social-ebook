@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),
+    Link: vi.fn(),
 }));
 vi.mock('@/hooks/use-toast', () => ({
     useToast: vi.fn(),

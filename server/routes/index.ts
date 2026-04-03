@@ -555,7 +555,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ── Game Loop ────────────────────────────────────────────────────────────
-
+  logger.info('Starting game loop (1-second tick)', 'game-loop');
   setInterval(async () => {
     await handleGameLoopTick(Date.now(), broadcast);
   }, 1000);
@@ -586,16 +586,24 @@ export async function handleGameLoopTick(
     try {
       const dbState = await storage.getChannelState(channelId);
 
-      // ── No session active: watch for an upcoming one ─────────────────
       if (!dbState?.activeSessionId) {
         const next = await storage.getNextSession(channelId);
-        if (next && now >= next.scheduledStart.getTime() - 3 * 60 * 1000) {
-          const locked = await storage.tryAcquireGameLock(channelId, 30_000);
-          if (!locked) continue;
-          try {
-            await startSessionForChannelId(channelId, next, broadcast);
-          } finally {
-            await storage.releaseGameLock(channelId);
+        if (next) {
+          const timeUntilStart = next.scheduledStart.getTime() - now;
+          logger.debug(`[GameLoop] Channel ${channelId}: next session "${next.title}" starts in ${Math.round(timeUntilStart/1000)}s`, 'game-loop');
+          
+          if (now >= next.scheduledStart.getTime() - 3 * 60 * 1000) {
+            logger.info(`[GameLoop] Channel ${channelId}: Session "${next.title}" entering start window (${Math.round(timeUntilStart/1000)}s until start)`, 'game-loop');
+            const locked = await storage.tryAcquireGameLock(channelId, 30_000);
+            if (!locked) {
+              logger.debug(`[GameLoop] Channel ${channelId}: Could not acquire lock`, 'game-loop');
+              continue;
+            }
+            try {
+              await startSessionForChannelId(channelId, next, broadcast);
+            } finally {
+              await storage.releaseGameLock(channelId);
+            }
           }
         }
         continue;

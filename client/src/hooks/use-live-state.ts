@@ -67,6 +67,23 @@ export function useLiveState(channelId: string) {
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
+  const { data: initialSession, isLoading: sessionLoading } = useQuery({
+    queryKey: [api.sessions.next.path, channelId],
+    queryFn: async () => {
+      const res = await fetch(`${api.sessions.next.path}?channelId=${channelId}`);
+      if (!res.ok) return null;
+      return res.json() as Promise<Session | null>;
+    },
+    staleTime: 5000,
+  });
+
+  useEffect(() => {
+    if (initialSession && !wsConnected) {
+      setSessionStatus(initialSession.status as SessionStatus);
+      setActiveSession(initialSession);
+    }
+  }, [initialSession, wsConnected]);
+
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
     queryKey: [api.blocks.current.path, channelId],
@@ -356,7 +373,7 @@ export function useLiveState(channelId: string) {
   }, [currentBlock?.id]);
 
   return {
-    isLoading: blockLoading || chatLoading,
+    isLoading: blockLoading || chatLoading || sessionLoading,
     wsConnected,
     username,
     currentBlock,

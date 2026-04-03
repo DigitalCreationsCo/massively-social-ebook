@@ -57,7 +57,7 @@ export default function UpcomingSession() {
             const diff = target - now;
 
             if (diff <= 0) {
-                setTimeLeft("00:00:00");
+                setTimeLeft("Starting...");
                 return;
             }
 

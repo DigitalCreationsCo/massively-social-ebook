@@ -35,6 +35,9 @@ describe('useLiveState', () => {
         vi.useFakeTimers();
         // Setup default mocks
         (ReactQuery.useQuery as any).mockImplementation((options: any) => {
+            if (options.queryKey.includes('/api/sessions/next')) {
+                return { data: null, isLoading: false };
+            }
             if (options.queryKey.includes('/api/blocks/current')) {
                 return { data: { id: 1, content: 'Test block', optionA: {label: 'A'}, optionB: {label: 'B'} }, isLoading: false };
             }
