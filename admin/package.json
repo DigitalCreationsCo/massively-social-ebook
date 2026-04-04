@@ -6,12 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "@tanstack/react-virtual": "^3.10.9"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",
@@ -21,6 +26,7 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.6.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^3.0.0"
   }
 }

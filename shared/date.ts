@@ -1,6 +1,7 @@
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 export { getISOWeek, getYear } from 'date-fns';
+export { formatInTimeZone, fromZonedTime, toZonedTime };
 
 // Common timezone options for UI dropdowns
 export const TIMEZONE_OPTIONS = [
