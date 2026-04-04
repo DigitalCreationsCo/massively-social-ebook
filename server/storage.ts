@@ -68,6 +68,7 @@ export interface IStorage {
 
   createLore(loreEntry: InsertLore): Promise<Lore>;
   deactivateLore(id: number): Promise<Lore>;
+  updateLore(id: number, data: Partial<Pick<Lore, 'channelId' | 'content' | 'isActive'>>): Promise<Lore>;
   getLore(channelId?: string): Promise<Lore[]>;
   setBlockEmbedding(blockId: number, embedding: number[]): Promise<void>;
   setBlockNotable(blockId: number, isNotable: boolean): Promise<void>;
@@ -267,6 +268,15 @@ export class DatabaseStorage implements IStorage {
     const [updatedLore] = await db
       .update(lore)
       .set({ isActive: false })
+      .where(eq(lore.id, id))
+      .returning();
+    return updatedLore;
+  }
+
+  async updateLore(id: number, data: Partial<Pick<Lore, 'channelId' | 'content' | 'isActive'>>): Promise<Lore> {
+    const [updatedLore] = await db
+      .update(lore)
+      .set(data)
       .where(eq(lore.id, id))
       .returning();
     return updatedLore;

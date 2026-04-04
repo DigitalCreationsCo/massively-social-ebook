@@ -212,6 +212,28 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  app.patch('/admin/api/lore/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const { channelId, content, isActive } = req.body;
+      
+      const updateData: Record<string, unknown> = {};
+      if (channelId !== undefined) updateData.channelId = channelId;
+      if (content !== undefined) updateData.content = content;
+      if (isActive !== undefined) updateData.isActive = isActive;
+      
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No fields to update" });
+      }
+      
+      const lore = await storage.updateLore(id, updateData);
+      res.json(lore);
+    } catch (err) {
+      logger.error("Failed to update lore", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to update lore" });
+    }
+  });
+
   // Blocks CRUD
   app.get('/admin/api/blocks', isAdmin, async (req, res) => {
     try {
