@@ -320,9 +320,9 @@ export default function SessionsTab() {
     switch (status) {
       case 'scheduled': return 'text-blue-600 bg-blue-50'
       case 'active': return 'text-green-600 bg-green-50'
-      case 'completed': return 'text-gray-600 bg-gray-50'
+      case 'completed': return 'text-zinc-600 bg-zinc-50'
       case 'cancelled': return 'text-red-600 bg-red-50'
-      default: return 'text-gray-600 bg-gray-50'
+      default: return 'text-zinc-600 bg-zinc-50'
     }
   }
 
@@ -340,21 +340,21 @@ export default function SessionsTab() {
   return (
     <div className="p-4 flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex gap-3 mb-4 items-center flex-wrap">
+      <div className="flex gap-3 mb-4 items-center flex-wrap bg-zinc-900 p-2 rounded-lg border border-zinc-800">
         {/* Search */}
         <input
           type="text"
           placeholder="Search sessions..."
           value={filters.search}
           onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-          className="border border-gray-300 rounded px-2 py-1 text-sm w-48"
+          className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-sm w-48 text-zinc-100 placeholder-zinc-500"
         />
         
         {/* Status Filter */}
         <select
           value={filters.status}
           onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-          className="border border-gray-300 rounded px-2 py-1 text-sm"
+          className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-100"
         >
           <option value="">All Statuses</option>
           <option value="scheduled">Scheduled</option>
@@ -367,7 +367,7 @@ export default function SessionsTab() {
         <select
           value={filters.channelId}
           onChange={(e) => setFilters(prev => ({ ...prev, channelId: e.target.value }))}
-          className="border border-gray-300 rounded px-2 py-1 text-sm"
+          className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-100"
         >
           <option value="">All Channels</option>
           {(channels || []).map(ch => (
@@ -379,7 +379,7 @@ export default function SessionsTab() {
         {hasActiveFilters && (
           <button
             onClick={clearFilters}
-            className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
           >
             <X className="w-3 h-3" /> Clear
           </button>
@@ -388,49 +388,49 @@ export default function SessionsTab() {
         <div className="flex-1" />
         
         {/* Timezone Info */}
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-zinc-500">
           Local: {localTimezone}
         </span>
         
         <button
           onClick={refresh}
-          className="text-sm text-blue-600 hover:underline"
+          className="text-sm text-blue-400 hover:text-blue-300"
         >
           Refresh
         </button>
         <button
           onClick={() => setShowCreateForm(true)}
-          className="text-sm text-green-600 hover:underline"
+          className="text-sm text-green-400 hover:text-green-300"
         >
           + New Session
         </button>
         {lastUpdated && (
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-zinc-500">
             Updated: {lastUpdated.toLocaleTimeString()}
           </span>
         )}
       </div>
 
       {showCreateForm && (
-        <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium mb-3">Create New Session</h3>
+        <div className="mb-4 p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+          <h3 className="text-sm font-medium mb-3 text-zinc-100">Create New Session</h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Title *</label>
+              <label className="block text-xs text-zinc-400 mb-1">Title *</label>
               <input
                 type="text"
                 value={createForm.title}
                 onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100 placeholder-zinc-500"
                 placeholder="Session title"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Channel</label>
+              <label className="block text-xs text-zinc-400 mb-1">Channel</label>
               <select
                 value={createForm.channelId}
                 onChange={(e) => setCreateForm({ ...createForm, channelId: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100"
               >
                 {(channels || []).map(ch => (
                   <option key={ch.id} value={ch.channelId}>{ch.name}</option>
@@ -438,29 +438,29 @@ export default function SessionsTab() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Start *</label>
+              <label className="block text-xs text-zinc-400 mb-1">Start *</label>
               <input
                 type="datetime-local"
                 value={createForm.scheduledStart}
                 onChange={(e) => setCreateForm({ ...createForm, scheduledStart: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">End *</label>
+              <label className="block text-xs text-zinc-400 mb-1">End *</label>
               <input
                 type="datetime-local"
                 value={createForm.scheduledEnd}
                 onChange={(e) => setCreateForm({ ...createForm, scheduledEnd: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Timezone *</label>
+              <label className="block text-xs text-zinc-400 mb-1">Timezone *</label>
               <select
                 value={createForm.timezone}
                 onChange={(e) => setCreateForm({ ...createForm, timezone: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100"
               >
                 {TIMEZONE_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -468,12 +468,12 @@ export default function SessionsTab() {
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-gray-600 mb-1">Description</label>
+              <label className="block text-xs text-zinc-400 mb-1">Description</label>
               <input
                 type="text"
                 value={createForm.description}
                 onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1 w-full"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 w-full text-zinc-100 placeholder-zinc-500"
                 placeholder="Optional description"
               />
             </div>
@@ -481,13 +481,13 @@ export default function SessionsTab() {
           <div className="flex gap-2 mt-3">
             <button
               onClick={handleCreate}
-              className="text-xs text-green-600 hover:underline"
+              className="text-xs text-green-400 hover:text-green-300"
             >
               Create
             </button>
             <button
               onClick={() => setShowCreateForm(false)}
-              className="text-xs text-gray-500 hover:underline"
+              className="text-xs text-zinc-500 hover:text-zinc-300"
             >
               Cancel
             </button>
@@ -495,23 +495,23 @@ export default function SessionsTab() {
         </div>
       )}
 
-      {loading && <p className="text-gray-500">Loading...</p>}
-      {error && <p className="text-red-500">Error: {error.message}</p>}
+      {loading && <p className="text-zinc-500">Loading...</p>}
+      {error && <p className="text-red-400">Error: {error.message}</p>}
 
       {/* Results count */}
-      <div className="text-xs text-gray-400 mb-2">
+      <div className="text-xs text-zinc-500 mb-2">
         Showing {filteredAndSortedSessions.length.toLocaleString()} of {sessions?.length.toLocaleString() || 0} sessions
       </div>
 
       {/* Virtual Table */}
       <div 
         ref={parentRef} 
-        className="flex-1 overflow-auto border border-gray-200 rounded-lg"
+        className="flex-1 overflow-auto border border-zinc-800 rounded-lg"
       >
         {filteredAndSortedSessions.length > 0 ? (
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 bg-zinc-900 z-10">
-              <tr className="border-b border-gray-700">
+              <tr className="border-b border-zinc-700">
                 <th 
                   className="text-left py-2 px-2 cursor-pointer hover:text-white"
                   onClick={() => handleSort('id')}
@@ -559,7 +559,7 @@ export default function SessionsTab() {
                 return (
                   <tr 
                     key={session.id} 
-                    className="border-b border-gray-100 hover:bg-gray-50"
+                    className="border-b text-zinc-600 bg-zinc-800 hover:bg-zinc-800"
                     style={{
                       height: `${virtualRow.size}px`,
                     }}
@@ -571,7 +571,7 @@ export default function SessionsTab() {
                           <select
                             value={editForm.channelId}
                             onChange={(e) => setEditForm({ ...editForm, channelId: e.target.value })}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                            className="text-zinc-600 bg-zinc-800 border-zinc-700"
                           >
                             {(channels || []).map(ch => (
                               <option key={ch.id} value={ch.channelId}>{ch.name}</option>
@@ -583,7 +583,7 @@ export default function SessionsTab() {
                             type="text"
                             value={editForm.title}
                             onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                            className="text-zinc-600 bg-zinc-800 border-zinc-700"
                           />
                         </td>
                         <td className="py-2 px-2">
@@ -591,7 +591,7 @@ export default function SessionsTab() {
                             type="datetime-local"
                             value={editForm.scheduledStart}
                             onChange={(e) => setEditForm({ ...editForm, scheduledStart: e.target.value })}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                            className="text-zinc-600 bg-zinc-800 border-zinc-700"
                           />
                         </td>
                         <td className="py-2 px-2">
@@ -599,14 +599,14 @@ export default function SessionsTab() {
                             type="datetime-local"
                             value={editForm.scheduledEnd}
                             onChange={(e) => setEditForm({ ...editForm, scheduledEnd: e.target.value })}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                            className="text-zinc-600 bg-zinc-800 border-zinc-700"
                           />
                         </td>
                         <td className="py-2 px-2">
                           <select
                             value={editForm.timezone}
                             onChange={(e) => setEditForm({ ...editForm, timezone: e.target.value })}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full"
+                            className="text-zinc-600 bg-zinc-800 border-zinc-700"
                           >
                             {TIMEZONE_OPTIONS.map(opt => (
                               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -620,9 +620,9 @@ export default function SessionsTab() {
                         </td>
                         <td className="py-2 px-2 text-xs">
                           {session.scheduleId ? (
-                            <span className="text-gray-600">#{session.scheduleId}</span>
+                            <span className="text-zinc-600">#{session.scheduleId}</span>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-zinc-400">-</span>
                           )}
                         </td>
                         <td className="py-2 px-2">
@@ -634,7 +634,7 @@ export default function SessionsTab() {
                           </button>
                           <button
                             onClick={() => setEditingId(null)}
-                            className="text-xs text-gray-500 hover:underline"
+                            className="text-xs text-zinc-500 hover:underline"
                           >
                             Cancel
                           </button>
@@ -649,7 +649,7 @@ export default function SessionsTab() {
                           <div className="text-xs" title={formatDateForHover(session.scheduledStart)}>
                             {formatDateForDisplay(session.scheduledStart, session.timezone || 'UTC')}
                           </div>
-                          <div className="text-xs text-gray-400">
+                          <div className="text-xs text-zinc-400">
                             {formatRelativeTime(session.scheduledStart)}
                           </div>
                         </td>
@@ -666,9 +666,9 @@ export default function SessionsTab() {
                         </td>
                         <td className="py-2 px-2 text-xs">
                           {session.scheduleId ? (
-                            <span className="text-gray-600">#{session.scheduleId}</span>
+                            <span className="text-zinc-600">#{session.scheduleId}</span>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-zinc-400">-</span>
                           )}
                         </td>
                         <td className="py-2 px-2">
@@ -688,7 +688,7 @@ export default function SessionsTab() {
                           )}
                           <button
                             onClick={() => handleDelete(session.id)}
-                            className="text-xs text-gray-500 hover:underline"
+                            className="text-xs text-zinc-500 hover:underline"
                           >
                             Delete
                           </button>
@@ -701,7 +701,7 @@ export default function SessionsTab() {
             </tbody>
           </table>
         ) : (
-          <div className="flex items-center justify-center h-32 text-gray-500">
+          <div className="flex items-center justify-center h-32 text-zinc-500">
             {hasActiveFilters 
               ? 'No sessions match the current filters' 
               : 'No sessions found'}
