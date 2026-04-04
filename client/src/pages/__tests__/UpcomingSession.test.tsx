@@ -96,7 +96,7 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/live');
+        expect(mockSetLocation).toHaveBeenCalledWith('/');
     });
 
     it('handles reminder download', async () => {

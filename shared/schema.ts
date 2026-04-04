@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, boolean, index, char, primaryKey, vector } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, index, char, primaryKey, vector, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
@@ -136,6 +136,8 @@ export const sessions = pgTable("sessions", {
     idxSessionsActiveCleanup: index("idx_sessions_active_cleanup")
       .on(table.scheduledEnd)
       .where(sql`status IN ('active', 'scheduled')`),
+    unqChannelScheduledStart: unique("unq_channel_start")
+      .on(table.channelId, table.scheduledStart),
   };
 });
 

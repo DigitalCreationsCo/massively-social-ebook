@@ -78,7 +78,7 @@ export default function UpcomingSession() {
     // Auto-redirect if session becomes active
     useEffect(() => {
         if (sessionStatus === 'active') {
-            setLocation('/live');
+            setLocation('/');
         }
     }, [sessionStatus, setLocation]);
 

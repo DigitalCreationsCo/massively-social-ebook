@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD CONSTRAINT "unq_channel_start" UNIQUE("channel_id","scheduled_start");

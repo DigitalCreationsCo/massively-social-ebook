@@ -228,7 +228,7 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
             const now = new Date();
             const lookaheadEndBoundary = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
-            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEndBoundary, 'scheduled');
+            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEndBoundary, undefined);
             const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEndBoundary);
 
             const timestampsExistingSessions = new Set(
@@ -307,7 +307,10 @@ function getScheduledDatesInWindow(schedule: Schedule, start: Date, end: Date): 
         current.setHours(0, 0, 0, 0);
 
         while (current <= end) {
-            dates.push(createZonedDate(current, schedule.timezone, hours, minutes));
+            const candidate = createZonedDate(current, schedule.timezone, hours, minutes);
+            if (candidate >= start && candidate <= end) {
+                dates.push(candidate);
+            }
             current.setDate(current.getDate() + 1);
         }
         return dates;
@@ -318,14 +321,14 @@ function getScheduledDatesInWindow(schedule: Schedule, start: Date, end: Date): 
     current.setHours(0, 0, 0, 0);
 
     while (current <= end) {
-        const dayMap: Record<string, number> = {
-            sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-            thursday: 4, friday: 5, saturday: 6
-        };
-        const targetDays = scheduledDays.map(d => dayMap[d.toLowerCase()]).filter(d => d !== undefined);
+        const targetDaysList = scheduledDays.map(d => d.toLowerCase());
+        const currentZonedDayName = formatInTZ(current, schedule.timezone, 'EEEE').toLowerCase();
 
-        if (targetDays.includes(current.getDay())) {
-            dates.push(createZonedDate(current, schedule.timezone, hours, minutes));
+        if (targetDaysList.includes(currentZonedDayName)) {
+            const candidate = createZonedDate(current, schedule.timezone, hours, minutes);
+            if (candidate >= start && candidate <= end) {
+                dates.push(candidate);
+            }
         }
 
         current.setDate(current.getDate() + 1);

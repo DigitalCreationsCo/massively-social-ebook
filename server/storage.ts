@@ -380,19 +380,23 @@ export class DatabaseStorage implements IStorage {
     channelId: string,
     dateStart: Date,
     dateEnd: Date,
-    statusStr: SessionStatus = 'scheduled'
+    statusStr?: SessionStatus
   ): Promise<Session[]> {
-    console.debug(`[Trace] Fetching ${statusStr} sessions for channel ${channelId} between ${dateStart.toISOString()} and ${dateEnd.toISOString()}`, 'storage');
+    console.debug(`[Trace] Fetching ${statusStr || 'all'} sessions for channel ${channelId} between ${dateStart.toISOString()} and ${dateEnd.toISOString()}`, 'storage');
     try {
+      const conditions = [
+        eq(sessions.channelId, channelId),
+        gte(sessions.scheduledStart, dateStart),
+        lte(sessions.scheduledStart, dateEnd)
+      ];
+      if (statusStr) {
+        conditions.push(eq(sessions.status, statusStr));
+      }
+
       return await db
         .select()
         .from(sessions)
-        .where(and(
-          eq(sessions.channelId, channelId),
-          eq(sessions.status, statusStr),
-          gte(sessions.scheduledStart, dateStart),
-          lte(sessions.scheduledStart, dateEnd)
-        ))
+        .where(and(...conditions))
         .orderBy(asc(sessions.scheduledStart));
     } catch (errorUncaught) {
       console.error(`Failed to fetch sessions in window for ${channelId}`, 'storage', errorUncaught instanceof Error ? errorUncaught : new Error(String(errorUncaught)));
