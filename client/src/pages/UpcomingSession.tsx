@@ -3,7 +3,7 @@ import { useLocation, Link } from "wouter";
 import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Bell, Loader2, BookOpen, Mail } from "lucide-react";
+import { Calendar, Bell, Loader2, BookOpen, Mail, Clock } from "lucide-react";
 import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +25,32 @@ import { Switch } from "@/components/ui/switch";
 import { motion, AnimatePresence } from "framer-motion";
 
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+export function getTimezoneDisplay(tz: string): string {
+    try {
+        const parts = new Intl.DateTimeFormat('en', {
+            timeZone: tz,
+            timeZoneName: 'longGeneric',
+        }).formatToParts(new Date());
+        const tzPart = parts.find(p => p.type === 'timeZoneName');
+        return tzPart?.value || tz;
+    } catch {
+        return tz;
+    }
+}
+
+export function getTimezoneAbbr(tz: string): string {
+    try {
+        const parts = new Intl.DateTimeFormat('en', {
+            timeZone: tz,
+            timeZoneName: 'short',
+        }).formatToParts(new Date());
+        const tzPart = parts.find(p => p.type === 'timeZoneName');
+        return tzPart?.value || '';
+    } catch {
+        return '';
+    }
+}
 
 export default function UpcomingSession() {
     const channelId = DEFAULT_CHANNEL_ID;
@@ -233,7 +259,7 @@ export default function UpcomingSession() {
                                         { isTodayInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Today" :
                                             isTomorrowInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Tomorrow" :
                                                 formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "EEEE, MMMM do")
-                                        } at { formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "h:mm a") } { userTimeZone }
+                                        } at { formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "h:mm a") } { getTimezoneDisplay(userTimeZone).split(' ')[ 0 ] }
                                     </span>
                                 )}
                             </CardDescription>
