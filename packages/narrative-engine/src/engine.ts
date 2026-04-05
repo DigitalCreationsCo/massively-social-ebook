@@ -155,7 +155,7 @@ export class NarrativeEngine<
           dense: c.scoreVectorDense.toFixed(3),
           sparse: c.scoreKeywordSparse.toFixed(3),
           notable: c.block.isNotable,
-          snippet: c.block.content.substring(0, 40) + "...",
+          snippet: c.block.content,
         })));
       }
 
@@ -283,7 +283,7 @@ export class NarrativeEngine<
         id: b.id,
         temporalOffset: `${totalBlockCount - (typeof b.index === "number" ? b.index : 0) + 1} blocks ago`,
         notable: b.isNotable,
-        content: b.content.substring(0, 50) + "...",
+        content: b.content,
       })));
 
       // PHASE 5: PROSE GENERATION
@@ -311,10 +311,10 @@ export class NarrativeEngine<
           totalBlockCount,
           loreCount: loreAtoms.length,
           candidateCount: candidatesHybrid.length,
-          loreAtoms: loreAtoms.map(l => ({ id: l.id, content: l.content.substring(0, 100), happenedAt: l.happenedAt })),
+          loreAtoms: loreAtoms.map(l => ({ id: l.id, content: l.content, happenedAt: l.happenedAt })),
           searchCandidates: candidatesHybrid.map(c => ({
             id: c.block.id,
-            content: c.block.content.substring(0, 60),
+            content: c.block.content,
             scoreVectorDense: c.scoreVectorDense,
             scoreKeywordSparse: c.scoreKeywordSparse,
             isNotable: c.block.isNotable
@@ -335,7 +335,7 @@ export class NarrativeEngine<
           totalCandidates: scoredCandidates.length,
         },
         timeline: {
-          merged: blocksChrono.map(b => ({ id: b.id, index: b.index, content: b.content.substring(0, 80) })),
+          merged: blocksChrono.map(b => ({ id: b.id, index: b.index, content: b.content })),
           fromHistorical: blocksHistorical.map(b => b.id),
           fromSurvivors: survivors.map(s => s.block.id),
           blockSequenceIntervals,
