@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Activity, Settings2, GitMerge, FileText,
   Play, AlertCircle, CheckCircle2, FlaskConical,
-  Info, History, Target, Trash2, Lock
+  Info, History, Target, Trash2, Lock,
+  ChevronDown, ChevronRight, Database, Scissors,
+  Clock, Sparkles, Layers
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -13,40 +15,146 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // --- Interfaces ---
+interface LoreAtom {
+  id: string | number;
+  content: string;
+  happenedAt: number;
+}
+
+interface SearchCandidate {
+  id: string | number;
+  content: string;
+  scoreVectorDense: number;
+  scoreKeywordSparse: number;
+  isNotable: boolean;
+}
+
+interface HarvestPhase {
+  totalBlockCount: number;
+  loreCount: number;
+  candidateCount: number;
+  loreAtoms?: LoreAtom[];
+  searchCandidates?: SearchCandidate[];
+  immediateContext?: string;
+}
+
+interface FusionCandidate {
+  id: string | number;
+  scoreFinal: number;
+  scoreRaw: number;
+  isNotable: boolean;
+}
+
+interface SaliencyPhase {
+  threshold: number;
+  passed: (string | number)[];
+  evicted: (string | number)[];
+  filteredCount: number;
+  totalCandidates: number;
+}
+
+interface TimelineBlock {
+  id: string | number;
+  index: number;
+  content: string;
+}
+
+interface TimelinePhase {
+  merged: TimelineBlock[];
+  fromHistorical: (string | number)[];
+  fromSurvivors: (string | number)[];
+  blockSequenceIntervals: number[];
+  currentBlockCount: number;
+}
+
+interface ProsePhase {
+  promptLength: number;
+  loreAtoms: number;
+  blockCount: number;
+}
+
+interface TracePhase {
+  harvest?: HarvestPhase;
+  fusion?: FusionCandidate[];
+  saliency?: SaliencyPhase;
+  timeline?: TimelinePhase;
+  prose?: ProsePhase;
+}
+
 interface LabConfig {
   saliencyThreshold: number;
   weightDense: number;
   significanceCoef: number;
   temporalPhrasing: boolean;
-}
-
-interface ScoredCandidate {
-  id: string | number;
-  score: number;
-  isNotable?: boolean;
-}
-
-interface TracePhase {
-  harvest?: {
-    totalBlockCount: number;
-    loreCount: number;
-    candidatesCount: number;
-  };
-  fusion?: ScoredCandidate[];
-  saliency?: (string | number)[];
-  timeline?: (string | number)[];
+  maxLoreAtoms?: number;
 }
 
 interface TraceObject {
   timestamp: string;
   channelId: string;
   inputQuery: string;
+  providerType?: string;
   phases: TracePhase;
-  discardedCandidates?: ScoredCandidate[];
   finalizedPrompt?: string;
+  discardedCandidates?: FusionCandidate[];
   error?: string;
   labConfig?: LabConfig;
 }
+
+// --- Collapsible Section Component ---
+const CollapsibleSection = ({ 
+  title, 
+  icon: Icon, 
+  children, 
+  defaultOpen = false,
+  className 
+}: { 
+  title: string; 
+  icon: React.ElementType; 
+  children: React.ReactNode; 
+  defaultOpen?: boolean;
+  className?: string;
+}) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  
+  return (
+    <section className={className}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center gap-2 text-primary mb-4 hover:opacity-80 transition-opacity"
+      >
+        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        <Icon className="w-5 h-5" />
+        <h2 className="text-sm font-bold uppercase tracking-widest">{title}</h2>
+      </button>
+      {isOpen && children}
+    </section>
+  );
+};
+
+// --- Stat Card Component ---
+const StatCard = ({ label, value, sublabel }: { label: string; value: string | number; sublabel?: string }) => (
+  <div className="bg-muted/30 border border-border rounded-xl p-3">
+    <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">{label}</p>
+    <p className="text-lg font-bold text-foreground">{value}</p>
+    {sublabel && <p className="text-[10px] text-muted-foreground">{sublabel}</p>}
+  </div>
+);
+
+// --- Chip Component ---
+const Chip = ({ children, variant = 'default' }: { children: React.ReactNode; variant?: 'default' | 'success' | 'danger' | 'muted' }) => {
+  const variants = {
+    default: 'bg-primary/10 text-primary border-primary/20',
+    success: 'bg-green-500/10 text-green-500 border-green-500/20',
+    danger: 'bg-destructive/10 text-destructive border-destructive/20',
+    muted: 'bg-muted text-muted-foreground border-border',
+  };
+  return (
+    <span className={cn("text-[10px] font-bold uppercase px-2 py-1 rounded border", variants[variant])}>
+      {children}
+    </span>
+  );
+};
 
 // --- Sub-Components ---
 
@@ -93,7 +201,7 @@ function App() {
   const [ temporalPhrasing, setTemporalPhrasing ] = useState(true);
   const [ channelId, setChannelId ] = useState("test-channel");
 
-  const API_BASE = "http://localhost:5002/__narrative_lab";
+  const API_BASE = "http://127.0.0.1:5002/__narrative_lab";
 
   const labFetch = useCallback(async (endpoint: string, options: RequestInit = {}) => {
     let currentToken = token;
@@ -257,12 +365,34 @@ function App() {
               <p className="text-sm font-medium uppercase tracking-widest">Select a trace to begin analysis</p>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto space-y-12 pb-20">
-              {/* Header Info */ }
+            <div className="max-w-4xl mx-auto space-y-10 pb-20">
+              {/* Simulation Metadata */ }
+              <CollapsibleSection title="Simulation Metadata" icon={Activity} defaultOpen={true}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <StatCard 
+                    label="Timestamp" 
+                    value={new Date(selectedTrace.timestamp).toLocaleTimeString()} 
+                    sublabel={new Date(selectedTrace.timestamp).toLocaleDateString()} 
+                  />
+                  <StatCard label="Channel ID" value={selectedTrace.channelId} />
+                  <StatCard label="Provider" value={selectedTrace.providerType || 'unknown'} />
+                  <StatCard 
+                    label="Status" 
+                    value={selectedTrace.error ? 'Error' : 'Success'} 
+                  />
+                </div>
+                {selectedTrace.error && (
+                  <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-mono">
+                    {selectedTrace.error}
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              {/* Query Synthesis */ }
               <section>
-                <div className="flex items-center gap-2 text-primary mb-2">
+                <div className="flex items-center gap-2 text-primary mb-4">
                   <Target className="w-5 h-5" />
-                  <h2 className="text-lg font-bold tracking-tight">Query Synthesis</h2>
+                  <h2 className="text-sm font-bold uppercase tracking-widest">Query Synthesis</h2>
                 </div>
                 <div className="p-6 rounded-2xl bg-card border border-border shadow-sm">
                   <p className="text-xl font-medium leading-relaxed italic text-foreground/90">
@@ -271,55 +401,287 @@ function App() {
                 </div>
               </section>
 
-              {/* RAG Fusion Table */ }
-              <section>
-                <div className="flex items-center gap-2 text-primary mb-4">
-                  <GitMerge className="w-5 h-5" />
-                  <h2 className="text-sm font-bold uppercase tracking-widest">Hybrid Fusion Matrix</h2>
+              {/* Lab Configuration */ }
+              {selectedTrace.labConfig && (
+                <CollapsibleSection title="Lab Configuration" icon={Settings2} defaultOpen={false}>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <StatCard 
+                      label="Saliency Gate" 
+                      value={selectedTrace.labConfig.saliencyThreshold?.toFixed(2) || '0.65'} 
+                    />
+                    <StatCard 
+                      label="Vector Weight" 
+                      value={selectedTrace.labConfig.weightDense?.toFixed(2) || '0.70'} 
+                    />
+                    <StatCard 
+                      label="Significance Coef" 
+                      value={selectedTrace.labConfig.significanceCoef?.toFixed(2) || '1.50'} 
+                    />
+                    <StatCard 
+                      label="Max Lore Atoms" 
+                      value={selectedTrace.labConfig.maxLoreAtoms || 20} 
+                    />
+                    <StatCard 
+                      label="Temporal Phrasing" 
+                      value={selectedTrace.labConfig.temporalPhrasing ? 'On' : 'Off'} 
+                    />
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Harvest Phase */ }
+              <CollapsibleSection title="Harvest Phase" icon={Database} defaultOpen={true}>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <StatCard 
+                    label="Total Blocks" 
+                    value={selectedTrace.phases.harvest?.totalBlockCount ?? 0} 
+                  />
+                  <StatCard 
+                    label="Lore Atoms" 
+                    value={selectedTrace.phases.harvest?.loreCount ?? 0} 
+                  />
+                  <StatCard 
+                    label="Search Candidates" 
+                    value={selectedTrace.phases.harvest?.candidateCount ?? 0} 
+                  />
                 </div>
+
+                {/* Lore Atoms List */}
+                {selectedTrace.phases.harvest?.loreAtoms && selectedTrace.phases.harvest.loreAtoms.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Active Lore Atoms</h4>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {selectedTrace.phases.harvest.loreAtoms.map((atom, i) => (
+                        <div key={atom.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+                          <span className="text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
+                            #{i + 1}
+                          </span>
+                          <p className="text-xs text-foreground/80 leading-relaxed">{atom.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Search Candidates */}
+                {selectedTrace.phases.harvest?.searchCandidates && selectedTrace.phases.harvest.searchCandidates.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Search Candidates</h4>
+                    <div className="rounded-xl border border-border overflow-hidden bg-card">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-muted/50 border-b border-border">
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">ID</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">Dense</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">Sparse</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">Content</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {selectedTrace.phases.harvest.searchCandidates.map((c) => (
+                            <tr key={c.id} className="hover:bg-muted/20 transition-colors">
+                              <td className="px-3 py-2 text-xs font-mono">#{c.id}</td>
+                              <td className="px-3 py-2 text-xs font-mono">{c.scoreVectorDense.toFixed(3)}</td>
+                              <td className="px-3 py-2 text-xs font-mono">{c.scoreKeywordSparse.toFixed(3)}</td>
+                              <td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-xs">{c.content}...</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              {/* Hybrid Fusion Matrix */ }
+              <CollapsibleSection title="Hybrid Fusion Matrix" icon={GitMerge} defaultOpen={true}>
                 <div className="rounded-2xl border border-border overflow-hidden bg-card">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-muted/50 border-b border-border">
                         <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground">Source ID</th>
-                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground">Significance Score</th>
+                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground">Raw Score</th>
+                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground">Final Score</th>
+                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground">Notable</th>
                         <th className="px-4 py-3 text-[10px] font-bold uppercase text-muted-foreground text-right">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      { selectedTrace.phases.fusion?.map((c) => (
-                        <tr key={ c.id } className="hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-3 text-xs font-mono">#{ c.id }</td>
+                      {selectedTrace.phases.fusion?.map((c) => (
+                        <tr key={c.id} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-3 text-xs font-mono">#{c.id}</td>
+                          <td className="px-4 py-3 text-xs font-mono text-muted-foreground">{c.scoreRaw?.toFixed(3)}</td>
                           <td className="px-4 py-3">
                             <SaliencyIndicator
-                              score={ c.score }
-                              threshold={ selectedTrace.labConfig?.saliencyThreshold || 0.65 }
+                              score={c.scoreFinal}
+                              threshold={selectedTrace.labConfig?.saliencyThreshold || 0.65}
                             />
                           </td>
+                          <td className="px-4 py-3">
+                            {c.isNotable && <Chip variant="success">Notable</Chip>}
+                          </td>
                           <td className="px-4 py-3 text-right">
-                            { c.score >= (selectedTrace.labConfig?.saliencyThreshold || 0.65) ? (
-                              <span className="text-[10px] font-bold text-primary uppercase bg-primary/10 px-2 py-1 rounded">Survivor</span>
+                            {c.scoreFinal >= (selectedTrace.labConfig?.saliencyThreshold || 0.65) ? (
+                              <Chip variant="success">Survivor</Chip>
                             ) : (
-                              <span className="text-[10px] font-medium text-muted-foreground uppercase">Evicted</span>
-                            ) }
+                              <Chip variant="muted">Evicted</Chip>
+                            )}
                           </td>
                         </tr>
-                      )) }
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              </section>
+              </CollapsibleSection>
+
+              {/* Saliency Gate Statistics */ }
+              <CollapsibleSection title="Saliency Gate Statistics" icon={Scissors} defaultOpen={false}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <StatCard 
+                    label="Threshold" 
+                    value={selectedTrace.phases.saliency?.threshold?.toFixed(2) || '0.65'} 
+                  />
+                  <StatCard 
+                    label="Passed" 
+                    value={selectedTrace.phases.saliency?.passed?.length ?? 0} 
+                    sublabel="survivors"
+                  />
+                  <StatCard 
+                    label="Evicted" 
+                    value={selectedTrace.phases.saliency?.evicted?.length ?? 0} 
+                    sublabel="candidates"
+                  />
+                  <StatCard 
+                    label="Filtered" 
+                    value={selectedTrace.phases.saliency?.filteredCount ?? 0} 
+                    sublabel="above threshold"
+                  />
+                </div>
+                
+                {selectedTrace.phases.saliency?.passed && selectedTrace.phases.saliency.passed.length > 0 && (
+                  <div className="mb-3">
+                    <h4 className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Survivors</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTrace.phases.saliency.passed.map((id) => (
+                        <span key={id} className="text-xs font-mono bg-primary/10 text-primary px-2 py-1 rounded border border-primary/20">
+                          #{id}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {selectedTrace.phases.saliency?.evicted && selectedTrace.phases.saliency.evicted.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Evicted</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTrace.phases.saliency.evicted.map((id) => (
+                        <span key={id} className="text-xs font-mono bg-muted text-muted-foreground px-2 py-1 rounded border border-border">
+                          #{id}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              {/* Timeline Assembly */ }
+              <CollapsibleSection title="Timeline Assembly" icon={Clock} defaultOpen={false}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <StatCard 
+                    label="Current Block" 
+                    value={selectedTrace.phases.timeline?.currentBlockCount ?? 0} 
+                  />
+                  <StatCard 
+                    label="Total Merged" 
+                    value={selectedTrace.phases.timeline?.merged?.length ?? 0} 
+                    sublabel="blocks"
+                  />
+                  <StatCard 
+                    label="From Skeleton" 
+                    value={selectedTrace.phases.timeline?.fromHistorical?.length ?? 0} 
+                    sublabel="historical"
+                  />
+                  <StatCard 
+                    label="From Survivors" 
+                    value={selectedTrace.phases.timeline?.fromSurvivors?.length ?? 0} 
+                    sublabel="relevant"
+                  />
+                </div>
+
+                {selectedTrace.phases.timeline?.blockSequenceIntervals && selectedTrace.phases.timeline.blockSequenceIntervals.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Reciprocal Skeleton Intervals</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTrace.phases.timeline.blockSequenceIntervals.map((interval, i) => (
+                        <span key={i} className="text-xs font-mono bg-muted/50 text-muted-foreground px-2 py-1 rounded border border-border">
+                          {interval}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {selectedTrace.phases.timeline?.merged && selectedTrace.phases.timeline.merged.length > 0 && (
+                  <div className="rounded-xl border border-border overflow-hidden bg-card">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-muted/50 border-b border-border">
+                          <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">#</th>
+                          <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">ID</th>
+                          <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">Index</th>
+                          <th className="px-3 py-2 text-[10px] font-bold uppercase text-muted-foreground">Content</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {selectedTrace.phases.timeline.merged.map((block, i) => (
+                          <tr key={block.id} className="hover:bg-muted/20 transition-colors">
+                            <td className="px-3 py-2 text-xs font-mono text-primary">{i + 1}</td>
+                            <td className="px-3 py-2 text-xs font-mono">#{block.id}</td>
+                            <td className="px-3 py-2 text-xs font-mono">{block.index}</td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-md">{block.content}...</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              {/* Prose Generation Metrics */ }
+              {selectedTrace.phases.prose && (
+                <CollapsibleSection title="Prose Generation Metrics" icon={Sparkles} defaultOpen={false}>
+                  <div className="grid grid-cols-3 gap-3">
+                    <StatCard 
+                      label="Prompt Length" 
+                      value={selectedTrace.phases.prose.promptLength?.toLocaleString() ?? 0} 
+                      sublabel="characters"
+                    />
+                    <StatCard 
+                      label="Lore Atoms Used" 
+                      value={selectedTrace.phases.prose.loreAtoms ?? 0} 
+                    />
+                    <StatCard 
+                      label="Blocks in Prompt" 
+                      value={selectedTrace.phases.prose.blockCount ?? 0} 
+                    />
+                  </div>
+                </CollapsibleSection>
+              )}
 
               {/* Final Prompt Output */ }
-              <section>
-                <div className="flex items-center gap-2 text-primary mb-4">
-                  <FileText className="w-5 h-5" />
-                  <h2 className="text-sm font-bold uppercase tracking-widest">Final Prompt Construction</h2>
+              <CollapsibleSection title="Final Prompt Construction" icon={FileText} defaultOpen={true}>
+                <div className="p-6 rounded-2xl bg-muted/30 border border-border font-mono text-[13px] leading-relaxed whitespace-pre-wrap text-foreground/80 max-h-96 overflow-y-auto custom-scrollbar">
+                  {selectedTrace.finalizedPrompt || 'No prompt generated'}
                 </div>
-                <div className="p-6 rounded-2xl bg-muted/30 border border-border font-mono text-[13px] leading-relaxed whitespace-pre-wrap text-foreground/80">
-                  { selectedTrace.finalizedPrompt }
-                </div>
-              </section>
+              </CollapsibleSection>
+
+              {/* Raw Trace Data (Debug) */ }
+              <CollapsibleSection title="Raw Trace Data" icon={Layers} defaultOpen={false}>
+                <pre className="p-4 rounded-xl bg-muted/50 border border-border text-[11px] font-mono text-muted-foreground overflow-x-auto max-h-96">
+                  {JSON.stringify(selectedTrace, null, 2)}
+                </pre>
+              </CollapsibleSection>
             </div>
           ) }
         </main>
