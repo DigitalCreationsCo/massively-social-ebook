@@ -9,16 +9,18 @@ import { nanoid } from "nanoid";
 const viteLogger = createLogger();
 
 export async function setupVite(server: Server, app: Express) {
-  // Bug fix: When both `port` and `server` are set in hmr config, Vite tries to
-  // open a *separate* standalone WebSocket server on that port. Since Express
-  // already owns the port, the bind fails and the client WS connection is
-  // immediately rejected ("WebSocket closed without opened").
-  // Fix: pass only `server` so Vite attaches its WS upgrade handler to the
-  // existing HTTP server — no separate port needed.
+  const host = process.env.CLIENT_ORIGIN?.replace(/^https?:\/\//, "") || "localhost:5001";
+  
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server },
+    hmr: { 
+      server,
+      host,
+      path: "/__vite_hmr",
+    },
     allowedHosts: true as const,
+    host: host.split(":")[0],
+    port: parseInt(host.split(":")[1] || "5001", 10),
   };
 
   const vite = await createViteServer({

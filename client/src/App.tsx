@@ -1,6 +1,6 @@
 import { Switch, Route, useLocation } from "wouter";
 import { useEffect } from "react";
-import { initAnalytics, trackEvent } from "@/lib/analytics";
+import { trackEvent } from "@/lib/analytics";
 import { queryClient } from "@/lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,16 +13,10 @@ import Install from "@/pages/Install";
 import About from "@/pages/About";
 import NotFound from "@/pages/not-found";
 
-// Default channel - change here to switch the active channel
-// Future: load from database or user preference
 export const DEFAULT_CHANNEL_ID = "mystery";
 
 function useAnalyticsHook() {
   const [location] = useLocation();
-
-  useEffect(() => {
-    initAnalytics();
-  }, []);
 
   useEffect(() => {
     trackEvent("Page View", { path: location });
