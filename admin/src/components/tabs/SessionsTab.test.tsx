@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { formatInTimeZone } from 'date-fns-tz'
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
 
 const getLocalTimezone = (): string => {
   try {
@@ -17,9 +17,9 @@ const formatDateForDisplay = (date: string | Date, tz: string): string => {
   }
 }
 
-const formatDateForHover = (date: string | Date): string => {
+const formatDateForHover = (date: string | Date, tz: string): string => {
   try {
-    return formatInTimeZone(new Date(date), 'UTC', "yyyy-MM-dd HH:mm 'UTC'")
+    return formatInTimeZone(new Date(date), tz, "yyyy-MM-dd HH:mm zzz")
   } catch {
     return '—'
   }
@@ -66,6 +66,15 @@ interface Session {
   timezone?: string
 }
 
+const shiftTimezoneString = (dateStr: string, oldTz: string, newTz: string): string => {
+  try {
+    const absDate = fromZonedTime(dateStr, oldTz);
+    return formatInTimeZone(absDate, newTz, "yyyy-MM-dd'T'HH:mm");
+  } catch {
+    return dateStr;
+  }
+}
+
 describe('SessionsTab Utilities', () => {
   describe('getLocalTimezone', () => {
     it('should return a string timezone', () => {
@@ -95,14 +104,14 @@ describe('SessionsTab Utilities', () => {
   })
 
   describe('formatDateForHover', () => {
-    it('should format in UTC', () => {
-      const result = formatDateForHover('2026-04-05T14:30:00Z')
+    it('should format in given timezone', () => {
+      const result = formatDateForHover('2026-04-05T14:30:00Z', 'UTC')
       expect(result).toContain('UTC')
       expect(result).toContain('2026-04-05')
     })
 
     it('should return dash for invalid dates', () => {
-      const result = formatDateForHover('not-a-date')
+      const result = formatDateForHover('not-a-date', 'UTC')
       expect(result).toBe('—')
     })
   })
@@ -164,6 +173,26 @@ describe('SessionsTab Utilities', () => {
       const result = formatRelativeTime(futureDate)
       expect(result).toContain('in')
       expect(result).toContain('d')
+    })
+  })
+  describe('shiftTimezoneString', () => {
+    it('should correctly shift datetime-local string to new timezone', () => {
+      // 15:00 UTC is 11:00 AM EDT (America/New_York is EDT in April)
+      const dateStr = '2026-04-05T15:00'
+      const result = shiftTimezoneString(dateStr, 'UTC', 'America/New_York')
+      expect(result).toBe('2026-04-05T11:00')
+    })
+
+    it('should correctly shift from local to UTC', () => {
+      // 11:00 AM EDT is 15:00 UTC
+      const dateStr = '2026-04-05T11:00'
+      const result = shiftTimezoneString(dateStr, 'America/New_York', 'UTC')
+      expect(result).toBe('2026-04-05T15:00')
+    })
+
+    it('should return original string on failure', () => {
+      const result = shiftTimezoneString('invalid', 'UTC', 'America/New_York')
+      expect(result).toBe('invalid')
     })
   })
 })

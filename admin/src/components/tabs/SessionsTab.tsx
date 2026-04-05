@@ -4,7 +4,7 @@ import { useAdminToken } from '../../hooks/useAdminToken'
 import { usePolling } from '../../hooks/usePolling'
 import { adminFetch } from '../../api/client';
 import { Session, Channel } from '@shared/schema';
-import { TIMEZONE_OPTIONS, formatInTimeZone } from '@shared/date';
+import { TIMEZONE_OPTIONS, formatInTimeZone, fromZonedTime } from '@shared/date';
 import { ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react';
 
 interface SessionFilters {
@@ -37,9 +37,9 @@ const formatDateForDisplay = (date: string | Date, tz: string): string => {
   }
 }
 
-const formatDateForHover = (date: string | Date): string => {
+const formatDateForHover = (date: string | Date, tz: string): string => {
   try {
-    return formatInTimeZone(new Date(date), 'UTC', "yyyy-MM-dd HH:mm 'UTC'")
+    return formatInTimeZone(new Date(date), tz, "yyyy-MM-dd HH:mm zzz")
   } catch {
     return '—'
   }
@@ -93,6 +93,14 @@ export default function SessionsTab() {
   
   // Local timezone
   const [localTimezone] = useState(() => getLocalTimezone())
+
+  const timezoneOptions = useMemo(() => {
+    const options: Array<{ value: string, label: string }> = [...TIMEZONE_OPTIONS];
+    if (!options.some(opt => opt.value === localTimezone)) {
+      options.unshift({ value: localTimezone, label: `Local (${localTimezone})` });
+    }
+    return options;
+  }, [localTimezone])
   
   // Editing state
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -112,7 +120,7 @@ export default function SessionsTab() {
     channelId: '',
     scheduledStart: '',
     scheduledEnd: '',
-    timezone: 'UTC',
+    timezone: getLocalTimezone(),
     scheduleId: null as number | null,
   })
 
@@ -250,6 +258,26 @@ export default function SessionsTab() {
     })
   }
 
+  const handleEditTimezoneChange = (newTz: string) => {
+    try {
+      const oldTz = editForm.timezone;
+      const startAbs = fromZonedTime(editForm.scheduledStart, oldTz);
+      const endAbs = fromZonedTime(editForm.scheduledEnd, oldTz);
+      
+      const newStart = formatInTimeZone(startAbs, newTz, "yyyy-MM-dd'T'HH:mm");
+      const newEnd = formatInTimeZone(endAbs, newTz, "yyyy-MM-dd'T'HH:mm");
+
+      setEditForm(prev => ({
+        ...prev,
+        timezone: newTz,
+        scheduledStart: newStart,
+        scheduledEnd: newEnd
+      }));
+    } catch {
+      setEditForm(prev => ({ ...prev, timezone: newTz }));
+    }
+  }
+
   const handleSave = async (id: number) => {
     await adminFetch(`/sessions/${id}`, token, {
       method: 'PATCH',
@@ -291,7 +319,7 @@ export default function SessionsTab() {
       channelId: createForm.channelId,
       scheduledStart: '',
       scheduledEnd: '',
-      timezone: 'UTC',
+      timezone: getLocalTimezone(),
       scheduleId: null,
     })
     refresh()
@@ -462,7 +490,7 @@ export default function SessionsTab() {
                 onChange={(e) => setCreateForm({ ...createForm, timezone: e.target.value })}
                 className="border border-gray-300 rounded px-2 py-1 w-full"
               >
-                {TIMEZONE_OPTIONS.map(opt => (
+                {timezoneOptions.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
@@ -605,10 +633,10 @@ export default function SessionsTab() {
                         <td className="py-2 px-2">
                           <select
                             value={editForm.timezone}
-                            onChange={(e) => setEditForm({ ...editForm, timezone: e.target.value })}
+                            onChange={(e) => handleEditTimezoneChange(e.target.value)}
                             className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full bg-white"
                           >
-                            {TIMEZONE_OPTIONS.map(opt => (
+                            {timezoneOptions.map(opt => (
                               <option key={opt.value} value={opt.value}>{opt.label}</option>
                             ))}
                           </select>
@@ -646,19 +674,19 @@ export default function SessionsTab() {
                         <td className="py-2 px-2">{session.channelId}</td>
                         <td className="py-2 px-2 font-medium">{session.title}</td>
                         <td className="py-2 px-2">
-                          <div className="text-xs" title={formatDateForHover(session.scheduledStart)}>
-                            {formatDateForDisplay(session.scheduledStart, session.timezone || 'UTC')}
+                          <div className="text-xs" title={`Original: ${formatDateForHover(session.scheduledStart, session.timezone || 'UTC')}`}>
+                            {formatDateForDisplay(session.scheduledStart, localTimezone)}
                           </div>
                           <div className="text-xs text-gray-500">
                             {formatRelativeTime(session.scheduledStart)}
                           </div>
                         </td>
                         <td className="py-2 px-2">
-                          <div className="text-xs" title={formatDateForHover(session.scheduledEnd)}>
-                            {formatDateForDisplay(session.scheduledEnd, session.timezone || 'UTC')}
+                          <div className="text-xs" title={`Original: ${formatDateForHover(session.scheduledEnd, session.timezone || 'UTC')}`}>
+                            {formatDateForDisplay(session.scheduledEnd, localTimezone)}
                           </div>
                         </td>
-                        <td className="py-2 px-2 text-xs">{session.timezone}</td>
+                        <td className="py-2 px-2 text-xs" title={`Session timezone: ${session.timezone}`}>{localTimezone}</td>
                         <td className="py-2 px-2">
                           <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>
                             {session.status}
