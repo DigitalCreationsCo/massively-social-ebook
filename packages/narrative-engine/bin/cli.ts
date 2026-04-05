@@ -14,11 +14,9 @@ async function boot() {
   }
 
   try {
-    const lab = await import("narrative-engine-lab");
-    
     if (entryPath) {
       const absolutePath = resolve(process.cwd(), entryPath);
-      console.log(`[Lab] Executing consumer configuration: ${entryPath}`);
+      console.log(`[Lab] Loading consumer configuration: ${entryPath}`);
       try {
         await import(absolutePath);
       } catch (err) {
@@ -27,7 +25,8 @@ async function boot() {
       }
     }
 
-    lab.startLabServer();
+    const { startLabServer } = await import("narrative-engine-lab");
+    await startLabServer();
   } catch (err) {
     console.error("[Lab] Failed to start lab server:", err);
     console.error("\nPlease ensure narrative-engine-lab is installed:");
