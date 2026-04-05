@@ -413,14 +413,20 @@ function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start
 
         // If the calculated boundary is in the past, we must force a skip to the next day
         const isTargetInPast = computedStartBoundary <= targetDate;
-        const nextValidDay = getNextScheduledDay(targetDate, days, !isTargetInPast);
+        const nextValidDay = getNextScheduledDay(targetDate, days, !isTargetInPast, schedule.timezone);
 
         if (nextValidDay) {
             computedStartBoundary = createZonedDate(nextValidDay, schedule.timezone, hours, minutes);
         }
     } else if (computedStartBoundary <= targetDate) {
-        // Daily fallback: push by exactly 24 hours if already passed
-        computedStartBoundary = new Date(computedStartBoundary.getTime() + 24 * 60 * 60 * 1000);
+        // Daily fallback: push approx 24h, but we MUST re-zone to handle DST correctly
+        const nextDayApprox = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000);
+        computedStartBoundary = createZonedDate(nextDayApprox, schedule.timezone, hours, minutes);
+
+        if (computedStartBoundary <= targetDate) {
+            const nextNextDayApprox = new Date(nextDayApprox.getTime() + 24 * 60 * 60 * 1000);
+            computedStartBoundary = createZonedDate(nextNextDayApprox, schedule.timezone, hours, minutes);
+        }
     }
 
     const computedEndBoundary = new Date(computedStartBoundary.getTime() + durationMs);
@@ -436,7 +442,7 @@ function computeNextWindowForDate(schedule: Schedule, targetDate: Date): { start
  *
  * @internal
  */
-function getNextScheduledDay(from: Date, days: string[], includeTodayIfValid: boolean = false): Date | null {
+function getNextScheduledDay(from: Date, days: string[], includeTodayIfValid: boolean = false, timezone: string = 'UTC'): Date | null {
     if (!days.length) return null;
 
     const dayMap: Record<string, number> = {
@@ -447,15 +453,18 @@ function getNextScheduledDay(from: Date, days: string[], includeTodayIfValid: bo
     const targetDays = days.map(d => dayMap[ d.toLowerCase() ]).filter(d => d !== undefined);
     if (!targetDays.length) return null;
 
-    const currentDay = from.getDay();
+    // Use timezone-aware formatting to determine the actual day of the week in the target timezone
+    // 'i' returns 1 (Monday) - 7 (Sunday), we map it to 0-6 where 0 = Sunday
+    const currentZonedISODay = parseInt(formatInTZ(from, timezone, 'i'), 10);
+    const currentDay = currentZonedISODay === 7 ? 0 : currentZonedISODay;
     const startIndex = includeTodayIfValid ? 0 : 1;
 
     for (let i = startIndex; i <= 7; i++) {
         const checkDay = (currentDay + i) % 7;
         if (targetDays.includes(checkDay)) {
-            const result = new Date(from);
-            result.setDate(from.getDate() + i);
-            result.setHours(0, 0, 0, 0);
+            // We only need the date portion string to be accurate in the target timezone
+            // createZonedDate will correctly apply the scheduled hours/minutes later
+            const result = new Date(from.getTime() + i * 24 * 60 * 60 * 1000);
             return result;
         }
     }
@@ -536,18 +545,27 @@ async function getEventsInWindow(start: number, end: number): Promise<ScheduledE
  * @internal
  */
 function getNextWeeklyBriefingTime(after: number): number {
-    const date = new Date(after);
-    const target = new Date(date);
-    target.setHours(15, 0, 0, 0);
+    const afterDate = new Date(after);
+    
+    // Target timezone is always Mountain Time
+    const targetTz = 'America/Denver';
+    const afterDateStr = formatInTZ(afterDate, targetTz, 'yyyy-MM-dd');
+    let target = createZonedDate(afterDateStr, targetTz, 15, 0);
 
-    const day = target.getDay();
-    const diff = 0 - day; // Sunday = 0
-    target.setDate(target.getDate() + diff);
+    const currentZonedISODay = parseInt(formatInTZ(target, targetTz, 'i'), 10);
+    const currentDay = currentZonedISODay === 7 ? 0 : currentZonedISODay;
+    
+    // Monday = 1
+    const diff = 1 - currentDay;
+    target = new Date(target.getTime() + diff * 24 * 60 * 60 * 1000);
 
     if (target.getTime() <= after) {
-        target.setDate(target.getDate() + 7);
+        target = new Date(target.getTime() + 7 * 24 * 60 * 60 * 1000);
     }
-    return target.getTime();
+    
+    // Re-zone the final date to catch any DST boundaries crossed
+    const finalDateStr = formatInTZ(target, targetTz, 'yyyy-MM-dd');
+    return createZonedDate(finalDateStr, targetTz, 15, 0).getTime();
 }
 
 /**
