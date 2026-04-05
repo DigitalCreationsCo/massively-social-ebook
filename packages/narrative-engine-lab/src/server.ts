@@ -8,51 +8,11 @@ import { dirname, resolve } from "path";
 import { randomUUID } from "crypto";
 import cors from "cors";
 import { createServer } from "node:http";
+import { GLOBAL_KEY, LAB_TOKEN, SESSION_SECRET } from "./registry";
+import { ledgerPath, verboseLog } from "./logger";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-const verboseLog = {
-  lab: (...args: unknown[]) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      console.log(`[NarrativeLab]`, ...args);
-    }
-  },
-  request: (method: string, path: string, details?: unknown) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      console.log(`[NarrativeLab] → ${method} ${path}`, details ?? "");
-    }
-  },
-  response: (method: string, path: string, status: number, duration?: number) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      const durationStr = duration ? ` (${duration}ms)` : "";
-      console.log(`[NarrativeLab] ← ${status} ${method} ${path}${durationStr}`);
-    }
-  },
-  security: (event: string, details: unknown) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      console.warn(`[NarrativeLab/Security] ${event}:`, details);
-    }
-  },
-  config: (label: string, config: unknown) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      console.log(`[NarrativeLab] Config [${label}]:`, JSON.stringify(config, null, 2));
-    }
-  },
-  trace: (action: string, count?: number) => {
-    if (process.env.NARRATIVE_VERBOSE === "true" || process.env.NODE_ENV === "development") {
-      console.log(`[NarrativeLab] Trace [${action}]:`, count !== undefined ? `${count} entries` : "");
-    }
-  },
-};
-
-const GLOBAL_KEY = Symbol.for("narrative.engine.registry");
-const LAB_TOKEN = Symbol.for("narrative.lab.token");
-
-if (!(global as any)[ LAB_TOKEN ]) {
-  (global as any)[ LAB_TOKEN ] = process.env.LAB_SECRET || `lab_${randomUUID()}`;
-}
-const SESSION_SECRET = (global as any)[ LAB_TOKEN ];
 
 export function securityGate(req: Request, res: Response, next: NextFunction) {
   const remoteAddress = req.socket.remoteAddress;
@@ -75,14 +35,6 @@ export function securityGate(req: Request, res: Response, next: NextFunction) {
 
   verboseLog.security("ALLOWED", { path: req.path, remoteAddress });
   next();
-}
-
-const ledgerPath = path.join(process.cwd(), ".traces", "narrative_ledger.jsonl");
-
-export function configureLabEngine(engine: NarrativeEngine) {
-  verboseLog.lab("Configuring NarrativeEngine instance");
-  (global as any)[ GLOBAL_KEY ] = engine;
-  verboseLog.lab("Engine registered to global registry");
 }
 
 export function getActiveEngine(): NarrativeEngine {
@@ -144,6 +96,7 @@ export async function startLabServer(port: number = 5002): Promise<void> {
         engine.setLabConfig(config);
       }
 
+      let blockSaved = false;
       if (newBlock && newBlock.content) {
         const provider = engine[ 'provider' ];
         if (provider && typeof provider.addBlock === 'function') {
@@ -157,6 +110,11 @@ export async function startLabServer(port: number = 5002): Promise<void> {
           };
           await provider.addBlock(channelId || "lab-default", block);
           verboseLog.lab("Block added to storage", { blockId: block.id, content: block.content.substring(0, 30) });
+          blockSaved = true;
+        } else {
+          verboseLog.lab("Provider does not support addBlock - simulation block not persisted", { 
+            providerType: provider?.getProviderType?.() ?? "unknown" 
+          });
         }
       }
 
@@ -168,13 +126,15 @@ export async function startLabServer(port: number = 5002): Promise<void> {
         contextLength: result.length,
         providerType: provider?.getProviderType?.() ?? "custom",
       });
+      const isTracingEnabled = process.env.NODE_ENV === "development" || process.env.NARRATIVE_VERBOSE === "true";
       verboseLog.response("POST", "/generate", 200, Date.now() - startTime);
       res.json({
         channelId,
         context: result,
         config: engine.getLabConfig(),
         providerType: provider?.getProviderType?.() ?? "custom",
-        traceStored: true
+        traceStored: isTracingEnabled,
+        blockSaved
       });
     } catch (err) {
       verboseLog.lab("Generation failed:", err instanceof Error ? err.message : String(err));

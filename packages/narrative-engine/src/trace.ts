@@ -21,9 +21,8 @@ export interface TraceObject {
 }
 
 export function loggerNarrativeTrace(traceObject: TraceObject): void {
-  if (process.env.NODE_ENV !== "development") {
-    return;
-  }
+  const isTracingEnabled = process.env.NODE_ENV === "development" || process.env.NARRATIVE_VERBOSE === "true";
+  if (!isTracingEnabled) return;
 
   try {
     const traceDir = path.join(process.cwd(), ".traces");
