@@ -10,3 +10,5 @@ export type {
 } from "./types";
 
 export * from './utils';
+
+export { configureLabEngine, getActiveEngine, GLOBAL_KEY } from "./lab";

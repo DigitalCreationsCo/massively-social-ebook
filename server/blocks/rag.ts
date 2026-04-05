@@ -7,6 +7,10 @@ import { generateEmbedding } from "./embedding";
 
 export class RagProvider implements NarrativeProvider {
 
+  getProviderType(): string {
+    return "rag-pg";
+  }
+
   async getBlockCount(channelId: string): Promise<number> {
     return await storage.getBlockCount(channelId);
   }

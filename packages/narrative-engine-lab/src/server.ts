@@ -40,9 +40,12 @@ export function securityGate(req: Request, res: Response, next: NextFunction) {
 export function getActiveEngine(): NarrativeEngine {
   const existing = (global as any)[ GLOBAL_KEY ];
   if (existing) {
-    verboseLog.lab("Retrieved existing engine from registry");
+    const providerType = existing['provider']?.getProviderType?.() ?? "unknown";
+    console.log("[getActiveEngine] Found existing engine in registry, provider type:", providerType);
     return existing;
   }
+  console.log("[getActiveEngine] No engine in registry - GLOBAL_KEY exists:", GLOBAL_KEY.description);
+  console.log("[getActiveEngine] global[GLOBAL_KEY] is:", (global as any)[ GLOBAL_KEY ]);
   verboseLog.lab("No engine in registry, creating new InMemoryNarrativeProvider with browser storage");
   const channelId = process.env.LAB_CHANNEL_ID || "lab-default";
   const provider = new InMemoryNarrativeProvider(undefined, undefined, {
@@ -164,6 +167,11 @@ export async function startLabServer(port: number = 5002): Promise<void> {
       const ledgerLines = fileContentRaw.split("\n").filter((line) => line.trim() !== "");
       const parsedTraces = ledgerLines.map((line) => JSON.parse(line));
 
+      console.log("[TracesEndpoint] Returning", parsedTraces.length, "traces");
+      if (parsedTraces.length > 0) {
+        const latest = parsedTraces[parsedTraces.length - 1];
+        console.log("[TracesEndpoint] Latest trace providerType:", latest.providerType, "timestamp:", latest.timestamp);
+      }
       verboseLog.trace("Read", parsedTraces.length);
       verboseLog.response("GET", "/traces", 200, Date.now() - startTime);
       res.json({ traces: parsedTraces });
