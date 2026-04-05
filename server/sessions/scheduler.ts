@@ -696,13 +696,21 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
 
 export async function checkAndSendWeeklyBriefing(): Promise<void> {
     const now = new Date();
+    const targetTz = 'America/Denver';
 
-    // 1. Check Day/Time (Monday 3:00 PM MST)
-    const isMonday = now.getDay() === 1;
-    const isThreePM = now.getHours() === 15 && now.getMinutes() === 0;
+    // Check Day/Time (Monday 3:00 PM MST) strictly within the target timezone
+    const currentZonedISODay = parseInt(formatInTZ(now, targetTz, 'i'), 10);
+    const isMonday = currentZonedISODay === 1;
+    
+    const hours = parseInt(formatInTZ(now, targetTz, 'HH'), 10);
+    const minutes = parseInt(formatInTZ(now, targetTz, 'mm'), 10);
+    const isThreePM = hours === 15 && minutes === 0;
 
     if (isMonday && isThreePM) {
-        const weekKey = `${getYear(now)}-${getISOWeek(now)}`;
+        // Evaluate the week key using the target timezone's interpretation of "now"
+        const zonedNowStr = formatInTZ(now, targetTz, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx");
+        const zonedNow = new Date(zonedNowStr);
+        const weekKey = `${getYear(zonedNow)}-${getISOWeek(zonedNow)}`;
 
         const needsSending = await storage.shouldSendWeeklyBriefing(weekKey);
         if (!needsSending) return;

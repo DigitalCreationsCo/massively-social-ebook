@@ -94,6 +94,76 @@ describe('Idempotent Scheduler Engine', () => {
         });
     });
 
+    describe('Timezone & DST Boundary Logic', () => {
+        it('correctly handles Spring Forward 23 hour day for daily schedules', () => {
+            vi.setSystemTime(new Date('2026-03-07T19:00:00-05:00'));
+            
+            const scheduleMock = {
+                id: 1,
+                channelId: 'test',
+                scheduledDays: [],
+                scheduledTime: '19:00',
+                timezone: 'America/New_York',
+                intervalEnabled: true,
+                sessionCount: 0,
+            };
+
+            const nextRun = scheduler.computeNextRunAt(scheduleMock as any);
+
+            expect(nextRun.toISOString()).toBe(new Date('2026-03-08T19:00:00-04:00').toISOString());
+        });
+
+        it('correctly handles Fall Back 25 hour day for daily schedules', () => {
+            vi.setSystemTime(new Date('2026-10-31T19:00:00-04:00'));
+            
+            const scheduleMock = {
+                id: 1,
+                channelId: 'test',
+                scheduledDays: [],
+                scheduledTime: '19:00',
+                timezone: 'America/New_York',
+                intervalEnabled: true,
+                sessionCount: 0,
+            };
+
+            const nextRun = scheduler.computeNextRunAt(scheduleMock as any);
+
+            expect(nextRun.toISOString()).toBe(new Date('2026-11-01T19:00:00-05:00').toISOString());
+        });
+
+        it('does not leak server timezone into day of week checks', () => {
+            vi.setSystemTime(new Date('2026-04-06T02:00:00Z'));
+            
+            const scheduleMock = {
+                id: 1,
+                channelId: 'test',
+                scheduledDays: ['sunday'],
+                scheduledTime: '23:00',
+                timezone: 'America/New_York',
+                intervalEnabled: true,
+                sessionCount: 0,
+            };
+
+            const nextRun = scheduler.computeNextRunAt(scheduleMock as any);
+
+            expect(nextRun.toISOString()).toBe(new Date('2026-04-05T23:00:00-04:00').toISOString());
+        });
+
+        it('correctly calculates the next weekly briefing in absolute target timezone', async () => {
+            vi.setSystemTime(new Date('2026-04-01T12:00:00Z'));
+            
+            mockStorage.getSystemSetting.mockResolvedValueOnce(undefined);
+            mockStorage.getUsers.mockResolvedValue({ users: [] } as any);
+            mockStorage.shouldSendWeeklyBriefing.mockResolvedValue(true);
+            mockStorage.listSessions.mockResolvedValue([]);
+
+            vi.setSystemTime(new Date('2026-04-06T21:00:00Z'));
+            await scheduler.checkAndSendWeeklyBriefing();
+
+            expect(mockStorage.markWeeklyBriefingSent).toHaveBeenCalledWith("2026-15");
+        });
+    });
+
     describe('Seeding Logic (Strict Timestamp Binding)', () => {
         it('blocks automated seeding when a manual session occupies the exact timeslot', async () => {
             const dateManualTimeslot = new Date('2026-03-30T19:00:00-06:00'); // MDT Alignment
@@ -226,8 +296,9 @@ describe('Idempotent Scheduler Engine', () => {
             mockStorage.shouldSendWeeklyBriefing.mockResolvedValue(true);
             mockStorage.listSessions.mockResolvedValue([]);
 
-            // Time is Monday 15:00:00 Local time 
-            vi.setSystemTime(new Date(2026, 2, 30, 15, 0, 0));
+            // Time must be exactly Monday 15:00 MST
+            // March 30, 2026 15:00 MST = 21:00 UTC (MDT is actually -6, so 21:00)
+            vi.setSystemTime(new Date('2026-03-30T21:00:00Z'));
 
             await scheduler.checkAndSendWeeklyBriefing();
 
