@@ -182,6 +182,11 @@ export const blocks = pgTable("blocks", {
   isNotable: boolean("is_notable").default(false).notNull(),
   embedding: vector("embedding", { dimensions: 768 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => {
+  return {
+    idxBlocksChannelId: index("idx_blocks_channel_id").on(table.channelId),
+    idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
+  };
 });
 
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true, embedding: true });

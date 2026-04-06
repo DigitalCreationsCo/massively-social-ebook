@@ -240,17 +240,17 @@ export class DatabaseStorage implements IStorage {
     if (indices.length === 0) return [];
 
     const result = await db.execute(sql`
-      SELECT b.*, ROW_NUMBER() OVER (ORDER BY b.id ASC) as row_num
-      FROM blocks b
-      INNER JOIN sessions s ON b.session_id = s.id
-      WHERE s.channel_id = ${channelId}
+      WITH numbered AS (
+        SELECT b.*, ROW_NUMBER() OVER (ORDER BY b.id ASC) as row_num
+        FROM blocks b
+        INNER JOIN sessions s ON b.session_id = s.id
+        WHERE s.channel_id = ${channelId}
+      )
+      SELECT * FROM numbered WHERE row_num IN ${indices}
+      ORDER BY row_num ASC
     `);
 
-    const numberedRows = (result.rows as any[]).filter(row =>
-      indices.includes(row.row_num)
-    ).sort((a, b) => a.row_num - b.row_num);
-
-    return numberedRows.map(row => ({
+    return (result.rows as any[]).map(row => ({
       id: row.id,
       channelId: row.channel_id,
       sessionId: row.session_id,

@@ -72,7 +72,7 @@ describe('Data Abstraction Layer: Core Storage', () => {
     it('maintains trace visibility on DB rejection', async () => {
       const errorDbMock = new Error('Query Timeout');
 
-      (db.select as any).mockImplementation(() => { throw errorDbMock; });
+      (db.select as any).mockImplementationOnce(() => { throw errorDbMock; });
 
       await expect(storageDb.listSchedules()).rejects.toThrow('Query Timeout');
     });
