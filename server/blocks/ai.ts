@@ -13,7 +13,7 @@ const lmParamsGoogle = {
   imageModel: 'gemini-2.5-flash-image',
 };
 
-const TIMEOUT_CONTEXT_MS = 3000;
+const TIMEOUT_CONTEXT_MS = 8000;
 
 const engine = new NarrativeEngine(new RagProvider());
 

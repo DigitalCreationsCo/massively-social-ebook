@@ -46,11 +46,11 @@ export class RagProvider implements NarrativeProvider {
                 b.is_notable,
                 b.embedding,
                 b.created_at,
-                ts_rank(to_tsvector('english', b.content), plainto_tsquery('english', ${query})) AS raw_ts_rank
+                ts_rank(b.search_vector, plainto_tsquery('english', ${query})) AS raw_ts_rank
               FROM blocks b
               WHERE b.channel_id = ${channelId}
                 AND b.embedding IS NOT NULL
-                AND to_tsvector('english', b.content) @@ plainto_tsquery('english', ${query})
+                AND b.search_vector @@ plainto_tsquery('english', ${query})
             ),
             max_ts AS (
               SELECT COALESCE(MAX(raw_ts_rank), 1) as max_rank FROM matched_blocks

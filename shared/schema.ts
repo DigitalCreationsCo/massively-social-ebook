@@ -1,8 +1,15 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, boolean, index, char, primaryKey, vector, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, boolean, index, char, primaryKey, vector, unique, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
+
+// Define a custom tsvector type since Drizzle doesn't have it natively
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return 'tsvector';
+  },
+});
 
 
 
@@ -181,11 +188,16 @@ export const blocks = pgTable("blocks", {
   optionB: jsonb("option_b"),
   isNotable: boolean("is_notable").default(false).notNull(),
   embedding: vector("embedding", { dimensions: 768 }),
+  searchVector: tsvector("search_vector").generatedAlwaysAs(
+    (): any => sql`to_tsvector('english', ${blocks.content})`
+  ),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 }, (table) => {
   return {
     idxBlocksChannelId: index("idx_blocks_channel_id").on(table.channelId),
     idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
+    idxBlocksEmbedding: index("idx_blocks_embedding").using("hnsw", table.embedding.op("vector_cosine_ops")),
+    idxBlocksSearch: index("idx_blocks_search").using("gin", table.searchVector),
   };
 });
 
