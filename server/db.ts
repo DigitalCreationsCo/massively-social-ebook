@@ -14,7 +14,21 @@ console.log("Connecting to DB with URL:", process.env.DATABASE_URL?.substring(0,
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
-  query_timeout: 15000, // 15 second timeout for queries to prevent connection pool exhaustion
-  connectionTimeoutMillis: 10000, // 10 second connection timeout
+  query_timeout: 15000,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  max: 5,
+  allowExitOnIdle: true,
 });
+
+// Handle connection errors gracefully - Supabase pooler can terminate connections
+pool.on('error', (err) => {
+  console.error('[DB] Unexpected pool error, will reconnect:', err.message);
+});
+
+// Handle connection terminations from the pooler
+pool.on('remove', () => {
+  console.log('[DB] Connection removed from pool');
+});
+
 export const db = drizzle({ client: pool, schema });
