@@ -82,8 +82,21 @@ async function startSessionForChannelId(
 ) {
   logger.info(`Starting session "${session.title}" for channel ${channelId}`, "session");
 
-  // Seed or resume the current block.
+  // Seed or resume: get current block for active session, or last block from previous session
   let block = await storage.getCurrentBlock(channelId);
+  let previousContext = "";
+
+  // If no current block, try to get the last block from previous sessions
+  if (!block) {
+    const lastBlock = await storage.getLastBlock(channelId);
+    if (lastBlock) {
+      // Resume from previous session - use last block as context for story continuation
+      previousContext = `The story continues from where it left off:\n${lastBlock.content}`;
+      block = lastBlock;
+    }
+  }
+
+  // If still no block, generate new one using session description
   if (!block) {
     const initialPrompt = session.description ?? "";
     try {
@@ -106,6 +119,21 @@ async function startSessionForChannelId(
         optionA: { label: "Reboot", description: "Attempt a system reboot." },
         optionB: { label: "Wait", description: "Wait for the anomaly to clear." },
       });
+    }
+  } else if (previousContext) {
+    // We have a block from previous session - generate next block continuing the story
+    try {
+      const nextContent = await generateStoryBlock(channelId, previousContext, false, session.id);
+      let imageUrl: string;
+      try {
+        imageUrl = await generateStoryImage(nextContent.content);
+      } catch {
+        imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+      }
+      block = await storage.createBlock({ channelId, sessionId: session.id, ...nextContent, imageUrl });
+    } catch (err) {
+      logger.error("Failed to generate continuation block", "session", err instanceof Error ? err : new Error(String(err)));
+      // Keep using the last block as-is
     }
   }
 

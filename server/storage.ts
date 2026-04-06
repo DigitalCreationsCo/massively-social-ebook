@@ -46,6 +46,7 @@ import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzl
 
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
+  getLastBlock(channelId: string): Promise<Block | undefined>;
   createBlock(block: InsertBlock): Promise<Block>;
   getBlocks(channelId?: string): Promise<Block[]>;
   updateBlock(id: number, data: Partial<InsertBlock>): Promise<Block>;
@@ -127,6 +128,17 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(blocks.id))
       .limit(1);
     return block?.blocks ?? undefined;
+  }
+
+  async getLastBlock(channelId: string): Promise<Block | undefined> {
+    // Gets the last block (regardless of session status) - used when resuming a session
+    const [block] = await db
+      .select()
+      .from(blocks)
+      .where(eq(blocks.channelId, channelId))
+      .orderBy(desc(blocks.id))
+      .limit(1);
+    return block;
   }
 
   async createBlock(block: InsertBlock): Promise<Block> {
