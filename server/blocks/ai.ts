@@ -16,6 +16,9 @@ const lmParamsGoogle = {
 const TIMEOUT_CONTEXT_MS = 3000;
 
 const engine = new NarrativeEngine(new RagProvider());
+
+(await import("narrative-engine-lab/configure-lab-engine")).configureLabEngine(engine);
+
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
 // Guard with try-catch to prevent production issues if import fails.
@@ -27,8 +30,7 @@ if (process.env.NODE_ENV === "development" && !(global as any)["__NARRATIVE_LAB_
     if ((global as any)["__NARRATIVE_LAB_STARTED__"] !== "pending") return;
 
     try {
-      const { startLabServer, configureLabEngine } = await import("narrative-engine-lab");
-      configureLabEngine(engine);
+      const { startLabServer } = await import("narrative-engine-lab");
       await startLabServer();
       (global as any)["__NARRATIVE_LAB_STARTED__"] = true;
       console.log("[Lab] NarrativeEngine Lab ready");

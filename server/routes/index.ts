@@ -85,9 +85,9 @@ async function startSessionForChannelId(
   // Seed or resume the current block.
   let block = await storage.getCurrentBlock(channelId);
   if (!block) {
-    const initialPrompt = "A detective is following a lead in a rainy alleyway.";
+    const initialPrompt = session.description ?? "";
     try {
-      const nextContent = await generateStoryBlock(channelId, initialPrompt, false);
+      const nextContent = await generateStoryBlock(channelId, initialPrompt, false, session.id);
       let imageUrl: string;
       try {
         imageUrl = await generateStoryImage(nextContent.content);

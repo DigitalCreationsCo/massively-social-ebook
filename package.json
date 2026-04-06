@@ -69,6 +69,7 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^5.0.1",
     "express-session": "^1.18.1",
+    "extensionless": "^2.0.6",
     "firebase-admin": "^13.6.1",
     "framer-motion": "^11.18.2",
     "googleapis": "^171.4.0",

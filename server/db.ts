@@ -9,6 +9,7 @@ if (!process.env.DATABASE_URL) {
     "DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
+console.log("Connecting to DB with URL:", process.env.DATABASE_URL?.substring(0, 30));
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

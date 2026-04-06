@@ -114,9 +114,8 @@ export const createStoryBlockInstructions = ({
         loreSection.push(`SUMMARY (Earlier Events):\n${summary}`);
     }
     if (lore && lore.length > 0) {
-        loreSection.push(`NOTABLE EVENTS:`);
         lore.forEach(event => {
-            loreSection.push(`- ${event}`);
+            loreSection.push(`${event}`);
         });
     }
 
