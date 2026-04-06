@@ -143,6 +143,9 @@ export const sessions = pgTable("sessions", {
     idxSessionsActiveCleanup: index("idx_sessions_active_cleanup")
       .on(table.scheduledEnd)
       .where(sql`status IN ('active', 'scheduled')`),
+    idxSessionsStatusScheduledStart: index("idx_sessions_status_start")
+      .on(table.status, table.scheduledStart)
+      .where(sql`status IN ('active', 'scheduled')`),
     unqChannelScheduledStart: unique("unq_channel_start")
       .on(table.channelId, table.scheduledStart),
   };
