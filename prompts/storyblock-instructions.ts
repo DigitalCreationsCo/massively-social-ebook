@@ -124,7 +124,8 @@ export const createStoryBlockInstructions = ({
         : "";
 
     const instructions = [
-        `You are a best-selling author writing an intriguing, continuous story. Make the reader interested to continue reading.`,
+        `Produce the next moment:
+You are a best-selling author writing an intriguing, continuous story. Make the reader interested to continue reading.`,
 
         ...storyRules,
 

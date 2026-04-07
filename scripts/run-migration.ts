@@ -1,4 +1,4 @@
-import { db } from './server/db';
+import { db } from '../server/db';
 import * as fs from 'fs';
 import { sql } from 'drizzle-orm';
 import * as path from 'path';

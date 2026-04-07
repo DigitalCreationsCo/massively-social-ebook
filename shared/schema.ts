@@ -11,8 +11,6 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
-
-
 export const channels = pgTable("channels", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id").notNull().unique(),
@@ -24,6 +22,46 @@ export const channels = pgTable("channels", {
 export type Channel = typeof channels.$inferSelect;
 export const InsertChannel = createInsertSchema(channels);
 export type InsertChannel = z.infer<typeof InsertChannel>;
+
+// ─── Channel State table ──────────────────────────────────────────────────────
+//
+// Persists the game loop's runtime state to the database so that a process
+// restart (deploy, crash, scale-down) does not lose a session mid-flight.
+//
+// The game loop reads this row at the top of every tick and writes it back
+// after any phase transition. The `processingLockedUntil` column acts as a
+// distributed mutex: the loop does an atomic UPDATE … WHERE
+// processingLockedUntil < NOW() before doing any state-mutating work, so
+// that multiple instances can run the ticker without stepping on each other.
+//
+// Column notes:
+//   currentPhase         — 'reading' | 'voting' | 'resolution'
+//   phaseEndsAt          — wall-clock time when the current phase expires
+//   decisionEndsAt       — wall-clock time when the next vote begins
+//   initialTimeToDecision — snapshot taken at phase-start, sent to clients
+//                          so they can render a "time until next vote" bar
+//   turnsToNextChoice    — narrative turns remaining before entering voting
+//   currentBlockId       — FK to the block currently being displayed
+//   activeSessionId      — FK to the running session (NULL = no session)
+//   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
+export const channelStates = pgTable("channel_states", {
+  channelId: text("channel_id").primaryKey()
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+  currentPhase: text("current_phase").notNull().default('reading'),
+  phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }).notNull(),
+  decisionEndsAt: timestamp("decision_ends_at", { withTimezone: true }).notNull(),
+  initialTimeToDecision: integer("initial_time_to_decision").notNull().default(0),
+  turnsToNextChoice: integer("turns_to_next_choice").notNull().default(3),
+  currentBlockId: integer("current_block_id")
+    .references(() => blocks.id, { onDelete: "set null" }),
+  activeSessionId: integer("active_session_id")
+    .references(() => sessions.id, { onDelete: "set null" }),
+  processingLockedUntil: timestamp("processing_locked_until", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export type ChannelStateRow = typeof channelStates.$inferSelect;
+export type InsertChannelState = typeof channelStates.$inferInsert;
 
 // Schedules table - recurrence rules for sessions
 export const schedules = pgTable("schedules", {
@@ -160,20 +198,49 @@ export const insertSessionSchema = createInsertSchema(sessions).omit({
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<typeof insertSessionSchema>;
 
-// Lore table
-export const lore = pgTable("lore", {
+/** Session with its parent schedule (if any) */
+export type SessionWithSchedule = Session & {
+  schedule: Schedule | null;
+};
+
+/** Block with its parent session */
+export type BlockWithSession = Block & {
+  session: Session;
+};
+
+// ─── Pending Blocks table ─────────────────────────────────────────────────────
+//
+// Stores AI-pre-generated story continuations so they survive a restart.
+//
+// When a new block is displayed, the game loop fires two background tasks —
+// one for choice A and one for choice B — that call the AI and write the
+// result here. At resolution time the loop does a point lookup by
+// (forBlockId, choice) instead of awaiting an in-process Promise.
+//
+// Rows are deleted after they are consumed (promoted to the blocks table).
+// A uniqueness constraint on (forBlockId, choice) prevents duplicate work
+// if the pre-generator is accidentally called twice for the same block.
+//
+// Column notes:
+//   forBlockId — the block whose option continuation this pre-generates
+//   choice     — 'A' | 'B'
+export const pendingBlocks = pgTable("pending_blocks", {
   id: serial("id").primaryKey(),
-  channelId: text("channel_id")
-    .notNull()
+  channelId: text("channel_id").notNull()
     .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+  forBlockId: integer("for_block_id").notNull()
+    .references(() => blocks.id, { onDelete: "cascade" }),
+  choice: text("choice").notNull(), // 'A' | 'B'
+  title: text("title").notNull(),
   content: text("content").notNull(),
-  isActive: boolean("is_active").default(true).notNull(),
+  imageUrl: text("image_url").notNull(),
+  optionA: jsonb("option_a"),
+  optionB: jsonb("option_b"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, createdAt: true });
-export type Lore = typeof lore.$inferSelect;
-export type InsertLore = z.infer<typeof insertLoreSchema>;
+export type PendingBlock = typeof pendingBlocks.$inferSelect;
+export type InsertPendingBlock = typeof pendingBlocks.$inferInsert;
 
 // Blocks table - narrative blocks within a session
 export const blocks = pgTable("blocks", {
@@ -207,6 +274,21 @@ export const blocks = pgTable("blocks", {
 export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true, embedding: true });
 export type Block = typeof blocks.$inferSelect;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
+
+// Lore table
+export const lore = pgTable("lore", {
+  id: serial("id").primaryKey(),
+  channelId: text("channel_id")
+    .notNull()
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+  content: text("content").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, createdAt: true });
+export type Lore = typeof lore.$inferSelect;
+export type InsertLore = z.infer<typeof insertLoreSchema>;
 
 // Votes table
 export const votes = pgTable("votes", {
@@ -330,92 +412,6 @@ export const notificationLogs = pgTable("notification_logs", {
 export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({ id: true, sentAt: true });
 export type NotificationLog = typeof notificationLogs.$inferSelect;
 export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
-
-// ─── Channel State table ──────────────────────────────────────────────────────
-//
-// Persists the game loop's runtime state to the database so that a process
-// restart (deploy, crash, scale-down) does not lose a session mid-flight.
-//
-// The game loop reads this row at the top of every tick and writes it back
-// after any phase transition. The `processingLockedUntil` column acts as a
-// distributed mutex: the loop does an atomic UPDATE … WHERE
-// processingLockedUntil < NOW() before doing any state-mutating work, so
-// that multiple instances can run the ticker without stepping on each other.
-//
-// Column notes:
-//   currentPhase         — 'reading' | 'voting' | 'resolution'
-//   phaseEndsAt          — wall-clock time when the current phase expires
-//   decisionEndsAt       — wall-clock time when the next vote begins
-//   initialTimeToDecision — snapshot taken at phase-start, sent to clients
-//                          so they can render a "time until next vote" bar
-//   turnsToNextChoice    — narrative turns remaining before entering voting
-//   currentBlockId       — FK to the block currently being displayed
-//   activeSessionId      — FK to the running session (NULL = no session)
-//   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
-export const channelStates = pgTable("channel_states", {
-  channelId: text("channel_id").primaryKey()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  currentPhase: text("current_phase").notNull().default('reading'),
-  phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }).notNull(),
-  decisionEndsAt: timestamp("decision_ends_at", { withTimezone: true }).notNull(),
-  initialTimeToDecision: integer("initial_time_to_decision").notNull().default(0),
-  turnsToNextChoice: integer("turns_to_next_choice").notNull().default(3),
-  currentBlockId: integer("current_block_id")
-    .references(() => blocks.id, { onDelete: "set null" }),
-  activeSessionId: integer("active_session_id")
-    .references(() => sessions.id, { onDelete: "set null" }),
-  processingLockedUntil: timestamp("processing_locked_until", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
-
-export type ChannelStateRow = typeof channelStates.$inferSelect;
-export type InsertChannelState = typeof channelStates.$inferInsert;
-
-// ─── Pending Blocks table ─────────────────────────────────────────────────────
-//
-// Stores AI-pre-generated story continuations so they survive a restart.
-//
-// When a new block is displayed, the game loop fires two background tasks —
-// one for choice A and one for choice B — that call the AI and write the
-// result here. At resolution time the loop does a point lookup by
-// (forBlockId, choice) instead of awaiting an in-process Promise.
-//
-// Rows are deleted after they are consumed (promoted to the blocks table).
-// A uniqueness constraint on (forBlockId, choice) prevents duplicate work
-// if the pre-generator is accidentally called twice for the same block.
-//
-// Column notes:
-//   forBlockId — the block whose option continuation this pre-generates
-//   choice     — 'A' | 'B'
-export const pendingBlocks = pgTable("pending_blocks", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id").notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  forBlockId: integer("for_block_id").notNull()
-    .references(() => blocks.id, { onDelete: "cascade" }),
-  choice: text("choice").notNull(), // 'A' | 'B'
-  title: text("title").notNull(),
-  content: text("content").notNull(),
-  imageUrl: text("image_url").notNull(),
-  optionA: jsonb("option_a"),
-  optionB: jsonb("option_b"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-export type PendingBlock = typeof pendingBlocks.$inferSelect;
-export type InsertPendingBlock = typeof pendingBlocks.$inferInsert;
-
-// ─── Composed Types ───────────────────────────────────────────────────────────
-
-/** Session with its parent schedule (if any) */
-export type SessionWithSchedule = Session & {
-  schedule: Schedule | null;
-};
-
-/** Block with its parent session */
-export type BlockWithSession = Block & {
-  session: Session;
-};
 
 // ─── WebSocket Events ────────────────────────────────────────────────────────
 

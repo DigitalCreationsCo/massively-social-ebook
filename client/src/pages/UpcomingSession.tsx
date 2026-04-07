@@ -253,6 +253,7 @@ export default function UpcomingSession() {
                             <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
                                 The next story starts soon.
                             </CardTitle>
+
                             <CardDescription className="text-white/80 font-sans text-lg">
                                 {isScheduled && (
                                     <span>
@@ -427,7 +428,7 @@ export default function UpcomingSession() {
                     {/* Mockup Display */}
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
                         <div className="space-y-4 px-6 mx-auto">
-                            <h2 className="text-4xl font-serif text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
+                            <h2 className="text-4xl font-serif  text-center text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
                             <p className="text-white/60 font-sans text-lg max-w-2xl leading-relaxed">
                                 Join fellow readers in a live session to unfold the narrative.
                             </p>
@@ -444,7 +445,7 @@ export default function UpcomingSession() {
 
                     {/* FAQ Aside */}
                     <aside id="faq" className="w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
-                        <div className="space-y-4">
+                        <div className=" text-center space-y-4">
                             <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
                             <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
                         </div>

@@ -18,6 +18,10 @@ export const NARRATIVE_TURN_MS = 40_000;
 export const VOTING_PHASE_MS = 40_000;
 export const POST_VOTE_READING_MS = 40_000;
 
+// Session timing constants (milliseconds)
+export const LOBBY_DELAY_MS = 3 * 60 * 1000; // 3 minutes before start time
+export const START_BEFORE_MS = LOBBY_DELAY_MS; // Alias for clarity
+
 function getRandomTurns() {
   return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
 }
@@ -137,7 +141,6 @@ async function startSessionForChannelId(
     }
   }
 
-  const LOBBY_DELAY_MS = 3 * 60 * 1000;
   const now = Date.now();
   const phaseEndsAt = new Date(now + LOBBY_DELAY_MS + POST_VOTE_READING_MS);
   const turnsToNextChoice = getRandomTurns();
@@ -585,7 +588,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Game Loop ────────────────────────────────────────────────────────────
   logger.info('Starting game loop (1-second tick)', 'game-loop');
   setInterval(async () => {
-    await handleGameLoopTick(Date.now(), broadcast);
+    try {
+      await handleGameLoopTick(Date.now(), broadcast);
+    } catch (err) {
+      logger.error('Game loop tick failed', 'game-loop', err instanceof Error ? err : new Error(String(err)));
+    }
   }, 1000);
 
   return httpServer;
@@ -608,8 +615,11 @@ export async function handleGameLoopTick(
   now: number,
   broadcast: (channelId: ChannelId, message: WsMessage) => void
 ) {
-  const activeChannelIds = await storage.getActiveChannels();
-  for (const channel of activeChannelIds) {
+  try {
+    const activeChannelIds = await storage.getActiveChannels();
+    logger.debug(`[GameLoop] Checking ${activeChannelIds.length} active channels`, 'game-loop');
+    
+    for (const channel of activeChannelIds) {
     const channelId = channel.channelId;
     try {
       const dbState = await storage.getChannelState(channelId);
@@ -618,9 +628,12 @@ export async function handleGameLoopTick(
         const next = await storage.getNextSession(channelId);
         if (next) {
           const timeUntilStart = next.scheduledStart.getTime() - now;
-          logger.debug(`[GameLoop] Channel ${channelId}: next session "${next.title}" starts in ${Math.round(timeUntilStart/1000)}s`, 'game-loop');
+          logger.debug(`[GameLoop] Channel ${channelId}: next session "${next.title}" starts in ${Math.round(timeUntilStart/1000)}s (scheduledStart: ${next.scheduledStart.toISOString()}, now: ${new Date(now).toISOString()})`, 'game-loop');
           
-          if (now >= next.scheduledStart.getTime() - 3 * 60 * 1000) {
+          const startThreshold = next.scheduledStart.getTime() - START_BEFORE_MS;
+          logger.debug(`[GameLoop] Channel ${channelId}: now (${now}) >= startThreshold (${startThreshold})? ${now >= startThreshold}`, 'game-loop');
+          
+          if (now >= startThreshold) {
             logger.info(`[GameLoop] Channel ${channelId}: Session "${next.title}" entering start window (${Math.round(timeUntilStart/1000)}s until start)`, 'game-loop');
             const locked = await storage.tryAcquireGameLock(channelId, 30_000);
             if (!locked) {
@@ -1018,5 +1031,8 @@ export async function handleGameLoopTick(
         err instanceof Error ? err : new Error(String(err))
       );
     }
+  }
+  } catch (err) {
+    logger.error('Error in game loop tick', 'gameloop', err instanceof Error ? err : new Error(String(err)));
   }
 }

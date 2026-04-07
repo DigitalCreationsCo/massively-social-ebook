@@ -1,4 +1,4 @@
-import { createZonedDate, getDateStringInTZ } from './shared/date';
+import { createZonedDate, getDateStringInTZ } from '../../shared/date';
 
 function getNextScheduledDay(from: Date, days: string[], includeTodayIfValid: boolean = false): Date | null {
     if (!days.length) return null;
@@ -33,7 +33,7 @@ function computeNextWindowForDate(scheduledTime: string, timezone: string, sched
     if (scheduledDays.length > 0) {
         const isTargetInPast = computedStartBoundary <= targetDate;
         const nextValidDay = getNextScheduledDay(targetDate, scheduledDays, !isTargetInPast);
-        
+
         if (nextValidDay) {
             computedStartBoundary = createZonedDate(nextValidDay, timezone, hours, minutes);
         }
@@ -42,11 +42,11 @@ function computeNextWindowForDate(scheduledTime: string, timezone: string, sched
 }
 
 // targetDate is 05:00 UTC Sat (01:00 NYC Sat)
-const targetDate = new Date('2026-04-04T05:00:00.000Z'); 
+const targetDate = new Date('2026-04-04T05:00:00.000Z');
 // The schedule wants 00:00 NYC time (midnight in NY)
 // 00:00 NYC Sat is 04:00 UTC Sat.
 // 04:00 UTC is <= 05:00 UTC. So it should go to the next day.
-const nextRun = computeNextWindowForDate('00:00', 'America/New_York', ['saturday'], targetDate);
+const nextRun = computeNextWindowForDate('00:00', 'America/New_York', [ 'saturday' ], targetDate);
 
 console.log("TargetDate:", targetDate.toISOString());
 console.log("NextRun:", nextRun.toISOString());

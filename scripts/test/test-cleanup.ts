@@ -1,13 +1,13 @@
-import { db } from './server/db';
+import { db } from '../../server/db';
 import { sessions } from '@shared/schema';
 import { eq, inArray, sql } from 'drizzle-orm';
 
 async function purgeDuplicates() {
     console.log("Identifying duplicate sessions...");
-    
+
     // We can use a raw SQL CTE to find rows to delete, or fetch and process in memory.
     // Given there might be thousands, in-memory processing is easy and safe.
-    
+
     // Fetch all sessions (id, channelId, scheduledStart)
     const allSessions = await db.select({
         id: sessions.id,
@@ -21,10 +21,10 @@ async function purgeDuplicates() {
     const idsToDelete: number[] = [];
 
     for (const session of allSessions) {
-        const timeKey = session.scheduledStart instanceof Date 
-            ? session.scheduledStart.getTime() 
+        const timeKey = session.scheduledStart instanceof Date
+            ? session.scheduledStart.getTime()
             : new Date(session.scheduledStart as string).getTime();
-            
+
         const uniqueKey = `${session.channelId}_${timeKey}`;
 
         if (seen.has(uniqueKey)) {
@@ -41,7 +41,7 @@ async function purgeDuplicates() {
         const chunkSize = 1000;
         for (let i = 0; i < idsToDelete.length; i += chunkSize) {
             const chunk = idsToDelete.slice(i, i + chunkSize);
-            console.log(`Deleting chunk ${i/chunkSize + 1} of ${Math.ceil(idsToDelete.length/chunkSize)}...`);
+            console.log(`Deleting chunk ${i / chunkSize + 1} of ${Math.ceil(idsToDelete.length / chunkSize)}...`);
             await db.delete(sessions).where(inArray(sessions.id, chunk));
         }
         console.log("Deletion complete.");

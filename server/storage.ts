@@ -117,8 +117,12 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   async getCurrentBlock(channelId: string): Promise<Block | undefined> {
+    try {
     const [block] = await db
-      .select()
+      .select({
+        blocks,
+        sessions
+      })
       .from(blocks)
       .innerJoin(sessions, eq(blocks.sessionId, sessions.id))
       .where(and(
@@ -128,6 +132,10 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(blocks.id))
       .limit(1);
     return block?.blocks ?? undefined;
+    } catch (errorGameLoop) {
+      console.error(`[GameLoop] Critical failure for channel ${channelId}:`, errorGameLoop);
+      // Implement logic to retry or alert, but don't let the process die
+    }
   }
 
   async getLastBlock(channelId: string): Promise<Block | undefined> {
@@ -459,12 +467,9 @@ export class DatabaseStorage implements IStorage {
         .from(sessions)
         .where(
           and(
-            // Only target sessions that haven't been closed out yet
-            or(
-              eq(sessions.status, 'active'),
-              eq(sessions.status, 'scheduled')
-            ),
-            // Ensure we only grab sessions where the end time has passed
+            // Only mark ACTIVE sessions as completed (not scheduled ones that never ran)
+            eq(sessions.status, 'active'),
+            // Only sessions where the end time has passed
             lt(sessions.scheduledEnd, now)
           )
         )

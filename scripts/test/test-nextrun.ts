@@ -1,4 +1,4 @@
-import { computeNextRunAt } from './server/sessions/scheduler';
+import { computeNextRunAt } from '../../server/sessions/scheduler';
 import { Schedule } from '@shared/schema';
 
 // Test if there are schedule configurations that gets computeNextRunAt stuck!
@@ -6,7 +6,7 @@ import { Schedule } from '@shared/schema';
 const schedule = {
     id: 1,
     channelId: 'channel-1',
-    scheduledDays: ['wednesday'],
+    scheduledDays: [ 'wednesday' ],
     scheduledTime: '20:17',
     intervalEnabled: true,
     timezone: 'America/New_York',

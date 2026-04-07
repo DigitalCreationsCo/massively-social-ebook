@@ -15,7 +15,7 @@ export default function Install() {
       </header>
 
       <div className="container mx-auto max-w-3xl py-20 px-4">
-        <h1 className="font-serif text-4xl md:text-5xl text-center text-white/90 tracking-widest uppercase mb-12">
+        <h1 className="font-serif text-4xl md:text-5xl text-center text-white/90 tracking-tight leading-tight mb-12">
           Install The App
         </h1>
 
