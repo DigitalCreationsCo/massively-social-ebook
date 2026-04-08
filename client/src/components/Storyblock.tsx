@@ -39,14 +39,14 @@ export function Storyblock({ block, reactions = [], onReaction }: StoryblockProp
 
   if (!block) {
     return (
-      <div className="absolute inset-0 flex items-center justify-end bg-black">
+      <div className="absolute inset-0 flex items-center  bg-black">
         <motion.div 
           animate={{ opacity: [0.5, 1, 0.5] }} 
           transition={{ duration: 2, repeat: Infinity }}
           className="flex flex-col items-center gap-4 text-primary/60"
         >
           <BookOpen className="w-12 h-12" />
-          <p className="font-serif text-lg tracking-widest uppercase">Awaiting Story</p>
+          <p className="font-serif text-lg tracking-widest">Awaiting Story</p>
         </motion.div>
       </div>
     );

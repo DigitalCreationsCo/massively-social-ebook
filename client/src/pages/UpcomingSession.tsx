@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { DEFAULT_CHANNEL_ID } from '@/App';
 import { Switch } from "@/components/ui/switch";
 import { motion, AnimatePresence } from "framer-motion";
+import Timer from "@/components/TImer";
 
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -71,7 +72,8 @@ export default function UpcomingSession() {
         }
     }, [isDialogOpen]);
 
-    const [timeLeft, setTimeLeft] = useState("");
+    const [ timeLeft, setTimeLeft ] = useState("");
+    const [ timerHelpText, setTimerHelpText ] = useState("Starts In");
 
     useEffect(() => {
         if (!nextSession?.scheduledStart) return;
@@ -83,6 +85,7 @@ export default function UpcomingSession() {
             const diff = target - now;
 
             if (diff <= 0) {
+                setTimerHelpText("");
                 setTimeLeft("Starting...");
                 return;
             }
@@ -216,23 +219,23 @@ export default function UpcomingSession() {
         );
     }
 
-    if (sessionStatus === 'active') {
-        return (
-            <div className="h-screen w-full bg-black flex flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md space-y-6">
-                    <BookOpen className="w-16 h-16 text-primary mx-auto animate-pulse" />
-                    <h1 className="text-4xl font-serif text-white tracking-tight">The Room Is Open</h1>
-                    <p className="text-white/60 font-serif">Starting...</p>
-                    <Button
-                        onClick={() => setLocation('/')}
-                        className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-sans uppercase tracking-widest py-6"
-                    >
-                        Join
-                    </Button>
-                </div>
-            </div>
-        );
-    }
+    // if (sessionStatus === 'active') {
+    //     return (
+    //         <div className="h-screen w-full bg-black flex flex-col items-center justify-center p-6 text-center">
+    //             <div className="max-w-md space-y-6">
+    //                 <BookOpen className="w-16 h-16 text-primary mx-auto animate-pulse" />
+    //                 <h1 className="text-4xl font-serif text-white tracking-tight">The Room Is Open</h1>
+    //                 <p className="text-white/60 font-serif">Starting...</p>
+    //                 <Button
+    //                     onClick={() => setLocation('/')}
+    //                     className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-sans uppercase tracking-widest py-6"
+    //                 >
+    //                     Join
+    //                 </Button>
+    //             </div>
+    //         </div>
+    //     );
+    // }
 
     return (
         <div className="min-h-screen w-full bg-black flex flex-col items-center">
@@ -253,7 +256,6 @@ export default function UpcomingSession() {
                             <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
                                 The next story starts soon.
                             </CardTitle>
-
                             <CardDescription className="text-white/80 font-sans text-lg">
                                 {isScheduled && (
                                     <span>
@@ -268,7 +270,9 @@ export default function UpcomingSession() {
 
                         <CardContent className="space-y-10 pt-8 pb-12 px-8">
                             <div className="space-y-10">
-                                {nextSession && (<div className="space-y-4">
+                                { nextSession && (
+                                    <>
+                                        <div className="space-y-4">
                                     <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
                                     <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
                                         <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
@@ -276,15 +280,27 @@ export default function UpcomingSession() {
                                             {nextSession.description}
                                         </p>
                                     </div>
-                                </div>)}
+                                        </div>
+                                        {/* Urgency Trigger */ }
+                                        {/* { timeLeft && (
+                                            <div className="text-center space-y-1 mb-2">
+                                                <p className="text-[10px] tracking-[0.3em] text-primary/50 uppercase">{ timerHelpText }</p>
+                                                <div className={ `text-5xl font-serif font-semibold tracking-tighter  ${timeLeft === "Starting..." ? "text-primary/50 animate-pulse" : "text-primary text-glow-primary"}` }>
+                                                    { timeLeft }
+                                                </div>
+                                            </div>
+                                        ) } */}
+                                        <Timer timeLeft={ timeLeft } timerHelpText={ timerHelpText } />
+                                    </>
+                                ) }
 
                                 <div className="space-y-4">
                                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                                         <DialogTrigger asChild>
                                             <Button
-                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif text-xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
+                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif font-semibold tracking-tight text-2xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
                                             >
-                                                Remind me
+                                                Reserve My Seat
                                             </Button>
                                         </DialogTrigger>
                                         <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">

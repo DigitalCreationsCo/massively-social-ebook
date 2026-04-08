@@ -177,7 +177,7 @@ async function processDueSchedules(): Promise<void> {
                 sessionNumber: nextSessionNumber,
                 seasonNumber,
                 episodeNumber,
-                subtitle: config?.subtitle || null,
+                subtitle: config?.subtitle,
             }, schedule.id);
 
             // Compute and store the next run time
@@ -236,9 +236,14 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
             );
 
             const exactDatesNonScheduled = scheduledDates.filter(targetDate => {
-                const isTimeslotFilled = timestampsExistingSessions.has(targetDate.getTime());
+                const isTimeslotFilled = allChannelSessionsWithinWindow.some(existingSession => {
+                    const timeDiffMs = Math.abs(new Date(existingSession.scheduledStart).getTime() - targetDate.getTime());
+                    const twelveHoursMs = 12 * 60 * 60 * 1000;
+                    return timeDiffMs < twelveHoursMs;
+                });
+
                 if (isTimeslotFilled) {
-                    logger.debug(`[Seeding] Validated timeslot is already filled: ${targetDate.toISOString()}`, 'scheduler');
+                    logger.debug(`[Seeding] Validated timeslot is already populated near: ${targetDate.toISOString()}`, 'scheduler');
                 }
                 return !isTimeslotFilled;
             });
@@ -272,7 +277,7 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
                     sessionNumber: nextSessionNumber,
                     seasonNumber,
                     episodeNumber,
-                    subtitle: config?.subtitle || null,
+                    subtitle: config?.subtitle,
                 }, schedule.id);
 
                 // Recompute the next execution cursor strictly

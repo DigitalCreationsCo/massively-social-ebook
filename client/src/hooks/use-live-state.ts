@@ -114,18 +114,6 @@ export function useLiveState(channelId: string) {
     }
   }, [currentBlock?.timeRemaining, currentBlock?.timeToNextDecision, currentBlock?.initialTimeToNextDecision, currentBlock?.phase, currentBlock?.id]);
 
-  // Local countdown interval for both timers
-  useEffect(() => {
-    if (localTimeRemaining <= 0 && localTimeToDecision <= 0) return;
-
-    const interval = setInterval(() => {
-      setLocalTimeRemaining(prev => Math.max(0, prev - 1));
-      setLocalTimeToDecision(prev => Math.max(0, prev - 1));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [localTimeRemaining, localTimeToDecision]);
-
   // Simulate viewer count fluctuations
   useEffect(() => {
     const interval = setInterval(() => {

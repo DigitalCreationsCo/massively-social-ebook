@@ -11,58 +11,6 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
-export const channels = pgTable("channels", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id").notNull().unique(),
-  name: text("name").notNull(),
-  description: text("description"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-export type Channel = typeof channels.$inferSelect;
-export const InsertChannel = createInsertSchema(channels);
-export type InsertChannel = z.infer<typeof InsertChannel>;
-
-// ─── Channel State table ──────────────────────────────────────────────────────
-//
-// Persists the game loop's runtime state to the database so that a process
-// restart (deploy, crash, scale-down) does not lose a session mid-flight.
-//
-// The game loop reads this row at the top of every tick and writes it back
-// after any phase transition. The `processingLockedUntil` column acts as a
-// distributed mutex: the loop does an atomic UPDATE … WHERE
-// processingLockedUntil < NOW() before doing any state-mutating work, so
-// that multiple instances can run the ticker without stepping on each other.
-//
-// Column notes:
-//   currentPhase         — 'reading' | 'voting' | 'resolution'
-//   phaseEndsAt          — wall-clock time when the current phase expires
-//   decisionEndsAt       — wall-clock time when the next vote begins
-//   initialTimeToDecision — snapshot taken at phase-start, sent to clients
-//                          so they can render a "time until next vote" bar
-//   turnsToNextChoice    — narrative turns remaining before entering voting
-//   currentBlockId       — FK to the block currently being displayed
-//   activeSessionId      — FK to the running session (NULL = no session)
-//   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
-export const channelStates = pgTable("channel_states", {
-  channelId: text("channel_id").primaryKey()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  currentPhase: text("current_phase").notNull().default('reading'),
-  phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }).notNull(),
-  decisionEndsAt: timestamp("decision_ends_at", { withTimezone: true }).notNull(),
-  initialTimeToDecision: integer("initial_time_to_decision").notNull().default(0),
-  turnsToNextChoice: integer("turns_to_next_choice").notNull().default(3),
-  currentBlockId: integer("current_block_id")
-    .references(() => blocks.id, { onDelete: "set null" }),
-  activeSessionId: integer("active_session_id")
-    .references(() => sessions.id, { onDelete: "set null" }),
-  processingLockedUntil: timestamp("processing_locked_until", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
-
-export type ChannelStateRow = typeof channelStates.$inferSelect;
-export type InsertChannelState = typeof channelStates.$inferInsert;
-
 // Schedules table - recurrence rules for sessions
 export const schedules = pgTable("schedules", {
   id: serial("id").primaryKey(),
@@ -189,7 +137,11 @@ export const sessions = pgTable("sessions", {
   };
 });
 
-export const insertSessionSchema = createInsertSchema(sessions).omit({
+export const insertSessionSchema = createInsertSchema(sessions,
+  {
+    subtitle: z.string().optional(),
+  }
+).omit({
   id: true,
   createdAt: true,
   status: true,
@@ -202,6 +154,58 @@ export type InsertSession = z.infer<typeof insertSessionSchema>;
 export type SessionWithSchedule = Session & {
   schedule: Schedule | null;
 };
+
+export const channels = pgTable("channels", {
+  id: serial("id").primaryKey(),
+  channelId: text("channel_id").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export type Channel = typeof channels.$inferSelect;
+export const InsertChannel = createInsertSchema(channels);
+export type InsertChannel = z.infer<typeof InsertChannel>;
+
+// ─── Channel State table ──────────────────────────────────────────────────────
+//
+// Persists the game loop's runtime state to the database so that a process
+// restart (deploy, crash, scale-down) does not lose a session mid-flight.
+//
+// The game loop reads this row at the top of every tick and writes it back
+// after any phase transition. The `processingLockedUntil` column acts as a
+// distributed mutex: the loop does an atomic UPDATE … WHERE
+// processingLockedUntil < NOW() before doing any state-mutating work, so
+// that multiple instances can run the ticker without stepping on each other.
+//
+// Column notes:
+//   currentPhase         — 'reading' | 'voting' | 'resolution'
+//   phaseEndsAt          — wall-clock time when the current phase expires
+//   decisionEndsAt       — wall-clock time when the next vote begins
+//   initialTimeToDecision — snapshot taken at phase-start, sent to clients
+//                          so they can render a "time until next vote" bar
+//   turnsToNextChoice    — narrative turns remaining before entering voting
+//   currentBlockId       — FK to the block currently being displayed
+//   activeSessionId      — FK to the running session (NULL = no session)
+//   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
+export const channelStates = pgTable("channel_states", {
+  channelId: text("channel_id").primaryKey()
+    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+  currentPhase: text("current_phase").notNull().default('reading'),
+  phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }).notNull(),
+  decisionEndsAt: timestamp("decision_ends_at", { withTimezone: true }).notNull(),
+  initialTimeToDecision: integer("initial_time_to_decision").notNull().default(0),
+  turnsToNextChoice: integer("turns_to_next_choice").notNull().default(3),
+  currentBlockId: integer("current_block_id")
+    .references(() => blocks.id, { onDelete: "set null" }),
+  activeSessionId: integer("active_session_id")
+    .references(() => sessions.id, { onDelete: "set null" }),
+  processingLockedUntil: timestamp("processing_locked_until", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export type ChannelStateRow = typeof channelStates.$inferSelect;
+export type InsertChannelState = typeof channelStates.$inferInsert;
 
 /** Block with its parent session */
 export type BlockWithSession = Block & {

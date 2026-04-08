@@ -12,7 +12,7 @@ import { DEFAULT_CHANNEL_ID } from '@/App';
 
 export default function LiveEbook() {
   const channelId = DEFAULT_CHANNEL_ID;
-  const [ chatOpen, setChatOpen ] = useState(false);
+  const [ chatOpen, setChatOpen ] = useState(true);
 
   const {
     isLoading,
@@ -38,7 +38,7 @@ export default function LiveEbook() {
 
   const [ _, setLocation ] = useLocation();
 
-  if (!isLoading && sessionStatus === 'completed') {
+  if (!isLoading && sessionStatus !== 'active') {
     setLocation('/upcoming');
   }
 
@@ -89,14 +89,14 @@ export default function LiveEbook() {
                animate={{ opacity: 1 }} 
                className="space-y-6 max-w-md"
              >
-               <h1 className="font-serif text-3xl md:text-4xl text-white/90 tracking-widest uppercase">The Gathering</h1>
+              <h1 className="font-serif text-3xl md:text-4xl text-white/90 tracking-widest">The Lobby</h1>
                <p className="text-white/60 font-mono text-sm">
-                 The lobby is open. Readers are arriving from around the world.
+                You're joining readers from around the world.
                  <br/>
                  The story will begin shortly.
                </p>
                <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto" />
-               <p className="text-xs text-white/40 font-mono animate-pulse">
+              <p className="text-xs text-white/40 font-mono">
                  Introduce yourself in the chat below.
                </p>
              </motion.div>

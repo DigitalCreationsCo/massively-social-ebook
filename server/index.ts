@@ -5,7 +5,6 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
-import { PartitionManager } from "./partition-manager";
 
 const app = express();
 const httpServer = createServer(app);
@@ -48,9 +47,6 @@ app.use((req, res, next) => {
 app.use(createRequestLogger());
 
 (async () => {
-  // Ensure table partitions exist for hyperscale schema before accepting traffic
-  await PartitionManager.initializePartitions();
-
   await registerRoutes(httpServer, app);
   registerAdminRoutes(app);
   startRecurringScheduler();

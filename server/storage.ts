@@ -325,25 +325,22 @@ export class DatabaseStorage implements IStorage {
    * Used by the game loop and scheduler to determine which channels to process.
    */
   async getActiveChannels(): Promise<Channel[]> {
-    const LOOKAHEAD_DAYS = 7;
-    const lookaheadDate = new Date(Date.now() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    // Aligning with the 7-day scheduling window
+    const lookahead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const result = await db
-      .selectDistinct({ channel: channels })
+    return await db
+      .select()
       .from(channels)
-      .innerJoin(sessions, eq(sessions.channelId, channels.channelId))
       .where(
-        and(
-          or(
-            eq(sessions.status, 'active'),
-            eq(sessions.status, 'scheduled')
-          ),
-          lte(sessions.scheduledStart, lookaheadDate)
-        )
+        sql`EXISTS (
+        SELECT 1 FROM ${sessions} 
+        WHERE ${sessions.channelId} = ${channels.channelId}
+        AND (${sessions.status} = 'active' OR ${sessions.status} = 'scheduled')
+        AND ${sessions.scheduledStart} <= ${lookahead}
+      )`
       )
       .orderBy(asc(channels.id));
-
-    return result.map(r => r.channel);
   }
 
   async getChannel(channelId: string): Promise<Channel | undefined> {

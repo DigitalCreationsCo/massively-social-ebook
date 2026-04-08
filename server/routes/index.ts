@@ -392,8 +392,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, message: "Resolution triggered" });
   });
 
-  // ── REST API ─────────────────────────────────────────────────────────────
-
   app.get(api.blocks.current.path, async (req, res) => {
     const channelId = String(req.query.channelId || "");
     if (!channelId) return res.status(400).json({ message: "channelId query parameter is required" });
@@ -404,7 +402,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     const block = await storage.getBlockById(dbState.currentBlockId);
-    if (!block) return res.status(404).json({ message: "No active session" });
+    if (!block) return res.status(404).json({ message: "No active session" });  
 
     const now = Date.now();
     res.json({
@@ -620,36 +618,34 @@ export async function handleGameLoopTick(
     logger.debug(`[GameLoop] Checking ${activeChannelIds.length} active channels`, 'game-loop');
     
     for (const channel of activeChannelIds) {
-    const channelId = channel.channelId;
-    try {
-      const dbState = await storage.getChannelState(channelId);
+      const channelId = channel.channelId;
+      try {
+        const dbState = await storage.getChannelState(channelId);
 
-      if (!dbState?.activeSessionId) {
-        const next = await storage.getNextSession(channelId);
-        if (next) {
-          const timeUntilStart = next.scheduledStart.getTime() - now;
-          logger.debug(`[GameLoop] Channel ${channelId}: next session "${next.title}" starts in ${Math.round(timeUntilStart/1000)}s (scheduledStart: ${next.scheduledStart.toISOString()}, now: ${new Date(now).toISOString()})`, 'game-loop');
-          
-          const startThreshold = next.scheduledStart.getTime() - START_BEFORE_MS;
-          logger.debug(`[GameLoop] Channel ${channelId}: now (${now}) >= startThreshold (${startThreshold})? ${now >= startThreshold}`, 'game-loop');
-          
-          if (now >= startThreshold) {
-            logger.info(`[GameLoop] Channel ${channelId}: Session "${next.title}" entering start window (${Math.round(timeUntilStart/1000)}s until start)`, 'game-loop');
-            const locked = await storage.tryAcquireGameLock(channelId, 30_000);
-            if (!locked) {
-              logger.debug(`[GameLoop] Channel ${channelId}: Could not acquire lock`, 'game-loop');
-              continue;
-            }
-            try {
-              await startSessionForChannelId(channelId, next, broadcast);
-            } finally {
-              await storage.releaseGameLock(channelId);
+        // ── Handle Inactive / Scheduled Channels ─────────────────────
+        if (!dbState?.activeSessionId) {
+          const next = await storage.getNextSession(channelId);
+
+          if (next) {
+            const startThreshold = next.scheduledStart.getTime() - START_BEFORE_MS;
+            if (now >= startThreshold) {
+              const isGameLoopLockAcquired = await storage.tryAcquireGameLock(channelId, 30_000);
+              if (!isGameLoopLockAcquired) continue;
+
+              try {
+                await startSessionForChannelId(channelId, next, broadcast);
+              } catch (err) {
+                logger.error(`Failed to start session: ${err}`);
+              }
             }
           }
-        }
-        continue;
-      }
 
+          // ── ADD THIS LINE ──────────────────────────────────────────
+          // This prevents the code below (the Heartbeat) from running 
+          // for a channel that doesn't have an active session yet.
+          continue;
+          // ───────────────────────────────────────────────────────────
+        }
       const activeSession = await storage.getSessionById(dbState.activeSessionId);
       if (!activeSession) {
         // Stale FK — clear it so we don't loop forever on a missing session.
