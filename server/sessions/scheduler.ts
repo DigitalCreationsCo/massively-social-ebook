@@ -17,13 +17,16 @@ const CURSOR_KEY = 'notification_cursor';
 const SEEDING_CURSOR_KEY = 'seeding_cursor';
 
 /**
- * Interval at which the notification loop runs (every 30 seconds).
+ * Interval at which the fast loop runs (every 30 seconds).
+ * Handles quick tasks: marking sessions as completed, processing due schedules.
  */
-const LOOP_INTERVAL_MS = 30 * 1000;
+const FAST_LOOP_INTERVAL_MS = 30 * 1000;
+
 /**
- * Interval at which the seeding lookahead loop runs (every 30 minutes).
+ * Interval at which the main loop runs (every 10 minutes).
+ * Handles heavier tasks: session seeding, notification event processing.
  */
-const SEEDING_INTERVAL_MS = 30 * 60 * 1000;
+const MAIN_LOOP_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * Maximum number of days into the future to pre-schedule sessions.
@@ -50,229 +53,163 @@ interface ScheduledEvent {
 }
 
 /**
- * Starts the recurring scheduler.
- *
- * Initializes the scheduler loop and performs initial seeding of schedules if none exist.
- * This function should be called once at server startup.
- *
- * @example
- * ```typescript
- * startRecurringScheduler();
- * ```
+ * Scheduler configuration for loop intervals.
  */
-export function startRecurringScheduler(): void {
-    logger.info('Starting deterministic stateless window loop', 'scheduler');
-
-    seedDefaultSchedulesIfEmpty().catch(err => {
-        logger.error('Initial seeding failed', 'scheduler', err instanceof Error ? err : new Error(String(err)));
-    });
-
-    setInterval(runNotificationLoop, LOOP_INTERVAL_MS);
+interface SchedulerConfig {
+    fastLoopMs: number;
+    mainLoopMs: number;
 }
 
 /**
- * Main notification processing loop.
- *
- * Runs every 30 seconds to:
- * 1. Process any schedules that are due (create sessions)
- * 2. Ensure sessions exist within the 7-day lookahead window
- * 3. Process notification events within the window
- * 4. Update the cursor to track processed time
- *
- * Uses a cursor-based approach to ensure idempotency - events are only processed once.
+ * Session Scheduler - Class-based scheduler with parameterized loops.
+ * 
+ * Architecture:
+ * - Fast Loop (30s): Quick tasks - process due schedules, mark completed sessions
+ * - Main Loop (10min): Heavy tasks - session seeding, notification events
+ * 
+ * This separation optimizes performance by not running expensive queries
+ * on every tick while still maintaining responsive session lifecycle management.
  */
-async function runNotificationLoop(): Promise<void> {
-    try {
-        const now = Date.now();
-        const nowDate = new Date(now);
+export class SessionScheduler {
+    private fastLoopTimer: NodeJS.Timeout | null = null;
+    private mainLoopTimer: NodeJS.Timeout | null = null;
+    private readonly config: SchedulerConfig;
 
-        let lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
+    constructor(config: SchedulerConfig = { fastLoopMs: FAST_LOOP_INTERVAL_MS, mainLoopMs: MAIN_LOOP_INTERVAL_MS }) {
+        this.config = config;
+    }
 
-        if (!lastProcessedStr) {
+    /**
+     * Starts the scheduler with both fast and main loops.
+     */
+    start(): void {
+        logger.info(`Starting scheduler with fast loop (${this.config.fastLoopMs}ms) and main loop (${this.config.mainLoopMs}ms)`, 'scheduler');
+
+        // Run initial seeding
+        this.seedDefaultSchedulesIfEmpty().catch(err => {
+            logger.error('Initial seeding failed', 'scheduler', err instanceof Error ? err : new Error(String(err)));
+        });
+
+        // Start fast loop (30s) - handles quick tasks
+        this.fastLoopTimer = setInterval(() => this.runFastLoop(), this.config.fastLoopMs);
+
+        // Start main loop (10min) - handles heavy tasks
+        this.mainLoopTimer = setInterval(() => this.runMainLoop(), this.config.mainLoopMs);
+    }
+
+    /**
+     * Stops all scheduler loops.
+     */
+    stop(): void {
+        if (this.fastLoopTimer) {
+            clearInterval(this.fastLoopTimer);
+            this.fastLoopTimer = null;
+        }
+        if (this.mainLoopTimer) {
+            clearInterval(this.mainLoopTimer);
+            this.mainLoopTimer = null;
+        }
+        logger.info('Scheduler stopped', 'scheduler');
+    }
+
+    /**
+     * Fast loop - runs every 30 seconds.
+     * Handles: processing due schedules, marking completed sessions.
+     */
+    private async runFastLoop(): Promise<void> {
+        try {
+            const now = Date.now();
+            const nowDate = new Date(now);
+
+            // Get cursor to ensure idempotency
+            const lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
+            if (!lastProcessedStr) {
+                await storage.setSystemSetting(CURSOR_KEY, now.toString());
+                return;
+            }
+
+            const lastProcessed = parseInt(lastProcessedStr, 10);
+            if (now <= lastProcessed) return;
+
+            // Process due schedules (create sessions for schedules whose nextRunAt has passed)
+            await this.processDueSchedules();
+
+            // Transition finished sessions to 'completed' status
+            await this.processCompletedSessions(nowDate);
+
+            // Update cursor
             await storage.setSystemSetting(CURSOR_KEY, now.toString());
-            return;
-        }
 
-        let lastProcessed = parseInt(lastProcessedStr, 10);
-
-        if (now <= lastProcessed) return;
-
-        // Process due schedules (create sessions for schedules whose nextRunAt has passed)
-        await processDueSchedules();
-
-        // Transition finished sessions to 'completed' status
-        await processCompletedSessions(nowDate);
-
-        // Ensure sessions exist within the 7-day lookahead window (EVERY 30 MINUTES)
-        const lastSeedingStr = await storage.getSystemSetting(SEEDING_CURSOR_KEY);
-        const lastSeeding = lastSeedingStr ? parseInt(lastSeedingStr, 10) : 0;
-        if (now - lastSeeding >= SEEDING_INTERVAL_MS) {
-            await ensureSessionsExistWithinLookahead();
-            await storage.setSystemSetting(SEEDING_CURSOR_KEY, now.toString());
-        }
-
-        // Process notification events (push warnings, weekly briefings)
-        const events = await getEventsInWindow(lastProcessed, now);
-
-        for (const event of events) {
-            await processEvent(event, now);
-        }
-
-        await storage.setSystemSetting(CURSOR_KEY, now.toString());
-
-    } catch (err) {
-        logger.error('Error in notification loop', 'scheduler', err instanceof Error ? err : new Error(String(err)));
-    }
-}
-
-/**
- * Processes all schedules whose nextRunAt timestamp has passed.
- *
- * For each due schedule:
- * 1. Computes the next session window (start/end times)
- * 2. Derives the session title using the schedule's titleConfig
- * 3. Creates the session in the database
- * 4. Increments the schedule's sessionCount
- * 5. Computes and updates the schedule's nextRunAt
- *
- * @internal
- */
-async function processDueSchedules(): Promise<void> {
-    const now = new Date();
-    const dueSchedules = await storage.getDueSchedules(now);
-
-    if (dueSchedules.length > 0) {
-        logger.info(`[Scheduler] Found ${dueSchedules.length} due schedule(s) to process`, 'scheduler');
-    }
-
-     for (const schedule of dueSchedules) {
-        try {
-            const { start, end } = computeNextWindow(schedule);
-            logger.info(`[Scheduler] Processing schedule ${schedule.id}, next window: ${start.toISOString()} - ${end.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
-
-            // Get channel information for title and description
-            // TODO Avoid Repeated Channel Lookups: Inside the seeding loop, getChannel is often called per gap.Improvement: Fetch all required channels into a Map before entering the for (const schedule of ...) loop to avoid $N$ extra database round-trips.
-            const channel = await storage.getChannel(schedule.channelId);
-
-            // Session number is incremented sessionCount + 1 (1-based, never 0)
-            const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
-
-            const title = buildSessionTitle(schedule, nextSessionNumber, start, channel);
-
-            // Compute seasonal position for the session (stored for cheap querying)
-            const config = schedule.titleConfig as TitleConfig | null;
-            const seasonSize = config?.seasonSize ?? 30;
-            const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
-            const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
-
-            logger.info(`[Scheduler] Creating session "${title}" at ${start.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
-            const session = await storage.createSessionWithScheduleUpdate({
-                channelId: schedule.channelId,
-                scheduleId: schedule.id,
-                title,
-                description: channel?.description || "Upcoming Session",
-                scheduledStart: start,
-                scheduledEnd: end,
-                timezone: schedule.timezone,
-                sessionNumber: nextSessionNumber,
-                seasonNumber,
-                episodeNumber,
-                subtitle: config?.subtitle,
-            }, schedule.id);
-
-            // Compute and store the next run time
-            const nextRun = computeNextRunAt(schedule);
-            await storage.updateScheduleNextRunAt(schedule.id, nextRun);
-
-            logger.info(`Spawned session "${title}" (S${seasonNumber} E${episodeNumber}) from schedule ${schedule.id}`, 'scheduler');
         } catch (err) {
-            logger.error(`Failed to process schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+            logger.error('Error in fast loop', 'scheduler', err instanceof Error ? err : new Error(String(err)));
         }
     }
-}
 
-/**
- * Identifies sessions that have passed their end time and marks them as completed.
- * This prevents stale sessions from appearing as 'active' in the UI.
- */
-async function processCompletedSessions(now: Date): Promise<void> {
-    try {
-        const expiredSessions = await storage.getExpiredActiveSessions(now);
-
-        for (const session of expiredSessions) {
-            await storage.updateSessionStatus(session.id, 'completed');
-            logger.info(`Session ${session.id} ("${session.title}") marked as completed.`, 'scheduler');
-        }
-    } catch (err) {
-        logger.error('Failed to process completed sessions', 'scheduler', err);
-    }
-}
-
-/**
- * Ensures all enabled schedules have sessions scheduled within the lookahead window.
- *
- * For each schedule with intervalEnabled = true:
- * 1. Get all sessions already created from this schedule
- * 2. Calculate all scheduled days (based on scheduledDays) within the next 7 days
- * 3. Create sessions for any days that don't already have sessions
- *
- * @internal
- */
-export async function ensureSessionsExistWithinLookahead(): Promise<void> {
-    const enabledSchedules = await storage.listSchedules({ onlyEnabled: true });
-
-    for (const schedule of enabledSchedules) {
+    /**
+     * Main loop - runs every 10 minutes.
+     * Handles: session seeding, notification events.
+     */
+    private async runMainLoop(): Promise<void> {
         try {
-            logger.debug(`[Seeding] Analyzing lookahead gaps for scheduleId: ${schedule.id}`, 'scheduler');
+            const now = Date.now();
+            const nowDate = new Date(now);
 
-            const now = new Date();
-            const lookaheadEndBoundary = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+            // Ensure sessions exist within the 7-day lookahead window
+            await this.ensureSessionsExistWithinLookahead();
 
-            const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEndBoundary, undefined);
-            const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEndBoundary);
+            // Process notification events (push warnings, weekly briefings)
+            // Only run this in main loop to avoid loading all sessions every 30s
+            const lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
+            const lastProcessed = lastProcessedStr ? parseInt(lastProcessedStr, 10) : now - this.config.mainLoopMs;
+            
+            // Look for events in the window from last main loop run to now
+            const events = await this.getEventsInWindow(lastProcessed, now);
 
-            const timestampsExistingSessions = new Set(
-                allChannelSessionsWithinWindow.map(s => new Date(s.scheduledStart).getTime())
-            );
+            for (const event of events) {
+                await this.processEvent(event, now);
+            }
 
-            const exactDatesNonScheduled = scheduledDates.filter(targetDate => {
-                const isTimeslotFilled = allChannelSessionsWithinWindow.some(existingSession => {
-                    const timeDiffMs = Math.abs(new Date(existingSession.scheduledStart).getTime() - targetDate.getTime());
-                    const twelveHoursMs = 12 * 60 * 60 * 1000;
-                    return timeDiffMs < twelveHoursMs;
-                });
+            logger.debug('Main loop completed', 'scheduler');
 
-                if (isTimeslotFilled) {
-                    logger.debug(`[Seeding] Validated timeslot is already populated near: ${targetDate.toISOString()}`, 'scheduler');
-                }
-                return !isTimeslotFilled;
-            });
+        } catch (err) {
+            logger.error('Error in main loop', 'scheduler', err instanceof Error ? err : new Error(String(err)));
+        }
+    }
 
-            if (exactDatesNonScheduled.length === 0) continue;
+    /**
+     * Processes all schedules whose nextRunAt timestamp has passed.
+     */
+    private async processDueSchedules(): Promise<void> {
+        const now = new Date();
+        const dueSchedules = await storage.getDueSchedules(now);
 
-            // Resolve N+1 query issue by hoisting outside the gap loop
-            const channelData = await storage.getChannel(schedule.channelId);
-            const durationMinutesTarget = (schedule as unknown as { durationMinutes?: number; }).durationMinutes ?? 25;
+        if (dueSchedules.length > 0) {
+            logger.info(`[Scheduler] Found ${dueSchedules.length} due schedule(s) to process`, 'scheduler');
+        }
 
-            for (const exactScheduledStartTimestamp of exactDatesNonScheduled) {
-                const exactScheduledEndTimestamp = new Date(exactScheduledStartTimestamp.getTime() + durationMinutesTarget * 60 * 1000);
+        for (const schedule of dueSchedules) {
+            try {
+                const { start, end } = computeNextWindow(schedule);
+                logger.info(`[Scheduler] Processing schedule ${schedule.id}, next window: ${start.toISOString()} - ${end.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
 
+                const channel = await storage.getChannel(schedule.channelId);
                 const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
-                const title = buildSessionTitle(schedule, nextSessionNumber, exactScheduledStartTimestamp);
-                const config = schedule.titleConfig as TitleConfig | null;
 
+                const title = buildSessionTitle(schedule, nextSessionNumber, start, channel);
+
+                const config = schedule.titleConfig as TitleConfig | null;
                 const seasonSize = config?.seasonSize ?? 30;
                 const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
-                logger.info(`[Seeding] Creating session "${title}" at ${exactScheduledStartTimestamp.toISOString()} (tz: ${schedule.timezone}) for schedule ${schedule.id}`, 'scheduler');
-                await storage.createSessionWithScheduleUpdate({
+                logger.info(`[Scheduler] Creating session "${title}" at ${start.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
+                const session = await storage.createSessionWithScheduleUpdate({
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
                     title,
-                    description: channelData?.description || 'Upcoming session',
-                    scheduledStart: exactScheduledStartTimestamp,
-                    scheduledEnd: exactScheduledEndTimestamp,
+                    description: channel?.description || "Upcoming Session",
+                    scheduledStart: start,
+                    scheduledEnd: end,
                     timezone: schedule.timezone,
                     sessionNumber: nextSessionNumber,
                     seasonNumber,
@@ -280,15 +217,257 @@ export async function ensureSessionsExistWithinLookahead(): Promise<void> {
                     subtitle: config?.subtitle,
                 }, schedule.id);
 
-                // Recompute the next execution cursor strictly
-                await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
+                const nextRun = computeNextRunAt(schedule);
+                await storage.updateScheduleNextRunAt(schedule.id, nextRun);
 
-                logger.info(`[Seeding] Resolved gap. Spawned session "${title}" at ${exactScheduledStartTimestamp.toISOString()} for schedule ${schedule.id}`, 'scheduler');
+                logger.info(`Spawned session "${title}" (S${seasonNumber} E${episodeNumber}) from schedule ${schedule.id}`, 'scheduler');
+            } catch (err) {
+                logger.error(`Failed to process schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
             }
-        } catch (err) {
-            logger.error(`[Seeding] Uncaught error ensuring sessions for schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
         }
     }
+
+    /**
+     * Identifies sessions that have passed their end time and marks them as completed.
+     */
+    private async processCompletedSessions(now: Date): Promise<void> {
+        try {
+            const expiredSessions = await storage.getExpiredActiveSessions(now);
+
+            for (const session of expiredSessions) {
+                await storage.updateSessionStatus(session.id, 'completed');
+                logger.info(`Session ${session.id} ("${session.title}") marked as completed.`, 'scheduler');
+            }
+        } catch (err) {
+            logger.error('Failed to process completed sessions', 'scheduler', err);
+        }
+    }
+
+    /**
+     * Ensures all enabled schedules have sessions scheduled within the lookahead window.
+     */
+    private async ensureSessionsExistWithinLookahead(): Promise<void> {
+        const enabledSchedules = await storage.listSchedules({ onlyEnabled: true });
+
+        for (const schedule of enabledSchedules) {
+            try {
+                logger.debug(`[Seeding] Analyzing lookahead gaps for scheduleId: ${schedule.id}`, 'scheduler');
+
+                const now = new Date();
+                const lookaheadEndBoundary = new Date(now.getTime() + SESSION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+
+                const allChannelSessionsWithinWindow = await storage.getSessionsInWindow(schedule.channelId, now, lookaheadEndBoundary, undefined);
+                const scheduledDates = getScheduledDatesInWindow(schedule, now, lookaheadEndBoundary);
+
+                const timestampsExistingSessions = new Set(
+                    allChannelSessionsWithinWindow.map(s => new Date(s.scheduledStart).getTime())
+                );
+
+                const exactDatesNonScheduled = scheduledDates.filter(targetDate => {
+                    const isTimeslotFilled = allChannelSessionsWithinWindow.some(existingSession => {
+                        const timeDiffMs = Math.abs(new Date(existingSession.scheduledStart).getTime() - targetDate.getTime());
+                        const twelveHoursMs = 12 * 60 * 60 * 1000;
+                        return timeDiffMs < twelveHoursMs;
+                    });
+
+                    if (isTimeslotFilled) {
+                        logger.debug(`[Seeding] Validated timeslot is already populated near: ${targetDate.toISOString()}`, 'scheduler');
+                    }
+                    return !isTimeslotFilled;
+                });
+
+                if (exactDatesNonScheduled.length === 0) continue;
+
+                const channelData = await storage.getChannel(schedule.channelId);
+                const durationMinutesTarget = (schedule as unknown as { durationMinutes?: number; }).durationMinutes ?? 25;
+
+                for (const exactScheduledStartTimestamp of exactDatesNonScheduled) {
+                    const exactScheduledEndTimestamp = new Date(exactScheduledStartTimestamp.getTime() + durationMinutesTarget * 60 * 1000);
+
+                    const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
+                    const title = buildSessionTitle(schedule, nextSessionNumber, exactScheduledStartTimestamp);
+                    const config = schedule.titleConfig as TitleConfig | null;
+
+                    const seasonSize = config?.seasonSize ?? 30;
+                    const seasonNumber = Math.floor((nextSessionNumber - 1) / seasonSize) + 1;
+                    const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
+
+                    logger.info(`[Seeding] Creating session "${title}" at ${exactScheduledStartTimestamp.toISOString()} (tz: ${schedule.timezone}) for schedule ${schedule.id}`, 'scheduler');
+                    await storage.createSessionWithScheduleUpdate({
+                        channelId: schedule.channelId,
+                        scheduleId: schedule.id,
+                        title,
+                        description: channelData?.description || 'Upcoming session',
+                        scheduledStart: exactScheduledStartTimestamp,
+                        scheduledEnd: exactScheduledEndTimestamp,
+                        timezone: schedule.timezone,
+                        sessionNumber: nextSessionNumber,
+                        seasonNumber,
+                        episodeNumber,
+                        subtitle: config?.subtitle,
+                    }, schedule.id);
+
+                    await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
+
+                    logger.info(`[Seeding] Resolved gap. Spawned session "${title}" at ${exactScheduledStartTimestamp.toISOString()} for schedule ${schedule.id}`, 'scheduler');
+                }
+            } catch (err) {
+                logger.error(`[Seeding] Uncaught error ensuring sessions for schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+            }
+        }
+    }
+
+    /**
+     * Retrieves all notification events that should be processed within a time window.
+     * Optimized to only query sessions starting in the next 10 minutes instead of all sessions.
+     */
+    private async getEventsInWindow(start: number, end: number): Promise<ScheduledEvent[]> {
+        const events: ScheduledEvent[] = [];
+
+        // Session 5-minute warnings - optimized query
+        // Only fetch sessions starting in the next 10 minutes instead of ALL scheduled sessions
+        const now = new Date(start);
+        const windowEnd = new Date(end);
+        
+        // Get sessions starting in the window (optimized - only relevant sessions)
+        const upcomingSessions = await storage.getGlobalSessionsInWindow(
+            now,
+            windowEnd,
+            'scheduled'
+        );
+
+        for (const session of upcomingSessions) {
+            const sessionStart = new Date(session.scheduledStart).getTime();
+            const warningTime = sessionStart - 5 * 60 * 1000;
+
+            // Only add if warning time falls within our window
+            if (warningTime > start && warningTime <= end) {
+                events.push({
+                    type: 'SESSION_WARNING_5MIN',
+                    targetId: session.id.toString(),
+                    scheduledTime: warningTime,
+                    expirationTime: sessionStart,
+                    payload: session
+                });
+            }
+        }
+
+        // Weekly briefing events (Monday 3pm MST)
+        let nextBriefing = getNextWeeklyBriefingTime(start);
+        while (nextBriefing <= end) {
+            events.push({
+                type: 'WEEKLY_BRIEF',
+                targetId: 'global_weekly_' + nextBriefing,
+                scheduledTime: nextBriefing,
+                expirationTime: nextBriefing + 24 * 60 * 60 * 1000
+            });
+            nextBriefing = getNextWeeklyBriefingTime(nextBriefing);
+        }
+
+        return events;
+    }
+
+    /**
+     * Processes a single scheduled event.
+     */
+    private async processEvent(event: ScheduledEvent, now: number): Promise<void> {
+        if (now >= event.expirationTime) {
+            logger.debug(`Event ${event.type} expired. Skipped.`, 'scheduler');
+            await storage.createNotificationLog({
+                type: event.type,
+                targetType: 'session',
+                targetId: event.targetId,
+                status: 'skipped'
+            });
+            return;
+        }
+
+        const existing = await storage.getNotificationLog(event.type, event.targetId);
+        if (existing && (existing.status === 'sent' || existing.status === 'failed')) {
+            return;
+        }
+
+        try {
+            if (event.type === 'SESSION_WARNING_5MIN') {
+                await sendPushWarningsForSession(event.payload as Session);
+            } else if (event.type === 'WEEKLY_BRIEF') {
+                await checkAndSendWeeklyBriefing();
+            }
+
+            await storage.createNotificationLog({
+                type: event.type,
+                targetType: 'session',
+                targetId: event.targetId,
+                status: 'sent'
+            });
+        } catch (err) {
+            logger.error(`Failed to process event ${event.type}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
+            await storage.createNotificationLog({
+                type: event.type,
+                targetType: 'session',
+                targetId: event.targetId,
+                status: 'failed'
+            });
+        }
+    }
+
+    /**
+     * Seeds default schedules for any channel that doesn't have one.
+     */
+    private async seedDefaultSchedulesIfEmpty(): Promise<void> {
+        const channels = await storage.getChannels();
+
+        for (let i = 0; i < channels.length; i++) {
+            const channel = channels[i];
+            const existing = await storage.getSchedulesByChannel(channel.channelId);
+
+            const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
+            const needsSeedSchedule = existing.some(s => s.intervalEnabled && !s.scheduledDays);
+
+            if (needsSeedSchedule) {
+                const baseHour = 19;
+                const hour = baseHour + i;
+
+                const defaultTitleConfig: TitleConfig = {
+                    format: 'numbered',
+                    programName: channel.name,
+                    sessionLabel: 'Day',
+                    numberSource: 'episode',
+                    seasonSize: 30,
+                    showSeason: false,
+                };
+
+                logger.info(`Creating default schedule for channel ${channel.channelId} at ${hour}:00 America/Denver`, 'scheduler');
+                const schedule = await storage.createSchedule({
+                    channelId: channel.channelId,
+                    scheduledDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+                    scheduledTime: `${hour.toString().padStart(2, '0')}:00`,
+                    intervalEnabled: true,
+                    timezone: 'America/Denver',
+                    titleConfig: defaultTitleConfig,
+                });
+
+                await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
+
+                logger.info(`Created default schedule ${schedule.id} for channel ${channel.channelId}`, 'scheduler');
+            } else {
+                logger.debug(`Schedule already exists for channel ${channel.channelId}`, 'scheduler');
+            }
+        }
+    }
+}
+
+// Export a singleton instance for backward compatibility
+export const scheduler = new SessionScheduler();
+
+/**
+ * Starts the recurring scheduler (backward compatibility wrapper).
+ * 
+ * Initializes the scheduler loops and performs initial seeding of schedules if none exist.
+ * This function should be called once at server startup.
+ */
+export function startRecurringScheduler(): void {
+    scheduler.start();
 }
 
 /**
@@ -508,10 +687,11 @@ export function computeNextRunAt(schedule: Schedule): Date {
 async function getEventsInWindow(start: number, end: number): Promise<ScheduledEvent[]> {
     const events: ScheduledEvent[] = [];
 
-    // Session 5-minute warnings
-    const allSessions = await storage.listSessions(undefined, 'scheduled');
+    const now = new Date(start);
+    const windowEnd = new Date(end);
+    const upcomingSessions = await storage.getGlobalSessionsInWindow(now, windowEnd, 'scheduled');
 
-    for (const session of allSessions) {
+    for (const session of upcomingSessions) {
         const sessionStart = new Date(session.scheduledStart).getTime();
         const warningTime = sessionStart - 5 * 60 * 1000;
 
@@ -526,7 +706,6 @@ async function getEventsInWindow(start: number, end: number): Promise<ScheduledE
         }
     }
 
-    // Weekly briefing events (Monday 3pm MST)
     let nextBriefing = getNextWeeklyBriefingTime(start);
     while (nextBriefing <= end) {
         events.push({
