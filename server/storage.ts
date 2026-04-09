@@ -329,16 +329,37 @@ export class DatabaseStorage implements IStorage {
     // Aligning with the 7-day scheduling window
     const lookahead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+    // Use Drizzle's query builder with proper date handling
+    // Active sessions (already started) + scheduled sessions within 7-day lookahead
+    const sessionChannelIds = await db
+      .select({ channelId: sessions.channelId })
+      .from(sessions)
+      .where(
+        and(
+          or(
+            eq(sessions.status, "active"),
+            eq(sessions.status, "scheduled")
+          ),
+          lte(sessions.scheduledStart, lookahead)
+        )
+      );
+
+    if (sessionChannelIds.length === 0) {
+      return [];
+    }
+
+    // Get unique channel IDs from sessions
+    const channelIdsSet = new Set(sessionChannelIds.map((s) => s.channelId));
+    const channelIds = Array.from(channelIdsSet);
+
+    // Return all channels that match these IDs
     return await db
       .select()
       .from(channels)
       .where(
-        sql`EXISTS (
-        SELECT 1 FROM ${sessions} 
-        WHERE ${sessions.channelId} = ${channels.channelId}
-        AND (${sessions.status} = 'active' OR ${sessions.status} = 'scheduled')
-        AND ${sessions.scheduledStart} <= ${lookahead}
-      )`
+        channelIds.length === 1
+          ? eq(channels.channelId, channelIds[0]!)
+          : sql`${channels.channelId} IN ${channelIds}`
       )
       .orderBy(asc(channels.id));
   }
