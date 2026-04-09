@@ -181,18 +181,18 @@ export default function UpcomingSession() {
         "@type": "Event",
         "name": "The 25th Chapter: Daily Live Story",
         "description": "Your Daily 25-minute read. Join a global community to read today's featured story together.",
-        "image": "https://yourdomain.com/path-to-cinematic-cover.jpg",
+        "image": "https://25thchapter.com/preview/1.png",
         "startDate": schemaParams.startDate,
         "endDate": schemaParams.endDate,
         "eventStatus": "https://schema.org/EventScheduled",
         "eventAttendanceMode": "https://schema.org/OnlineEventAttendanceMode",
         "location": {
             "@type": "VirtualLocation",
-            "url": window.location.origin
+            "url": "https://25thchapter.com"
         },
         "offers": {
             "@type": "Offer",
-            "url": window.location.href,
+            "url": "https://25thchapter.com/upcoming",
             "price": "0",
             "priceCurrency": "USD",
             "availability": "https://schema.org/InStock",
@@ -205,7 +205,7 @@ export default function UpcomingSession() {
         "organizer": {
             "@type": "Organization",
             "name": "The 25th Chapter",
-            "url": window.location.origin
+            "url": "https://25thchapter.com"
         }
     } : null;
 

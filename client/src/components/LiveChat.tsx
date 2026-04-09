@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, MessageCircle, ChevronDown, UserCircle2 } from 'lucide-react';
-import { useLiveState, type ChatMsg } from '@/hooks/use-live-state';
+import { useLiveState, type ChatMessage } from '@/hooks/use-live-state';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface LiveChatProps {
-  history: ChatMsg[];
-  mostRecentMessage: ChatMsg | null;
+  history: ChatMessage[];
+  mostRecentMessage: ChatMessage | null;
   username: string;
   onSend: (text: string) => void;
   isOpen: boolean;
@@ -191,7 +191,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
                           {msg.text}
                         </span>
                         <span className="shrink-0 text-[10px] text-muted-foreground ml-auto tabular-nums">
-                          {formatTime(msg.createdAt)}
+                          { formatTime(msg.createdAt.toISOString()) }
                         </span>
                       </motion.div>
                     )

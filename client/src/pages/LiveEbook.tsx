@@ -58,6 +58,38 @@ export default function LiveEbook() {
 
   return (
     <main className="flex flex-col h-[100dvh] w-full bg-black text-foreground overflow-hidden overscroll-none relative">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": "25th Chapter - Live Story Session",
+            "description": "Join the live 25-minute interactive story session. Read and vote on choose-your-adventure choices with a global book club community.",
+            "url": "https://25thchapter.com/",
+            "image": "https://25thchapter.com/preview/1.png",
+            "datePublished": new Date().toISOString(),
+            "author": {
+              "@type": "Organization",
+              "name": "25th Chapter"
+            },
+            "publisher": {
+              "@type": "Organization",
+              "name": "25th Chapter",
+              "logo": {
+                "@type": "ImageObject",
+                "url": "https://25thchapter.com/favicon-32x32.png"
+              }
+            },
+            "mainEntity": {
+              "@type": "Event",
+              "name": "Live Story Session",
+              "eventAttendanceMode": "https://schema.org/OnlineEventAttendanceMode",
+              "eventStatus": "https://schema.org/EventOccurring"
+            }
+          })
+        }}
+      />
 
       {/* Connection Warning Overlay */ }
       { !wsConnected && (

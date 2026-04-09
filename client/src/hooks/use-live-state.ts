@@ -6,6 +6,8 @@ import { useToast } from './use-toast';
 import type { Session, Reaction, Phase, MacroPhase, SessionStatus, ChatMessage } from '@shared/schema';
 import { trackEvent, identifyUser } from '@/lib/analytics';
 
+export { ChatMessage };
+
 const START_BEFORE_MS = 3 * 60 * 1000;
 
 export interface StoryState {
