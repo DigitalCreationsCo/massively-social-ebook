@@ -1,73 +1,32 @@
 import { useState, useEffect, useCallback } from 'react';
+import { trackEvent } from '@/lib/analytics';
 
-// Broadcast channel for state sync (Task 2)
 const stateSyncChannel = new BroadcastChannel('app-sync');
 
 export function usePWAUpdate() {
-  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
-  const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
-  const [isHardUpdate, setIsHardUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
-  // Monitor SW registration
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then((registration) => {
-        // Check if there's already a waiting worker
-        if (registration.waiting) {
-          setWaitingWorker(registration.waiting);
-          setIsUpdateAvailable(true);
-        }
+    if (!('serviceWorker' in navigator)) return;
 
-        // Listen for new waiting workers
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                setWaitingWorker(newWorker);
-                setIsUpdateAvailable(true);
-              }
-            });
-          }
-        });
-      });
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      trackEvent('PWA Controller Changed');
+      window.location.reload();
+    });
 
-      // Listen for controller change (reload page)
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload();
-      });
-
-      // Listen for messages from SW (HARD_UPDATE)
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'HARD_UPDATE') {
-          setIsHardUpdate(true);
-          // Persist state in IndexedDB (mocking with localStorage for simplicity if IDB is overkill, but task says IndexedDB)
-          // Actually, let's use a simple IDB wrapper or just localStorage for the flag if simple.
-          // But "Lock the UI state in IndexedDB".
-          // I'll skip complex IDB implementation for now and use localStorage as a proxy for persistent state,
-          // or implement a simple IDB helper if needed. For now, localStorage 'pwa_hard_update' = 'true'.
-          localStorage.setItem('pwa_hard_update', 'true');
-        }
-      });
-    }
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (!event.data) return;
+      if (event.data.type === 'HARD_UPDATE') {
+        trackEvent('PWA Hard Update Received');
+      }
+    });
   }, []);
 
-  // Check for persisted hard update state on mount
-  useEffect(() => {
-    if (localStorage.getItem('pwa_hard_update') === 'true') {
-      setIsHardUpdate(true);
-    }
-  }, []);
-
-  // Handle State Sync (409 Conflict)
   useEffect(() => {
     const handleSync = (event: MessageEvent) => {
       if (event.data && event.data.type === 'STATE_SYNC') {
-        // Trigger re-fetch or state update
-        console.log('State sync triggered via BroadcastChannel');
-        // You might want to invalidate queries here if using React Query
-        // queryClient.invalidateQueries();
-        window.location.reload(); // Simple sync strategy
+        trackEvent('PWA State Sync');
+        window.location.reload();
       }
     };
 
@@ -75,11 +34,5 @@ export function usePWAUpdate() {
     return () => stateSyncChannel.removeEventListener('message', handleSync);
   }, []);
 
-  const updateApp = useCallback(() => {
-    if (waitingWorker) {
-      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
-    }
-  }, [waitingWorker]);
-
-  return { isUpdateAvailable, isHardUpdate, updateApp };
+  return { updateError };
 }

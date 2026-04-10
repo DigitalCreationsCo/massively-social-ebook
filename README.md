@@ -368,6 +368,16 @@ React SPA with Vite, Tailwind CSS, and Radix UI primitives. Key components:
 
 Routing handled by `wouter`. State management via `@tanstack/react-query` for REST and a custom `useWebSocket` hook for real-time sync.
 
+### PWA Updates
+
+The app uses `vite-plugin-pwa` with `autoUpdate` registration type. On each build:
+
+1. A new service worker is generated with revision hashes
+2. The SW caches all assets with revision-based cache keys
+3. On next page navigation, the new SW activates automatically
+
+No user prompts or manual updates - updates happen silently on next navigation.
+
 ## Development
 
 ```bash
