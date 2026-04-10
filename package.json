@@ -19,7 +19,9 @@
     "db:push": "drizzle-kit --config drizzle.dev.config.ts push",
     "db:push:prod": "drizzle-kit --config drizzle.prod.config.ts push",
     "prepare": "husky",
-    "email:dev": "email dev"
+    "email:dev": "email dev",
+    "clean": "rm -rf node_modules packages/*/node_modules",
+    "clean:all": "rm -rf dist packages/*/dist node_modules packages/*/node_modules packages/*/package-lock.json package-lock.json"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",
