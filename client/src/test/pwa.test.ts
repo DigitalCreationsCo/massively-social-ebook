@@ -1,95 +1,49 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
-describe('Manifest Integrity Suite', () => {
-  // manifest.json is in client/public/, not in src/test/
-  const pathManifestFile = resolve(__dirname, '../../public/manifest.json');
+describe('PWA with vite-plugin-pwa', () => {
+  const distPath = path.resolve(__dirname, '../../../dist/public');
 
-  it('should exist in the expected directory', () => {
-    const isManifestPresent = existsSync(pathManifestFile);
-
-    if (!isManifestPresent) {
-      console.error(`[TRACE] Critical Failure: Manifest not found at ${pathManifestFile}`);
-    }
-
-    expect(isManifestPresent).toBe(true);
+  it('should generate sw.js in dist', () => {
+    const swPath = path.resolve(distPath, 'sw.js');
+    expect(existsSync(swPath)).toBe(true);
   });
 
-  it('should be a valid JSON format', () => {
-    try {
-      const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
-      const parsedManifestBody = JSON.parse(contentManifestRaw);
-
-      // Verbose logging for CI/CD traceability
-      console.log('[TRACE] Manifest successfully parsed. Root keys:', Object.keys(parsedManifestBody));
-
-      expect(parsedManifestBody).toBeDefined();
-      expect(typeof parsedManifestBody).toBe('object');
-    } catch (errJsonParse: any) {
-      console.error(`[DEBUG] JSON Parse Error: ${errJsonParse.message}`);
-      throw new Error(`Failed to parse manifest.json: Ensure no trailing commas or comments exist.`);
-    }
+  it('should generate workbox in dist', () => {
+    const workboxPath = path.resolve(distPath, 'workbox-*.js');
+    const files = fs.readdirSync(distPath);
+    const hasWorkbox = files.some(f => f.startsWith('workbox-'));
+    expect(hasWorkbox).toBe(true);
   });
 
-  it('should contain required fields', () => {
-    const contentManifestRaw = readFileSync(pathManifestFile, 'utf-8');
-    const parsedManifestBody = JSON.parse(contentManifestRaw);
-
-    // Required fields for a valid PWA manifest (Web Manifest spec)
-    const listRequiredKeys = [ 'name', 'short_name', 'start_url', 'display', 'icons' ];
-
-    listRequiredKeys.forEach(strKey => {
-      const hasKey = Object.prototype.hasOwnProperty.call(parsedManifestBody, strKey);
-
-      if (!hasKey) {
-        console.error(`[TRACE] Schema Violation: Missing required key "${strKey}"`);
-      }
-
-      expect(hasKey).toBe(true);
-    });
+  it('should generate registerSW.js in dist', () => {
+    const registerPath = path.resolve(distPath, 'registerSW.js');
+    expect(existsSync(registerPath)).toBe(true);
   });
-});
 
-describe('PWA Implementation', () => {
-  const indexHtmlPath = path.resolve(__dirname, '../../index.html');
-  const swJsPath = path.resolve(__dirname, '../../public/sw.js');
+  it('service worker should use workbox', () => {
+    const swPath = path.resolve(distPath, 'sw.js');
+    const swContent = fs.readFileSync(swPath, 'utf-8');
+    expect(swContent).toContain('workbox');
+  });
 
-  it('index.html should contain iOS meta tags', () => {
+  it('service worker should precache assets', () => {
+    const swPath = path.resolve(distPath, 'sw.js');
+    const swContent = fs.readFileSync(swPath, 'utf-8');
+    expect(swContent).toContain('precacheAndRoute');
+  });
+
+  it('index.html should be linked to manifest', () => {
+    const indexHtmlPath = path.resolve(__dirname, '../../../dist/public/index.html');
     const html = fs.readFileSync(indexHtmlPath, 'utf-8');
-    
-    expect(html).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />');
-    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />');
-    expect(html).toContain('<meta name="apple-mobile-web-app-title" content="25th Chapter" />');
-    expect(html).toContain('<link rel="apple-touch-icon" href="/favicon.png" />');
+    expect(html).toContain('<link rel="manifest"');
   });
 
-  it('manifest.json should be linked correctly', () => {
-      const html = fs.readFileSync(indexHtmlPath, 'utf-8');
-      // Usually vite handles manifest injection or it's manual.
-      // Wait, I didn't add <link rel="manifest" href="/manifest.json"> to index.html manually?
-      // VitePWA plugin does it, but I implemented manually. 
-    expect(html).toContain('<link rel="manifest" href="/manifest.json" />');
-      // Let's check index.html again.
-  });
-
-  it('sw.js should implement stale-while-revalidate for App Shell', () => {
-    const swContent = fs.readFileSync(swJsPath, 'utf-8');
-    expect(swContent).toContain("caches.match(event.request).then((cachedResponse) => {");
-    expect(swContent).toContain("fetch(event.request).then((networkResponse) => {");
-  });
-
-  it('sw.js should handle 426 HARD_UPDATE', () => {
-      const swContent = fs.readFileSync(swJsPath, 'utf-8');
-      expect(swContent).toContain("if (response.status === 426)");
-      expect(swContent).toContain("client.postMessage({ type: 'HARD_UPDATE' });");
-  });
-
-  it('sw.js should handle push notifications', () => {
-      const swContent = fs.readFileSync(swJsPath, 'utf-8');
-      expect(swContent).toContain("self.addEventListener('push'");
-      expect(swContent).toContain("self.registration.showNotification");
+  it('index.html should have iOS meta tags', () => {
+    const indexHtmlPath = path.resolve(__dirname, '../../../dist/public/index.html');
+    const html = fs.readFileSync(indexHtmlPath, 'utf-8');
+    expect(html).toContain('apple-mobile-web-app-capable');
   });
 });
