@@ -1,5 +1,5 @@
  import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleGameLoopTick, state, computeDecisionEndsAt, NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS } from './routes';
+import { handleGameLoopTick, computeDecisionEndsAt, NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS } from './routes/index';
 import { storage } from './storage';
 import * as ai from './blocks/ai';
 

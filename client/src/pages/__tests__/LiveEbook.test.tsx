@@ -64,7 +64,7 @@ describe('LiveEbook Component Redirection', () => {
         });
 
         render(<LiveEbook />);
-        expect(screen.getByText(/Opening.../i)).toBeInTheDocument();
+        expect(screen.getByText(/Loading/i)).toBeInTheDocument();
         expect(mockSetLocation).not.toHaveBeenCalled();
     });
 });
