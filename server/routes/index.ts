@@ -27,6 +27,91 @@ function getRandomTurns() {
 }
 
 // ---------------------------------------------------------------------------
+// In-Memory Channel State Cache (avoids DB reads during heartbeat)
+//
+// Key insight: block content is immutable once created - only timers change.
+// We cache the full block + channel state in memory, hitting DB only on:
+//   - Phase transitions (when block changes)
+//   - Initial load / reconnect
+//   - Cache miss (multi-instance: one instance writes, others may miss)
+//
+// Cache TTL: 500ms (half tick) - stale cache just means extra DB read on next tick,
+//             not incorrect data.
+// ---------------------------------------------------------------------------
+
+interface CachedChannelState {
+  currentPhase: string;
+  phaseEndsAt: Date;
+  decisionEndsAt: Date;
+  initialTimeToDecision: number;
+  turnsToNextChoice: number;
+  currentBlockId: number | null;
+  activeSessionId: number | null;
+}
+
+// Alias for readability - cache uses 'phase' but DB returns 'currentPhase'
+const getPhase = (state: CachedChannelState): string => state.currentPhase;
+
+interface CachedBlock {
+  id: number;
+  channelId: string;
+  sessionId: number;
+  title: string;
+  content: string;
+  imageUrl: string;
+  optionA: unknown;
+  optionB: unknown;
+  createdAt: Date;
+}
+
+interface ChannelCacheEntry {
+  state: CachedChannelState;
+  block: CachedBlock | null;
+  lastUpdated: number; // timestamp for TTL checking
+}
+
+// Per-channel in-memory cache - survives across ticks, refreshed on transitions
+const channelCache = new Map<ChannelId, ChannelCacheEntry>();
+
+// Cache TTL: 500ms - effectively fresh between ticks, but safe if an instance
+// that created the cache dies (another instance will rebuild on next tick)
+const CACHE_TTL_MS = 500;
+
+function updateChannelCache(
+  channelId: ChannelId,
+  state: CachedChannelState,
+  block: CachedBlock | null
+) {
+  channelCache.set(channelId, {
+    state,
+    block,
+    lastUpdated: Date.now(),
+  });
+}
+
+function getCachedBlock(channelId: ChannelId): CachedBlock | null {
+  const entry = channelCache.get(channelId);
+  if (!entry) return null;
+
+  if (Date.now() - entry.lastUpdated > CACHE_TTL_MS) {
+    channelCache.delete(channelId);
+    return null;
+  }
+  return entry.block;
+}
+
+function getCachedState(channelId: ChannelId): CachedChannelState | null {
+  const entry = channelCache.get(channelId);
+  if (!entry) return null;
+
+  if (Date.now() - entry.lastUpdated > CACHE_TTL_MS) {
+    channelCache.delete(channelId);
+    return null;
+  }
+  return entry.state;
+}
+
+// ---------------------------------------------------------------------------
 // Pre-generation — fire-and-forget writes to the pending_blocks table.
 //
 // The old code stashed Promises in ChannelIdState.nextBlockA/B.  Those die
@@ -157,6 +242,16 @@ async function startSessionForChannelId(
     currentBlockId: block.id,
     activeSessionId: session.id,
   });
+
+  updateChannelCache(channelId, {
+    currentPhase: "reading",
+    phaseEndsAt,
+    decisionEndsAt,
+    initialTimeToDecision,
+    turnsToNextChoice,
+    currentBlockId: block.id,
+    activeSessionId: session.id,
+  }, block as CachedBlock);
 
   // Kick off background pre-generation for both choices.
   pregenerateOption(channelId, block, "A");
@@ -620,7 +715,25 @@ export async function handleGameLoopTick(
     for (const channel of activeChannelIds) {
       const channelId = channel.channelId;
       try {
-        const dbState = await storage.getChannelState(channelId);
+        let dbState = getCachedState(channelId);
+        
+        if (!dbState) {
+          dbState = await storage.getChannelState(channelId);
+          if (dbState) {
+            const block = dbState.currentBlockId
+              ? await storage.getBlockById(dbState.currentBlockId)
+              : null;
+            updateChannelCache(channelId, {
+              currentPhase: dbState.currentPhase,
+              phaseEndsAt: dbState.phaseEndsAt,
+              decisionEndsAt: dbState.decisionEndsAt,
+              initialTimeToDecision: dbState.initialTimeToDecision,
+              turnsToNextChoice: dbState.turnsToNextChoice,
+              currentBlockId: dbState.currentBlockId,
+              activeSessionId: dbState.activeSessionId,
+            }, block as CachedBlock | null);
+          }
+        }
 
         // ── Handle Inactive / Scheduled Channels ─────────────────────
         if (!dbState?.activeSessionId) {
@@ -705,23 +818,35 @@ export async function handleGameLoopTick(
             currentBlockId: resolutionBlockId,
           });
 
-          if (resolutionBlockId) {
-            const resBlock = await storage.getBlockById(resolutionBlockId);
-            if (resBlock) {
-              broadcast(channelId, {
-                type: "SYNC_STATE",
-                payload: {
-                  ...resBlock,
-                  createdAt: resBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                  phase: "resolution",
-                  timeRemaining: 60_000,
-                  timeToNextDecision: 0,
-                  initialTimeToNextDecision: 0,
-                  turnsToNextChoice: 0,
-                },
-              });
-            }
+          if (!resolutionBlockId) {
+            break;
           }
+          const resBlock = await storage.getBlockById(resolutionBlockId);
+          if (!resBlock) {
+            break;
+          }
+          updateChannelCache(channelId, {
+            currentPhase: "resolution",
+            phaseEndsAt: resPhaseEndsAt,
+            decisionEndsAt: resPhaseEndsAt,
+            initialTimeToDecision: 0,
+            turnsToNextChoice: 0,
+            currentBlockId: resolutionBlockId,
+            activeSessionId: activeSession.id,
+          }, resBlock as CachedBlock);
+
+          broadcast(channelId, {
+            type: "SYNC_STATE",
+            payload: {
+              ...resBlock,
+              createdAt: resBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+              phase: "resolution",
+              timeRemaining: 60_000,
+              timeToNextDecision: 0,
+              initialTimeToNextDecision: 0,
+              turnsToNextChoice: 0,
+            },
+          });
         } finally {
           await storage.releaseGameLock(channelId);
         }
@@ -743,6 +868,10 @@ export async function handleGameLoopTick(
             currentBlockId: null,
             currentPhase: "reading",
           });
+          
+          // Clear cache on session end
+          channelCache.delete(channelId);
+          
           broadcast(channelId, {
             type: "SESSION_STATUS",
             payload: { status: "completed", session: activeSession },
@@ -823,6 +952,16 @@ export async function handleGameLoopTick(
                 decisionEndsAt: newDecisionEndsAt,
               });
 
+              updateChannelCache(channelId, {
+                currentPhase: "reading",
+                phaseEndsAt: newPhaseEndsAt,
+                decisionEndsAt: newDecisionEndsAt,
+                initialTimeToDecision: dbState.initialTimeToDecision,
+                turnsToNextChoice: newTurns,
+                currentBlockId: newBlock.id,
+                activeSessionId: activeSession.id,
+              }, newBlock as CachedBlock);
+
               pregenerateOption(channelId, newBlock, "A");
               pregenerateOption(channelId, newBlock, "B");
 
@@ -839,7 +978,7 @@ export async function handleGameLoopTick(
                 payload: {
                   ...newBlock,
                   createdAt: newBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                  phase: "reading",
+                  currentPhase: "reading",
                   timeRemaining: NARRATIVE_TURN_MS,
                   timeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
                   initialTimeToNextDecision: dbState.initialTimeToDecision,
@@ -856,6 +995,18 @@ export async function handleGameLoopTick(
                 decisionEndsAt: newPhaseEndsAt,
                 initialTimeToDecision: VOTING_PHASE_MS,
               });
+
+              if (currentBlock) {
+                updateChannelCache(channelId, {
+                  currentPhase: "voting",
+                  phaseEndsAt: newPhaseEndsAt,
+                  decisionEndsAt: newPhaseEndsAt,
+                  initialTimeToDecision: VOTING_PHASE_MS,
+                  turnsToNextChoice: 0,
+                  currentBlockId: currentBlock.id,
+                  activeSessionId: activeSession.id,
+                }, currentBlock as CachedBlock);
+              }
 
               logger.info(
                 `ENTERING VOTING PHASE. Ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
@@ -962,6 +1113,16 @@ export async function handleGameLoopTick(
               initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
             });
 
+            updateChannelCache(channelId, {
+              currentPhase: "reading",
+              phaseEndsAt: newPhaseEndsAt,
+              decisionEndsAt: newDecisionEndsAt,
+              initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
+              turnsToNextChoice: newTurns,
+              currentBlockId: newBlock.id,
+              activeSessionId: activeSession.id,
+            }, newBlock as CachedBlock);
+
             pregenerateOption(channelId, newBlock, "A");
             pregenerateOption(channelId, newBlock, "B");
 
@@ -976,7 +1137,7 @@ export async function handleGameLoopTick(
               payload: {
                 ...newBlock,
                 createdAt: newBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                phase: "reading",
+                currentPhase: "reading",
                 timeRemaining: POST_VOTE_READING_MS,
                 timeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
                 initialTimeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
@@ -996,27 +1157,20 @@ export async function handleGameLoopTick(
         }
 
       } else {
-        // ── Heartbeat: keep client timers in sync ─────────────────────
-        // The DB read cost here is one indexed PK lookup per channel per
-        // second — trivial for Postgres.  If this ever becomes a bottleneck
-        // in a high-channel-count deployment, add a local LRU cache with a
-        // 500 ms TTL and fall through to the DB only on a miss.
-        if (dbState.currentBlockId) {
-          const currentBlock = await storage.getBlockById(dbState.currentBlockId);
-          if (currentBlock) {
-            broadcast(channelId, {
-              type: "SYNC_STATE",
-              payload: {
-                ...currentBlock,
-                createdAt: currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                phase: dbState.currentPhase,
-                timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
-                timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
-                initialTimeToNextDecision: dbState.initialTimeToDecision,
-                turnsToNextChoice: dbState.turnsToNextChoice,
-              },
-            });
-          }
+        const cachedBlock = getCachedBlock(channelId);
+        if (cachedBlock) {
+          broadcast(channelId, {
+            type: "SYNC_STATE",
+            payload: {
+              ...cachedBlock,
+              createdAt: cachedBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+              phase: dbState.currentPhase,
+              timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
+              timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
+              initialTimeToNextDecision: dbState.initialTimeToDecision,
+              turnsToNextChoice: dbState.turnsToNextChoice,
+            },
+          });
         }
       }
 

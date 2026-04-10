@@ -3,7 +3,7 @@ import path from "path";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../../prompts/storyblock-instructions";
 import { createImageInstructions } from "../../prompts/image-instructions";
-import { NarrativeEngine } from "narrative-engine";
+import { NarrativeEngine, configureLabEngine } from "narrative-engine";
 import { RagProvider } from './rag';
 
 export const ai = new GoogleGenAI({});
@@ -16,8 +16,7 @@ const lmParamsGoogle = {
 const TIMEOUT_CONTEXT_MS = 8000;
 
 const engine = new NarrativeEngine(new RagProvider());
-
-(await import("narrative-engine-lab/configure-lab-engine")).configureLabEngine(engine);
+configureLabEngine(engine);
 
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
