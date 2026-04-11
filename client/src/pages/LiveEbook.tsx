@@ -1,5 +1,5 @@
 import { trackEvent } from '@/lib/analytics';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { Storyblock } from '@/components/Storyblock';
@@ -38,9 +38,15 @@ export default function LiveEbook() {
 
   const [ _, setLocation ] = useLocation();
 
-  if (!isLoading && sessionStatus !== 'active') {
-    setLocation('/upcoming');
-  }
+  // Only redirect after WebSocket is connected AND session is confirmed inactive.
+  // This prevents a race condition where the REST API returns stale 'scheduled' status
+  // before the WebSocket connects and syncs the live 'active' status.
+  // The WebSocket is the source of truth for live session state.
+  useEffect(() => {
+    if (!isLoading && wsConnected && sessionStatus !== 'active') {
+      setLocation('/upcoming');
+    }
+  }, [isLoading, wsConnected, sessionStatus, setLocation]);
 
   const handleToggleChat = () => {
     setChatOpen((prev) => !prev);

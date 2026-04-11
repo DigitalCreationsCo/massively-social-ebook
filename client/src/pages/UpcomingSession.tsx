@@ -55,7 +55,7 @@ export function getTimezoneAbbr(tz: string): string {
 
 export default function UpcomingSession() {
     const channelId = DEFAULT_CHANNEL_ID;
-    const { sessionStatus, activeSession: nextSession, isLoading } = useLiveState(channelId);
+    const { sessionStatus, activeSession: nextSession, isLoading, wsConnected } = useLiveState(channelId);
     const { toast } = useToast();
     const [reminding, setReminding] = useState(false);
     const [email, setEmail] = useState("");
@@ -104,12 +104,15 @@ export default function UpcomingSession() {
         return () => clearInterval(interval);
     }, [nextSession?.scheduledStart]);
 
-    // Auto-redirect if session becomes active
+    // Auto-redirect if session becomes active.
+    // Wait for WebSocket to be connected before trusting session status for navigation.
+    // This ensures we receive the live 'active' status via WebSocket rather than
+    // trusting stale REST API data.
     useEffect(() => {
-        if (sessionStatus === 'active') {
+        if (wsConnected && sessionStatus === 'active') {
             setLocation('/');
         }
-    }, [sessionStatus, setLocation]);
+    }, [wsConnected, sessionStatus, setLocation]);
 
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;
@@ -179,6 +182,8 @@ export default function UpcomingSession() {
     const jsonLd = (nextSession && isValidSchema && schemaParams) ? {
         "@context": "https://schema.org",
         "@type": "Event",
+        "alternateName": "25th Chapter",
+        "url": "https://25thchapter.com/",
         "name": "The 25th Chapter: Daily Live Story",
         "description": "Your Daily 25-minute read. Join a global community to read today's featured story together.",
         "image": "https://25thchapter.com/preview/1.png",
@@ -206,7 +211,16 @@ export default function UpcomingSession() {
             "@type": "Organization",
             "name": "The 25th Chapter",
             "url": "https://25thchapter.com"
-        }
+        },
+        "featureList": [
+            "Live interactive storytelling",
+            "Choose-your-adventure voting",
+            "Real-time chat with readers",
+            "Daily 6pm PST story sessions",
+            "25-minute reading experience",
+            "Social book club community",
+            "Mobile PWA installation"
+        ]
     } : null;
 
     if (isLoading || sessionStatus === 'loading') {
@@ -298,6 +312,7 @@ export default function UpcomingSession() {
                                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                                         <DialogTrigger asChild>
                                             <Button
+                                                id="reminder-button"
                                                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif font-semibold tracking-tight text-2xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
                                             >
                                                 Reserve My Seat

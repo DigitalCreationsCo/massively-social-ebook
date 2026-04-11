@@ -67,4 +67,49 @@ describe('LiveEbook Component Redirection', () => {
         expect(screen.getByText(/Loading/i)).toBeInTheDocument();
         expect(mockSetLocation).not.toHaveBeenCalled();
     });
+
+    it('does not redirect when wsConnected is false even if session not active', () => {
+        (useLiveState as any).mockReturnValue({
+            isLoading: false,
+            sessionStatus: 'scheduled',
+            wsConnected: false,
+            viewerCount: 0,
+            chatHistory: [],
+            currentBlock: null,
+            voteResults: { A: 0, B: 0 }
+        });
+
+        render(<LiveEbook />);
+        expect(mockSetLocation).not.toHaveBeenCalled();
+    });
+
+    it('redirects when wsConnected is true but sessionStatus is scheduled after initial load', () => {
+        (useLiveState as any).mockReturnValue({
+            isLoading: false,
+            sessionStatus: 'scheduled',
+            wsConnected: true,
+            viewerCount: 0,
+            chatHistory: [],
+            currentBlock: null,
+            voteResults: { A: 0, B: 0 }
+        });
+
+        render(<LiveEbook />);
+        expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
+    });
+
+    it('redirects when session is completed and wsConnected is true', () => {
+        (useLiveState as any).mockReturnValue({
+            isLoading: false,
+            sessionStatus: 'completed',
+            wsConnected: true,
+            viewerCount: 10,
+            chatHistory: [],
+            currentBlock: { id: 1, content: 'Story' },
+            voteResults: { A: 5, B: 3 }
+        });
+
+        render(<LiveEbook />);
+        expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
+    });
 });

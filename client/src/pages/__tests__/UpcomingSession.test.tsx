@@ -37,9 +37,10 @@ describe('UpcomingSession Component', () => {
         expect(document.body.firstChild).toBeEmpty();
     });
 
-    it('renders "Active Now" when sessionStatus is active', () => {
+    it('Navigates to "/" when sessionStatus is active', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: false,
+            wsConnected: true,
             sessionStatus: 'active',
             activeSession: {
                 id: 1,
@@ -50,8 +51,24 @@ describe('UpcomingSession Component', () => {
         });
 
         render(<UpcomingSession />);
-        expect(screen.getByText(/The Room Is Open/i)).toBeInTheDocument();
-        expect(screen.getByText(/Join/i)).toBeInTheDocument();
+        expect(mockSetLocation).toHaveBeenCalledWith('/');
+    });
+
+    it('does not redirect when wsConnected is false even if sessionStatus is active', () => {
+        (useLiveState as any).mockReturnValue({
+            isLoading: false,
+            wsConnected: false,
+            sessionStatus: 'active',
+            activeSession: {
+                id: 1,
+                title: 'Live Now',
+                scheduledStart: new Date(Date.now() - 10000).toISOString(),
+                scheduledEnd: new Date(Date.now() + 1000000).toISOString()
+            }
+        });
+
+        render(<UpcomingSession />);
+        expect(mockSetLocation).not.toHaveBeenCalled();
     });
 
     it('renders session details when sessionStatus is scheduled', () => {
@@ -68,9 +85,9 @@ describe('UpcomingSession Component', () => {
             activeSession: mockSession
         });
 
-        render(<UpcomingSession />);
+        const page = render(<UpcomingSession />);
         expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
-        expect(screen.getByText(/Remind me/i)).toBeInTheDocument();
+        expect(page.container.querySelector('#reminder-button')).toBeInTheDocument();
     });
 
     it('renders empty state when no session is scheduled', () => {
@@ -87,6 +104,7 @@ describe('UpcomingSession Component', () => {
     it('redirects to root when session becomes active via effect', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: false,
+            wsConnected: true,
             sessionStatus: 'active',
             activeSession: {
                 id: 1,
