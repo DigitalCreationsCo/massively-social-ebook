@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { isAdmin } from "../middleware/auth";
 import { logger } from "../logger";
+import { generateStoryImage } from "../blocks/ai";
 import type { InsertSchedule, ScheduleDay } from "@shared/schema";
 import { datetimeLocalToUTC } from "@shared/date";
 
@@ -147,7 +148,17 @@ export function registerAdminRoutes(app: Express): void {
   app.post('/admin/api/channels', isAdmin, async (req, res) => {
     try {
       const { channelId, name, description } = req.body;
-      const channel = await storage.createChannel({ channelId, name, description });
+      let { coverImage } = req.body;
+      
+      if (!coverImage && description) {
+        try {
+          coverImage = await generateStoryImage(description);
+        } catch (err) {
+          logger.error("Failed to generate cover image during channel creation", "admin", err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+
+      const channel = await storage.createChannel({ channelId, name, description, coverImage });
       res.status(201).json(channel);
     } catch (err) {
       logger.error("Failed to create channel", "admin", err instanceof Error ? err : new Error(String(err)));
@@ -158,12 +169,29 @@ export function registerAdminRoutes(app: Express): void {
   app.patch('/admin/api/channels/:id', isAdmin, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id));
-      const { channelId, name, description } = req.body;
-      const channel = await storage.updateChannel(id, { channelId, name, description });
+      const { channelId, name, description, coverImage } = req.body;
+      const channel = await storage.updateChannel(id, { channelId, name, description, coverImage });
       res.json(channel);
     } catch (err) {
       logger.error("Failed to update channel", "admin", err instanceof Error ? err : new Error(String(err)));
       res.status(500).json({ message: "Failed to update channel" });
+    }
+  });
+
+  app.post('/admin/api/channels/:id/generate-cover', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const { description } = req.body;
+      if (!description) {
+        return res.status(400).json({ message: "Description is required to generate cover image" });
+      }
+      
+      const coverImage = await generateStoryImage(description);
+      const channel = await storage.updateChannel(id, { coverImage });
+      res.json(channel);
+    } catch (err) {
+      logger.error("Failed to generate cover image", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to generate cover image" });
     }
   });
 

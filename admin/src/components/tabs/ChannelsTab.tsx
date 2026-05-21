@@ -32,7 +32,7 @@ const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'
 export default function ChannelsTab() {
   const { token } = useAdminToken()
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ name: '', description: '', channelId: '' })
+  const [editForm, setEditForm] = useState({ name: '', description: '', channelId: '', coverImage: '' })
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null)
   const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null)
   const [showTitleBuilder, setShowTitleBuilder] = useState(false)
@@ -52,16 +52,29 @@ export default function ChannelsTab() {
 
   const handleEdit = (channel: Channel) => {
     setEditingId(channel.id)
-    setEditForm({ name: channel.name, description: channel.description || '', channelId: channel.channelId })
+    setEditForm({ name: channel.name, description: channel.description || '', channelId: channel.channelId, coverImage: channel.coverImage || '' })
   }
 
   const handleSave = async (id: number) => {
     await adminFetch(`/channels/${id}`, token, {
       method: 'PATCH',
-      body: JSON.stringify({ name: editForm.name, description: editForm.description, channelId: editForm.channelId }),
+      body: JSON.stringify({ name: editForm.name, description: editForm.description, channelId: editForm.channelId, coverImage: editForm.coverImage }),
     })
     setEditingId(null)
     refresh()
+  }
+
+  const handleRegenerateCover = async (id: number) => {
+    if (!editForm.description) {
+      alert('Description is required to generate a cover image.');
+      return;
+    }
+    const result = await adminFetch<Channel>(`/channels/${id}/generate-cover`, token, {
+      method: 'POST',
+      body: JSON.stringify({ description: editForm.description }),
+    });
+    setEditForm(prev => ({ ...prev, coverImage: result.coverImage || '' }));
+    refresh();
   }
 
   const handleDelete = async (id: number) => {
@@ -243,6 +256,20 @@ export default function ChannelsTab() {
                    className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
                    placeholder="Channel ID"
                  />
+                 <div className="flex gap-2 items-center">
+                   <input
+                     value={editForm.coverImage}
+                     onChange={(e) => setEditForm({ ...editForm, coverImage: e.target.value })}
+                     className="border border-gray-300 rounded px-2 py-1 text-sm flex-1"
+                     placeholder="Cover Image URL (Optional)"
+                   />
+                   <button
+                     onClick={() => handleRegenerateCover(channel.id)}
+                     className="text-xs text-blue-600 hover:underline border border-blue-200 px-2 py-1 rounded bg-blue-50"
+                   >
+                     Regenerate AI Cover
+                   </button>
+                 </div>
                  <div className="flex gap-2">
                    <button
                      onClick={() => handleSave(channel.id)}
@@ -260,9 +287,9 @@ export default function ChannelsTab() {
                </div>
             ) : (
               <div>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-medium">{channel.name}</div>
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1">
+                    <div className="font-medium text-lg">{channel.name}</div>
                     <div className="text-xs text-gray-500">ID: {channel.channelId}</div>
                     {channel.description && (
                       <div className="text-sm text-gray-600 mt-1">{channel.description}</div>
@@ -271,7 +298,12 @@ export default function ChannelsTab() {
                         Created: { new Date(channel.createdAt ? channel.createdAt : '').toLocaleDateString() }
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  {channel.coverImage && (
+                    <div className="w-24 h-16 shrink-0 bg-gray-100 rounded overflow-hidden">
+                      <img src={channel.coverImage} alt="Cover" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <div className="flex gap-2 flex-col shrink-0">
                     <button
                       onClick={() => handleEdit(channel)}
                       className="text-xs text-blue-600 hover:underline"
@@ -280,7 +312,7 @@ export default function ChannelsTab() {
                     </button>
                     <button
                       onClick={() => handleDelete(channel.id)}
-                      className="text-xs text-red-600 hover:underline"
+                      className="text-xs text-red-600 hover:underline self-end"
                     >
                       Delete
                     </button>

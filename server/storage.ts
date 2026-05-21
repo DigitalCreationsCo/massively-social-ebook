@@ -42,7 +42,7 @@ import {
   systemSettings,
   notificationLogs,
 } from "@shared/schema";
-import { desc, eq, and, asc, count, sql, lte, lt, isNull, or, gte } from "drizzle-orm";
+import { desc, eq, and, asc, count, sql, lte, lt, gt, isNull, or, gte } from "drizzle-orm";
 
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
@@ -388,10 +388,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getNextSession(channelId: string): Promise<Session | undefined> {
+    const now = new Date();
     const [session] = await db
       .select()
       .from(sessions)
-      .where(and(eq(sessions.channelId, channelId), eq(sessions.status, 'scheduled')))
+      .where(and(
+        eq(sessions.channelId, channelId),
+        eq(sessions.status, 'scheduled'),
+        gt(sessions.scheduledEnd, now),
+      ))
       .orderBy(asc(sessions.scheduledStart))
       .limit(1);
     return session;

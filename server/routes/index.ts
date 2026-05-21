@@ -296,8 +296,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!channelId) return res.status(400).json({ message: "channelId query parameter is required" });
     const channel = await storage.getChannel(channelId);
     if (!channel) return res.status(404).json({ message: "ChannelId not found" });
+    const now = Date.now();
     const active = await storage.getActiveSession(channelId);
-    if (active) return res.json(active);
+    if (active && active.scheduledEnd.getTime() > now) {
+      return res.json(active);
+    }
     const next = await storage.getNextSession(channelId);
     res.json(next || null);
   });
@@ -594,6 +597,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             turnsToNextChoice: dbState.turnsToNextChoice,
           },
         }));
+        const activeSession = await storage.getSessionById(dbState.activeSessionId);
+        if (activeSession && activeSession.scheduledEnd.getTime() > connectNow) {
+          ws.send(JSON.stringify({
+            type: "SESSION_STATUS",
+            payload: { status: activeSession.status, session: activeSession },
+          }));
+        }
       } else {
         const next = await storage.getNextSession(channelId);
         ws.send(JSON.stringify({

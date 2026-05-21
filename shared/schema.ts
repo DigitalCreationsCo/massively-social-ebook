@@ -160,6 +160,7 @@ export const channels = pgTable("channels", {
   channelId: text("channel_id").notNull().unique(),
   name: text("name").notNull(),
   description: text("description"),
+  coverImage: text("cover_image"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

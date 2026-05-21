@@ -8,7 +8,7 @@
   "theme_color": "#000000",
   "orientation": "portrait-primary",
   "scope": "/",
-  " "categories": ["entertainment", "books", "games"],
+  "categories": ["entertainment", "books", "games"],
   "lang": "en",
   "icons": [
     {

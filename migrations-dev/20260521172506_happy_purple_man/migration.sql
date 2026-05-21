@@ -1,0 +1,1 @@
+ALTER TABLE "channels" ADD COLUMN "cover_image" text;

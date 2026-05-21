@@ -78,20 +78,36 @@ export function useLiveState(channelId: string) {
   });
 
   useEffect(() => {
-    if (initialSession && !wsConnected) {
+    if (sessionLoading) return;
+    if (!initialSession) {
+      if (!wsConnected) {
+        setActiveSession(null);
+        setSessionStatus('scheduled');
+      }
+      return;
+    }
+    const isPast = new Date(initialSession.scheduledEnd).getTime() < Date.now();
+    if (isPast && initialSession.status === 'active') {
+      setSessionStatus('completed');
+      setActiveSession(null);
+      return;
+    }
+    if (!isPast) {
       setSessionStatus(initialSession.status as SessionStatus);
       setActiveSession(initialSession);
     }
-  }, [initialSession, wsConnected]);
+  }, [initialSession, sessionLoading, wsConnected]);
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
     queryKey: [api.blocks.current.path, channelId],
     queryFn: async () => {
       const res = await fetch(`${api.blocks.current.path}?channelId=${channelId}`);
+      if (res.status === 404) return null;
       if (!res.ok) throw new Error('Failed to fetch current block');
       return res.json() as Promise<StoryState>;
     },
+    retry: false,
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
@@ -254,16 +270,20 @@ export function useLiveState(channelId: string) {
                 const now = Date.now();
                 const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
 
-                if (isPast) {
+                if (isPast && payload.status === 'active') {
                   setSessionStatus('completed');
                   setActiveSession(null);
-                } else {
+                  void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+                } else if (payload.session) {
                   setSessionStatus(payload.status);
                   setActiveSession(payload.session);
                   if (payload.status === 'active') {
                     queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
                     queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
                   }
+                } else {
+                  setSessionStatus(payload.status);
+                  void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
                 }
               }
            } catch (err) {
