@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleGameLoopTick, state } from '../routes';
+import { handleGameLoopTick } from '../routes';
 import { storage } from '../storage';
 import * as ai from '../blocks/ai';
 

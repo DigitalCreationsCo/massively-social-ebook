@@ -11,7 +11,7 @@ export default function Timer({ timeLeft, timerHelpText }: { timeLeft: string, t
                 </p>
                 <div className="flex justify-start items-baseline overflow-hidden h-14 w-48 mx-auto">
                     { characters.map((char, index) => (
-                        <div key={ `${index}-${char}` } className="relative w-fit flex ml-0">
+                        <div key={ `${index}-${char}` } className="relative w-fit">
                             <AnimatePresence mode="popLayout">
                                 <motion.span
                                     key={ char }
@@ -22,7 +22,7 @@ export default function Timer({ timeLeft, timerHelpText }: { timeLeft: string, t
                                         duration: 0.2,
                                         ease: [ 0.23, 1, 0.32, 1 ] // Custom quintic ease-out
                                     } }
-                                    className={ `text-5xl font-serif font-semibold tabular-nums ${timeLeft === "Starting..."
+                                    className={ `w-fit text-center text-5xl font-serif font-semibold tabular-nums ${timeLeft === "Starting..."
                                         ? "text-primary/50 animate-pulse"
                                         : "text-primary text-glow-primary"
                                         }` }

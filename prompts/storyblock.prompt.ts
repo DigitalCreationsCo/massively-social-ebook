@@ -90,13 +90,12 @@ export const createStoryBlockInstructions = ({
     ragContext,
     isResolving,
     genre = "crime",
-    // Stateful Chronicle RAG parameters
     lore,
     summary,
 }: {
     previousBlock: string;
     ragContext?: string;
-    isResolving?: boolean;
+    isResolving: boolean;
     genre?: keyof typeof GENRE_RULES;
     lore?: string[];
     summary?: string;
@@ -106,13 +105,10 @@ export const createStoryBlockInstructions = ({
         ? ragContext
         : previousBlock;
 
-    const storyRules = GENRE_RULES[genre] ?? GENRE_RULES.adventure;
+    const storyRules = GENRE_RULES[ genre ] ?? GENRE_RULES.adventure;
 
     // Build the chronicle/summary section if available
-    const loreSection = [];
-    if (summary) {
-        loreSection.push(`SUMMARY (Earlier Events):\n${summary}`);
-    }
+    const loreSection: string[] = [];
     if (lore && lore.length > 0) {
         lore.forEach(event => {
             loreSection.push(`${event}`);
@@ -124,7 +120,7 @@ export const createStoryBlockInstructions = ({
         : "";
 
     const instructions = [
-        `Produce the next moment:
+        `Produce the next moment. ${summary}
 You are a best-selling author writing an intriguing, continuous story. Make the reader interested to continue reading.`,
 
         ...storyRules,

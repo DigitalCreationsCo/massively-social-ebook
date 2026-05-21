@@ -226,7 +226,7 @@ Every story generation prompt receives **four context components**:
    - Add `story_state` table or JSONB column on `sessions`
    - Fields: `summary`, `chronicle` (array), `world_state` (JSON)
 
-2. **AI Prompt** (`prompts/storyblock-instructions.ts`)
+2. **AI Prompt** (`prompts/storyblock.prompt.ts`)
    - Add formatting for all four context components
    - Instruct model on when to emit `newNotableEvent`
 

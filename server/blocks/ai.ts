@@ -1,8 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { createStoryBlockInstructions } from "../../prompts/storyblock-instructions";
-import { createImageInstructions } from "../../prompts/image-instructions";
+import { createStoryBlockInstructions } from "../../prompts/storyblock.prompt";
+import { createImageInstructions } from "../../prompts/image.prompt";
 import { NarrativeEngine, configureLabEngine } from "narrative-engine";
 import { RagProvider } from './rag';
 
@@ -70,6 +70,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     enrichedContext = previousContext;
   }
 
+  // const  = createNextNarrativeIncrementPrompt({ })
   const prompt = createStoryBlockInstructions({
     previousBlock: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
