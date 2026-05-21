@@ -39,6 +39,10 @@ async function buildAll() {
   console.log("building client...");
   await viteBuild();
 
+  console.log("building admin...");
+  const { execSync } = await import("child_process");
+  execSync("npm install && npm run build", { cwd: "admin", stdio: "inherit" });
+
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [

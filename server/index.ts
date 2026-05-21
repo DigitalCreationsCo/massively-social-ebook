@@ -5,6 +5,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
+import { createAdminStaticMiddleware } from "./middleware/admin-static";
 
 const app = express();
 const httpServer = createServer(app);
@@ -73,6 +74,8 @@ app.use(createRequestLogger());
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   console.log(`mode: ${process.env.NODE_ENV}`);
+
+  app.use(createAdminStaticMiddleware());
 
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);

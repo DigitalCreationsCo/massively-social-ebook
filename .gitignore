@@ -9,3 +9,5 @@ client/coverage
 logs
 .env.local
 .env.production.local
+
+.traces

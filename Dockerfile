@@ -31,6 +31,7 @@ RUN npm install --omit=dev --ignore-scripts
 
 # Copy built server and client and dependency
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/admin/dist ./admin/dist
 COPY --from=builder /app/packages/narrative-engine/dist ./packages/narrative-engine/dist
 
 # Expose port

@@ -66,6 +66,8 @@ Generates next storyblock                  │  │    └───────�
 | `DATABASE_URL` | **Yes** | PostgreSQL connection string |
 | `PORT` | No | Server port (default: `5001`) |
 | `VITE_MIXPANEL_TOKEN` | No | Token for Mixpanel analytics (optional) |
+| `ADMIN_USERNAME` | No | Admin username for Basic Auth (default: `admin`) |
+| `ADMIN_PASSWORD` | No | Admin password for Basic Auth. Bypasses protection if unset. |
 
 Create a `.env` file from the example:
 
@@ -86,6 +88,8 @@ cp .env.example .env
 - **Session Resolution Phase** — Sessions end with a dedicated `resolution` phase where the AI generates a dramatic cliffhanger or intriguing ending, ensuringstories don't just cut off abruptly.
 - **Automated Session Scheduling** — Integrated a recurring scheduler that automatically seeds daily story sessions (Sci-Fi and Mystery) if none are scheduled.
 - **Admin & Debug Security** — Token-based protection (`x-admin-token`) for all sensitive admin management and debug endpoints.
+- **Admin App Subdomain Routing** — Serves the built admin app automatically on the root of the `control.25thchapter.com` production subdomain, or from `/admin` (non-API) on other domains.
+- **Basic Auth Protection** — Enforces secure Basic Authentication on the admin app using the `ADMIN_PASSWORD` env variable.
 - **Admin Session Management** — Dedicated REST API for creating, listing, and cancelling sessions.
 - **Calendar Reminders (ICS)** — Public endpoint to generate and download RFC 5545 compliant `.ics` calendar files.
 - **Client Session Experience** — An `UpcomingSession` page displays event details and countdowns, with automatic real-time redirection to the `LiveEbook` when a session begins.
@@ -444,6 +448,7 @@ npm test server/ai.test.ts
 | `server/session-scheduler.test.ts`| 5 | Recurrent scheduling and game loop start/stop transitions |
 | `server/session-routes.test.ts` | 7 | REST API integration for sessions |
 | `server/index.test.ts` | 1 | Server module loading |
+| `server/middleware/admin-static.test.ts` | 11 | Admin app subdomain routing, Basic Auth, path traversal checks |
 | `client/…/DecisionPhase.test.tsx` | 10 | Voting UI, resolution state, choice persistence, toast rendering |
 | `client/…/UpcomingSession.test.tsx`| 6 | Session details, countdown, reminders, date safety |
 | `client/…/LiveEbook.test.tsx` | 3 | Session-based redirection gating |

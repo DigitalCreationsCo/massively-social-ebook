@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   const apiBaseUrl = env.VITE_API_BASE_URL || 'http://localhost:5001';
 
   return {
+    base: '',
     plugins: [react()],
     server: {
       port: 3001,
