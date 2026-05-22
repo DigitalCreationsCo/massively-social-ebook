@@ -30,7 +30,7 @@ export default function LiveEbook() {
     voteResults,
     viewerCount,
     mostRecentMessage,
-    sessionStatus,
+    isSessionLive,
     macroPhase,
     reactions,
     submitReaction
@@ -38,15 +38,13 @@ export default function LiveEbook() {
 
   const [ _, setLocation ] = useLocation();
 
-  // Only redirect after WebSocket is connected AND session is confirmed inactive.
-  // This prevents a race condition where the REST API returns stale 'scheduled' status
-  // before the WebSocket connects and syncs the live 'active' status.
-  // The WebSocket is the source of truth for live session state.
+  // Redirect only when the session is not in its live window (see shouldShowLiveSession).
+  // DB/WebSocket may still report status 'scheduled' while start <= now < end.
   useEffect(() => {
-    if (!isLoading && wsConnected && sessionStatus !== 'active') {
+    if (!isLoading && wsConnected && !isSessionLive) {
       setLocation('/upcoming');
     }
-  }, [isLoading, wsConnected, sessionStatus, setLocation]);
+  }, [isLoading, wsConnected, isSessionLive, setLocation]);
 
   const handleToggleChat = () => {
     setChatOpen((prev) => !prev);

@@ -239,4 +239,51 @@ describe('useLiveState session lifecycle', () => {
         
         expect(result.current.sessionStatus).toBe('scheduled');
     });
+
+    it('sets isSessionLive when scheduled status is inside the live window', () => {
+        const now = Date.now();
+        const { result } = renderHook(() => useLiveState('scifi'));
+
+        act(() => {
+            wsInstance.onmessage({
+                data: JSON.stringify({
+                    type: 'SESSION_STATUS',
+                    payload: {
+                        status: 'scheduled',
+                        session: {
+                            id: 1,
+                            scheduledStart: new Date(now - 60_000).toISOString(),
+                            scheduledEnd: new Date(now + 30 * 60 * 1000).toISOString(),
+                        },
+                    },
+                }),
+            });
+        });
+
+        expect(result.current.sessionStatus).toBe('scheduled');
+        expect(result.current.isSessionLive).toBe(true);
+    });
+
+    it('sets isSessionLive false for a future scheduled session', () => {
+        const now = Date.now();
+        const { result } = renderHook(() => useLiveState('scifi'));
+
+        act(() => {
+            wsInstance.onmessage({
+                data: JSON.stringify({
+                    type: 'SESSION_STATUS',
+                    payload: {
+                        status: 'scheduled',
+                        session: {
+                            id: 1,
+                            scheduledStart: new Date(now + 60 * 60 * 1000).toISOString(),
+                            scheduledEnd: new Date(now + 90 * 60 * 1000).toISOString(),
+                        },
+                    },
+                }),
+            });
+        });
+
+        expect(result.current.isSessionLive).toBe(false);
+    });
 });

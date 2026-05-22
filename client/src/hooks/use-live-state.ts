@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { shouldShowLiveSession } from '@shared/session';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
@@ -411,6 +412,11 @@ export function useLiveState(channelId: string) {
 
   const hasVotedCurrent = sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
 
+  const isSessionLive = useMemo(
+    () => shouldShowLiveSession(sessionStatus, activeSession),
+    [sessionStatus, activeSession]
+  );
+
   // Get most recent chat message
   const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
 
@@ -439,6 +445,7 @@ export function useLiveState(channelId: string) {
     mostRecentMessage,
     sessionStatus,
     activeSession,
+    isSessionLive,
     macroPhase
   };
 }

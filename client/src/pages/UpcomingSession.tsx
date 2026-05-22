@@ -55,7 +55,7 @@ export function getTimezoneAbbr(tz: string): string {
 
 export default function UpcomingSession() {
     const channelId = DEFAULT_CHANNEL_ID;
-    const { sessionStatus, activeSession: nextSession, isLoading, wsConnected } = useLiveState(channelId);
+    const { sessionStatus, activeSession: nextSession, isLoading, wsConnected, isSessionLive } = useLiveState(channelId);
     const { toast } = useToast();
     const [reminding, setReminding] = useState(false);
     const [email, setEmail] = useState("");
@@ -104,15 +104,12 @@ export default function UpcomingSession() {
         return () => clearInterval(interval);
     }, [nextSession?.scheduledStart]);
 
-    // Auto-redirect if session becomes active.
-    // Wait for WebSocket to be connected before trusting session status for navigation.
-    // This ensures we receive the live 'active' status via WebSocket rather than
-    // trusting stale REST API data.
+    // Redirect when the session is in its live window (including status still 'scheduled').
     useEffect(() => {
-        if (wsConnected && sessionStatus === 'active') {
+        if (wsConnected && isSessionLive) {
             setLocation('/');
         }
-    }, [wsConnected, sessionStatus, setLocation]);
+    }, [wsConnected, isSessionLive, setLocation]);
 
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;

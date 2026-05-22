@@ -583,22 +583,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? await storage.getBlockById(dbState.currentBlockId)
         : null;
 
-      if (dbState?.activeSessionId && block) {
-        const connectNow = Date.now();
-        ws.send(JSON.stringify({
-          type: "SYNC_STATE",
-          payload: {
-            ...block,
-            createdAt: block.createdAt?.toISOString() ?? new Date().toISOString(),
-            phase: dbState.currentPhase,
-            timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - connectNow),
-            timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - connectNow),
-            initialTimeToNextDecision: dbState.initialTimeToDecision,
-            turnsToNextChoice: dbState.turnsToNextChoice,
-          },
-        }));
+      const connectNow = Date.now();
+      if (dbState?.activeSessionId) {
         const activeSession = await storage.getSessionById(dbState.activeSessionId);
         if (activeSession && activeSession.scheduledEnd.getTime() > connectNow) {
+          if (block) {
+            ws.send(JSON.stringify({
+              type: "SYNC_STATE",
+              payload: {
+                ...block,
+                createdAt: block.createdAt?.toISOString() ?? new Date().toISOString(),
+                phase: dbState.currentPhase,
+                timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - connectNow),
+                timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - connectNow),
+                initialTimeToNextDecision: dbState.initialTimeToDecision,
+                turnsToNextChoice: dbState.turnsToNextChoice,
+              },
+            }));
+          }
           ws.send(JSON.stringify({
             type: "SESSION_STATUS",
             payload: { status: activeSession.status, session: activeSession },

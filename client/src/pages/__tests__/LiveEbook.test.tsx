@@ -9,7 +9,12 @@ vi.mock('wouter', () => ({
     useLocation: vi.fn(),
 }));
 
-describe('LiveEbook Component Redirection', () => {
+const liveSession = {
+    scheduledStart: new Date(Date.now() - 10_000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 1_000_000).toISOString(),
+};
+
+describe('LiveEbook routing', () => {
     const mockSetLocation = vi.fn();
 
     beforeEach(() => {
@@ -17,25 +22,25 @@ describe('LiveEbook Component Redirection', () => {
         (useLocation as any).mockReturnValue(['/', mockSetLocation]);
     });
 
-    it('redirects to /upcoming when sessionStatus is scheduled and not loading', () => {
+    it('redirects to /upcoming when session is not in the live window', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: false,
-            sessionStatus: 'scheduled',
+            isSessionLive: false,
             wsConnected: true,
             viewerCount: 0,
             chatHistory: [],
             currentBlock: null,
-            voteResults: { A: 0, B: 0 }
+            voteResults: { A: 0, B: 0 },
         });
 
         render(<LiveEbook />);
         expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
     });
 
-    it('does not redirect when sessionStatus is active', () => {
+    it('does not redirect when isSessionLive is true', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: false,
-            sessionStatus: 'active',
+            isSessionLive: true,
             wsConnected: true,
             viewerCount: 10,
             chatHistory: [],
@@ -49,7 +54,10 @@ describe('LiveEbook Component Redirection', () => {
             username: 'tester',
             submitChat: vi.fn(),
             submitVote: vi.fn(),
-            mostRecentMessage: null
+            mostRecentMessage: null,
+            macroPhase: 'reading',
+            reactions: [],
+            submitReaction: vi.fn(),
         });
 
         render(<LiveEbook />);
@@ -57,10 +65,30 @@ describe('LiveEbook Component Redirection', () => {
         expect(screen.getByText(/Story starting.../i)).toBeInTheDocument();
     });
 
-    it('shows loading state and does not redirect while loading', () => {
+    it('does not redirect for scheduled status inside the live window', () => {
+        (useLiveState as any).mockReturnValue({
+            isLoading: false,
+            isSessionLive: true,
+            sessionStatus: 'scheduled',
+            activeSession: liveSession,
+            wsConnected: true,
+            viewerCount: 0,
+            chatHistory: [],
+            currentBlock: { id: 1, content: 'Live chapter' },
+            voteResults: { A: 0, B: 0 },
+            macroPhase: 'reading',
+            reactions: [],
+            submitReaction: vi.fn(),
+        });
+
+        render(<LiveEbook />);
+        expect(mockSetLocation).not.toHaveBeenCalled();
+    });
+
+    it('shows loading and does not redirect while loading', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: true,
-            sessionStatus: 'loading',
+            isSessionLive: false,
         });
 
         render(<LiveEbook />);
@@ -68,48 +96,18 @@ describe('LiveEbook Component Redirection', () => {
         expect(mockSetLocation).not.toHaveBeenCalled();
     });
 
-    it('does not redirect when wsConnected is false even if session not active', () => {
+    it('does not redirect before WebSocket connects', () => {
         (useLiveState as any).mockReturnValue({
             isLoading: false,
-            sessionStatus: 'scheduled',
+            isSessionLive: false,
             wsConnected: false,
             viewerCount: 0,
             chatHistory: [],
             currentBlock: null,
-            voteResults: { A: 0, B: 0 }
+            voteResults: { A: 0, B: 0 },
         });
 
         render(<LiveEbook />);
         expect(mockSetLocation).not.toHaveBeenCalled();
-    });
-
-    it('redirects when wsConnected is true but sessionStatus is scheduled after initial load', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            sessionStatus: 'scheduled',
-            wsConnected: true,
-            viewerCount: 0,
-            chatHistory: [],
-            currentBlock: null,
-            voteResults: { A: 0, B: 0 }
-        });
-
-        render(<LiveEbook />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
-    });
-
-    it('redirects when session is completed and wsConnected is true', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            sessionStatus: 'completed',
-            wsConnected: true,
-            viewerCount: 10,
-            chatHistory: [],
-            currentBlock: { id: 1, content: 'Story' },
-            voteResults: { A: 5, B: 3 }
-        });
-
-        render(<LiveEbook />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/upcoming');
     });
 });
