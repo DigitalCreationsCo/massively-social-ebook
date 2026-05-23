@@ -10,7 +10,7 @@ import { CalendarService } from "../calendar";
 import { isAdmin, isDevOnly } from "../middleware/auth";
 import { logger } from "../logger";
 import { formatInTZ } from "@shared/date";
-import { and, asc, desc, eq, SQL } from "drizzle-orm";
+import { and, asc, desc, eq, sql, SQL } from "drizzle-orm";
 import { db } from "server/db";
 
 type ChannelId = string;
@@ -567,22 +567,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     try {
-      let queryConditions: SQL<unknown> | undefined = eq(blocks.sessionId, Number(sessionId));
+      let where: { sessionId: number, notableOnly?: boolean } = { sessionId: Number(sessionId) };
 
       // Optional notableOnly filter [cite: 18, 23]
       if (notableOnly === 'true') {
-        queryConditions = and(queryConditions, eq(blocks.isNotable, true));
+        where = { ...where, notableOnly: true };
       }
 
-      const historicalBlocks = await (db.query as any).blocks.findMany({
-        where: queryConditions,
-        orderBy: [asc(blocks.createdAt)], // Chronological order [cite: 19, 23]
+      const historicalBlocks = await db.query.blocks.findMany({
+        where: where,
+        orderBy: { createdAt: 'asc' },
         with: {
           chats: {
-            limit: 10, // Top 10 chats per block 
-            orderBy: [asc(chat.createdAt)]
-          }
-        }
+            limit: 10,
+            orderBy: { createdAt: 'asc' },
+          },
+        },
       });
 
       res.json(historicalBlocks);
