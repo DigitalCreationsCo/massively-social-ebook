@@ -60,17 +60,184 @@ export function getTimezoneAbbr(tz: string): string {
     }
 }
 
-export default function UpcomingSession() {
-    const channelId = DEFAULT_CHANNEL_ID;
-    const { sessionStatus, activeSession: nextSession, isLoading, wsConnected, isSessionLive } = useLiveState(channelId);
+function ReserveSeatButton({
+    channelId,
+    sessionId,
+}: {
+    channelId: string;
+    sessionId?: string;
+}) {
     const { toast } = useToast();
     const [reminding, setReminding] = useState(false);
     const [email, setEmail] = useState("");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [subscribeToUpdates, setSubscribeToUpdates] = useState(true);
     const [subscribeToStories, setSubscribeToStories] = useState(true);
-    const [_, setLocation] = useLocation();
     const [step, setStep] = useState<1 | 2>(1);
+
+    useEffect(() => {
+        if (!isDialogOpen) {
+            const t = setTimeout(() => setStep(1), 300);
+            return () => clearTimeout(t);
+        }
+    }, [isDialogOpen]);
+
+    const handleFormSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (step === 1) {
+            if (!email) return;
+            setStep(2);
+        } else {
+            handleReminder();
+        }
+    };
+
+    const handleReminder = async () => {
+        if (!email) return;
+        setReminding(true);
+        trackEvent('Set Reminder Clicked', { channel: channelId, sessionId });
+        try {
+            const res = await fetch(api.sessions.reminder.path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    email,
+                    subscribeToUpdates,
+                    subscribeToStories,
+                }),
+            });
+
+            if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
+
+            const message = await res.json();
+            const description = message.message?.split(". ")[1] ?? message.message?.split(". ")[0] ?? `You'll receive an email with the next session schedule.`;
+            const title = message.message?.split(". ")[1] ? message.message?.split(". ")[0] : `You're on the list.`;
+
+            trackEvent('Set Reminder Success', { channel: channelId, sessionId, email });
+            toast({
+                title,
+                description,
+            });
+            setIsDialogOpen(false);
+            setEmail("");
+        } catch (err) {
+            trackEvent('Set Reminder Failed', { channel: channelId, sessionId, error: String(err) });
+            toast({
+                title: "Error",
+                description: "Could not subscribe. Please try again.",
+                variant: "destructive",
+            });
+        } finally {
+            setReminding(false);
+        }
+    };
+
+    return (
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+                <Button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]">
+                    Reserve My Seat
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
+                <DialogHeader>
+                    <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
+                    <DialogDescription className="text-white/60 font-sans text-sm">
+                        Enter your email address to receive an invitation to the next session.
+                    </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleFormSubmit} className="py-2 overflow-visible px-1 -mx-1">
+                    <AnimatePresence mode="wait" initial={false}>
+                        {step === 1 && (
+                            <motion.div
+                                key="step1"
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -20 }}
+                                transition={{ duration: 0.2 }}
+                                className="space-y-6"
+                            >
+                                <div className="space-y-3 mt-4">
+                                    <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">
+                                        Email Address
+                                    </Label>
+                                    <Input
+                                        id="email"
+                                        type="email"
+                                        placeholder="youraddress@email.com"
+                                        required
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
+                                    />
+                                </div>
+                                <DialogFooter>
+                                    <Button type="submit" className="w-full h-16 bg-primary text-primary-foreground font-serif text-xl shadow-lg">
+                                        Continue
+                                    </Button>
+                                </DialogFooter>
+                            </motion.div>
+                        )}
+                        {step === 2 && (
+                            <motion.div
+                                key="step2"
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                transition={{ duration: 0.2 }}
+                                className="space-y-6 mt-4"
+                            >
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                        <div className="flex flex-col space-y-1">
+                                            <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
+                                            <p className="text-xs text-white/50">Weekly email about new features</p>
+                                        </div>
+                                        <Switch checked={subscribeToUpdates} onCheckedChange={setSubscribeToUpdates} />
+                                    </div>
+
+                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                        <div className="flex flex-col space-y-1">
+                                            <Label className="text-sm font-medium text-white">Subscribe to new stories</Label>
+                                            <p className="text-xs text-white/50">Be notified about new stories</p>
+                                        </div>
+                                        <Switch checked={subscribeToStories} onCheckedChange={setSubscribeToStories} />
+                                    </div>
+
+                                    <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
+                                        <div className="flex flex-col space-y-1">
+                                            <Label className="text-sm font-medium text-white">Follow us on X</Label>
+                                        </div>
+                                        <a href="https://x.com/25thchptr" target="_blank" rel="noopener noreferrer">
+                                            <Button variant="outline" size="sm" type="button" className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10">
+                                                Follow
+                                            </Button>
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <DialogFooter className="flex-col sm:flex-col gap-3">
+                                    <Button type="submit" disabled={reminding} className="w-full h-16 bg-primary text-primary-foreground font-serif text-xl shadow-lg">
+                                        Confirm
+                                    </Button>
+                                    <Button type="button" variant="ghost" onClick={() => setStep(1)} className="w-full text-white/50 hover:text-white h-12">
+                                        Back
+                                    </Button>
+                                </DialogFooter>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+export default function UpcomingSession() {
+    const channelId = DEFAULT_CHANNEL_ID;
+    const { sessionStatus, activeSession: nextSession, isLoading, wsConnected, isSessionLive } = useLiveState(channelId);
+    const [_, setLocation] = useLocation();
     const [openFaq, setOpenFaq] = useState<string | null>(null);
 
     const {
@@ -79,37 +246,6 @@ export default function UpcomingSession() {
     } = useSessionReplay({ channelId, notableOnly: true });
 
     const replayRef = useRef<HTMLDivElement>(null);
-    const [isReplayVisible, setIsReplayVisible] = useState(false);
-
-    useEffect(() => {
-        const el = replayRef.current;
-        if (!el) return;
-
-        const observer = new IntersectionObserver(
-            ([entry]) => {
-                if (entry.isIntersecting) {
-                    setIsReplayVisible(true);
-                    // Once activated, no need to keep observing
-                    observer.disconnect();
-                }
-            },
-            {
-                // Trigger slightly before the element is fully in view
-                rootMargin: "0px 0px -10% 0px",
-                threshold: 0.15,
-            }
-        );
-
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, []);
-
-    useEffect(() => {
-        if (!isDialogOpen) {
-            const t = setTimeout(() => setStep(1), 300);
-            return () => clearTimeout(t);
-        }
-    }, [isDialogOpen]);
 
     const [timeLeft, setTimeLeft] = useState("");
     const [timerHelpText, setTimerHelpText] = useState("Starts In");
@@ -152,59 +288,6 @@ export default function UpcomingSession() {
 
     // If session is active, the user should be redirected anyway, but we show a link
     const isScheduled = sessionStatus === 'scheduled' && nextSession;
-
-    const handleFormSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (step === 1) {
-            if (!email) return;
-            setStep(2);
-        } else {
-            handleReminder();
-        }
-    };
-    const handleReminder = async () => {
-        if (!email) return;
-        setReminding(true);
-        trackEvent('Set Reminder Clicked', { channel: channelId, sessionId: nextSession?.id });
-        try {
-            const res = await fetch(api.sessions.reminder.path, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sessionId: nextSession?.id, // Will be undefined if no session
-                    email,
-                    subscribeToUpdates,
-                    subscribeToStories
-                })
-            });
-
-            // Even if 404 (no session), we might have saved the user as 'Global Interest'
-            // So we treat 404 as success too, or check for success in body
-            if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
-
-            const message = await res.json();
-            const description = message.message?.split(". ")[1] ?? message.message?.split(". ")[0] ?? `You'll receive an email with the next session schedule.`;
-            const title = message.message?.split(". ")[1] ? message.message?.split(". ")[0] : `You're on the list.`;
-
-            trackEvent('Set Reminder Success', { channel: channelId, sessionId: nextSession?.id, email });
-            toast({
-                title,
-                description,
-            });
-            setIsDialogOpen(false);
-            setEmail("");
-        } catch (err) {
-            trackEvent('Set Reminder Failed', { channel: channelId, sessionId: nextSession?.id, error: String(err) });
-            toast({
-                title: "Error",
-                description: "Could not subscribe. Please try again.",
-                variant: "destructive"
-            });
-        } finally {
-            setReminding(false);
-        }
-    };
-
 
     // Construct schema params and validate before creating the full JSON-LD object
     const schemaParams = nextSession ? {
@@ -297,10 +380,10 @@ export default function UpcomingSession() {
             )}
 
             {/* Hero Section */}
-            <div className="min-h-screen max-w-3xl w-full flex items-start justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
-                <div className="max-w-xl w-full">
-                    <p className="py-6 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
-                    <Card className="bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
+            <div className="min-h-screen max-w-3xl h-full w-full flex items-start justify-center py-2 px-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
+                <div className="flex flex-col flex-1 max-w-xl min-h-full h-full w-full">
+                    <p className="py-5 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
+                    <Card className="h-full bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
                         <CardHeader className="text-center pb-0 pt-10">
 
@@ -322,7 +405,7 @@ export default function UpcomingSession() {
                                 {nextSession && (
                                     <>
                                         <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                            <h2 className="text-3xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
+                                            <h2 className="text-3xl font-serif text-white text-center mb-4 tracking-tight leading-tight">{nextSession.title}</h2>
                                             <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
                                                 {nextSession.description}
                                             </p>
@@ -332,127 +415,7 @@ export default function UpcomingSession() {
                                 )}
 
                                 <div className="space-y-4">
-                                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                                        <DialogTrigger asChild>
-                                            <Button
-                                                id="reminder-button"
-                                                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
-                                            >
-                                                Reserve My Seat
-                                            </Button>
-                                        </DialogTrigger>
-                                        <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
-                                            <DialogHeader>
-                                                <DialogTitle className="text-3xl font-serif mb-4">Set Reminder</DialogTitle>
-                                                <DialogDescription className="text-white/60 font-sans text-sm">
-                                                    Enter your email address to receive an invitation to the next session.
-                                                </DialogDescription>
-                                            </DialogHeader>
-                                            <form onSubmit={handleFormSubmit} className="py-2 overflow-visible px-1 -mx-1">
-                                                <AnimatePresence mode="wait" initial={false}>
-                                                    {step === 1 && (
-                                                        <motion.div
-                                                            key="step1"
-                                                            initial={{ opacity: 0, x: -20 }}
-                                                            animate={{ opacity: 1, x: 0 }}
-                                                            exit={{ opacity: 0, x: -20 }}
-                                                            transition={{ duration: 0.2 }}
-                                                            className="space-y-6"
-                                                        >
-                                                            <div className="space-y-3 mt-4">
-                                                                <Label htmlFor="email" className="text-xs tracking-widest text-primary/60 ml-1 hidden">Email Address</Label>
-                                                                <Input
-                                                                    id="email"
-                                                                    type="email"
-                                                                    placeholder="youraddress@email.com"
-                                                                    required
-                                                                    value={email}
-                                                                    onChange={(e) => setEmail(e.target.value)}
-                                                                    className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
-                                                                />
-                                                            </div>
-                                                            <DialogFooter>
-                                                                <Button
-                                                                    type="submit"
-                                                                    className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
-                                                                >
-                                                                    Continue
-                                                                </Button>
-                                                            </DialogFooter>
-                                                        </motion.div>
-                                                    )}
-                                                    {step === 2 && (
-                                                        <motion.div
-                                                            key="step2"
-                                                            initial={{ opacity: 0, x: 20 }}
-                                                            animate={{ opacity: 1, x: 0 }}
-                                                            exit={{ opacity: 0, x: 20 }}
-                                                            transition={{ duration: 0.2 }}
-                                                            className="space-y-6 mt-4"
-                                                        >
-                                                            <div className="space-y-4">
-                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                                    <div className="flex flex-col space-y-1">
-                                                                        <Label className="text-sm font-medium text-white">Subscribe to updates</Label>
-                                                                        <p className="text-xs text-white/50">Weekly email about new features</p>
-                                                                    </div>
-                                                                    <Switch
-                                                                        checked={subscribeToUpdates}
-                                                                        onCheckedChange={setSubscribeToUpdates}
-                                                                    />
-                                                                </div>
-
-                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                                    <div className="flex flex-col space-y-1">
-                                                                        <Label className="text-sm font-medium text-white">Subscribe to new stories</Label>
-                                                                        <p className="text-xs text-white/50">Be notified about new stories</p>
-                                                                    </div>
-                                                                    <Switch
-                                                                        checked={subscribeToStories}
-                                                                        onCheckedChange={setSubscribeToStories}
-                                                                    />
-                                                                </div>
-
-                                                                <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                                                                    <div className="flex flex-col space-y-1">
-                                                                        <Label className="text-sm font-medium text-white">Follow us on X</Label>
-                                                                    </div>
-                                                                    <a href="https://x.com/25thchptr" target="_blank" rel="noopener noreferrer">
-                                                                        <Button
-                                                                            variant="outline"
-                                                                            size="sm"
-                                                                            type="button"
-                                                                            className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
-                                                                        >
-                                                                            Follow
-                                                                        </Button>
-                                                                    </a>
-                                                                </div>
-                                                            </div>
-
-                                                            <DialogFooter className="flex-col sm:flex-col gap-3">
-                                                                <Button
-                                                                    type="submit"
-                                                                    disabled={reminding}
-                                                                    className="w-full h-16 bg-primary text-primary-foreground font-serif text-lg shadow-lg"
-                                                                >
-                                                                    Confirm
-                                                                </Button>
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="ghost"
-                                                                    onClick={() => setStep(1)}
-                                                                    className="w-full text-white/50 hover:text-white h-12"
-                                                                >
-                                                                    Back
-                                                                </Button>
-                                                            </DialogFooter>
-                                                        </motion.div>
-                                                    )}
-                                                </AnimatePresence>
-                                            </form>
-                                        </DialogContent>
-                                    </Dialog>
+                                    <ReserveSeatButton channelId={channelId} sessionId={nextSession?.id} />
 
                                     <div className="text-center pt-2">
                                         <Button
@@ -491,9 +454,9 @@ export default function UpcomingSession() {
             {/* Previously Aired Section */}
             <section
                 id="previous-session"
-                className="w-full min-h-screen px-6 py-12 bg-zinc-950/30"
+                className="w-full min-h-screen h-screen px-6 py-12 bg-zinc-950/30"
             >
-                <div className="max-w-md mx-auto space-y-10">
+                <div className="max-w-md flex flex-col min-h-full mx-auto space-y-10">
 
                     <div className="px-6 text-center space-y-3">
                         <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
@@ -509,59 +472,52 @@ export default function UpcomingSession() {
                         </p>
                     </div>
 
-                    <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all duration-500">
+                    <div className="flex-1 group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all duration-500">
 
-                        <div className="grid lg:grid-cols-2 gap-0 items-stretch">
-
-                            {/* Thumbnail */}
-                            <div ref={replayRef} className="relative aspect-video bg-black overflow-hidden">
-                                {/* <img
-                                    src="/preview/previous-session.png"
-                                    alt="Previous Session"
-                                    className="w-full h-full object-cover opacity-90 group-hover:scale-[1.02] transition-transform duration-700"
-                                /> */}
+                        <div className="flex flex-col lg:grid lg:grid-cols-[1.4fr_0.6fr] h-full">
+                            <div ref={replayRef}
+                                className="relative flex-[1.4] min-h-[500px] lg:min-h-0 bg-black overflow-hidden"
+                            >
                                 <Replay
                                     session={previousSession}
                                     blocks={previousBlocks || []}
-                                    isActive={isReplayVisible}
+                                    onPlay={() => {
+                                        trackEvent('Replay Started', { channel: channelId });
+                                    }}
                                 />
-
                                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
                             </div>
 
                             {/* Content */}
-                            <div className="p-10 flex flex-col justify-center space-y-6">
-
+                            <div className="p-6 lg:p-8 flex flex-col justify-center">
                                 <div className="space-y-4">
                                     <p className="text-xs tracking-[0.3em] uppercase text-primary/50">
                                         {/* Episode One */}
-                                        {previousSession?.episodeNumber}
+                                        {`Episode ${previousSession?.episodeNumber}`}
                                     </p>
-
                                     <h3 className="text-3xl font-serif text-white leading-tight">
                                         {/* Desert Rose: 12 Days Since the Last Rain */}
                                         {previousSession?.title}
                                     </h3>
-
                                     <p className="text-white/60 leading-relaxed">
                                         {/* Two friends travel across a foreign country, uncovering secrets and dangers. */}
                                         {previousSession?.description}
                                     </p>
                                 </div>
-
-                                <div className="flex flex-wrap gap-4">
-                                    <Button
-                                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-serif px-8"
-                                        onClick={() => {
-                                            trackEvent('Replay Started', { channel: channelId });
-                                        }}
-                                    >
-                                        Watch Replay
-                                    </Button>
-                                </div>
-
                             </div>
                         </div>
+                    </div>
+                    <div className="flex flex-row flex-wrap justify-center gap-4">
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                trackEvent('Learn More Clicked', { channel: channelId });
+                                document.getElementById('preview')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className="text-base text-white/50 hover:text-white transition-colors px-8"
+                        >
+                            Learn More
+                        </Button>
                     </div>
                 </div>
             </section>
@@ -572,7 +528,7 @@ export default function UpcomingSession() {
                     {/* Mockup Display */}
                     <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
                         <div className="space-y-4 px-6 mx-auto">
-                            <h2 className="text-4xl font-serif  text-center text-white font-semibold tracking-tight whitespace-nowrap">The 25th Chapter</h2>
+                            <h2 className="text-4xl font-serif  text-center text-white tracking-tight whitespace-nowrap">The 25th Chapter</h2>
                             <p className="text-white/50 font-sans text-lg max-w-2xl leading-relaxed">
                                 Join fellow readers in a live session to unfold the narrative.
                             </p>
@@ -589,9 +545,9 @@ export default function UpcomingSession() {
 
                     <div className="min-h-[98vh]">
                         {/* FAQ Aside */}
-                        <aside id="faq" className="border py-24 my-12 w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
+                        <aside id="faq" className="border pt-12 pb-16 my-12 w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                             <div className=" text-center space-y-4">
-                                <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
+                                <h2 className="text-3xl font-serif text-white">FAQ</h2>
                                 <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">Everything you need to know</p>
                             </div>
 
@@ -666,6 +622,23 @@ export default function UpcomingSession() {
                     </div>
                 </div>
             </section >
+
+            {/* Footer CTA */}
+            <section className="w-full py-24 px-6 bg-gradient-to-b from-black to-zinc-950/80">
+                <div className="max-w-md mx-auto text-center space-y-10">
+                    <div className="space-y-4">
+                        <h2 className="text-4xl font-serif text-white tracking-tight">
+                            The next story starts soon
+                        </h2>
+                        <p className="text-white/50 font-sans leading-relaxed max-w-lg mx-auto">
+                            Don't miss the next chapter. Reserve your seat and we'll send you a reminder when the session begins.
+                        </p>
+                    </div>
+                    <div className="max-w-sm mx-auto">
+                        <ReserveSeatButton channelId={channelId} sessionId={nextSession?.id} />
+                    </div>
+                </div>
+            </section>
         </div >
     );
 }
