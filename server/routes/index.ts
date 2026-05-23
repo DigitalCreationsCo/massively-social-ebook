@@ -4,12 +4,14 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage";
 import { generateStoryBlock, generateStoryImage } from "../blocks/ai";
 import { api } from "@shared/routes";
-import { WS_EVENTS, type WsMessage, type Block, type Session } from "@shared/schema";
+import { WS_EVENTS, type WsMessage, type Block, type Session, sessions, blocks, chat } from "@shared/schema";
 import { trackUserEmail } from "../analytics";
 import { CalendarService } from "../calendar";
 import { isAdmin, isDevOnly } from "../middleware/auth";
 import { logger } from "../logger";
 import { formatInTZ } from "@shared/date";
+import { and, asc, desc, eq, SQL } from "drizzle-orm";
+import { db } from "server/db";
 
 type ChannelId = string;
 
@@ -305,6 +307,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(next || null);
   });
 
+  // GET /api/sessions/history
+  // Supports fetching a specific completed session, or defaults to the most recent completed.
+  app.get('/api/sessions/history', async (req, res) => {
+    const { channelId, sessionId } = req.query;
+
+    if (!channelId) {
+      return res.status(400).json({ error: 'channelId is required' });
+    }
+
+    try {
+      let queryConditions = and(
+        eq(sessions.channelId, String(channelId)),
+        eq(sessions.status, 'completed')
+      );
+
+      // If a specific session is requested, append it to the conditions
+      if (sessionId) {
+        queryConditions = and(queryConditions, eq(sessions.id, Number(sessionId)));
+      }
+
+      const sessionResult = await (db.query as any).sessions.findFirst({
+        where: queryConditions,
+        orderBy: [desc(sessions.scheduledEnd)], // Always get the most recent if no ID provided
+      });
+
+      if (!sessionResult) {
+        return res.status(404).json({ error: 'No completed sessions found.' });
+      }
+
+      res.json(sessionResult);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch session history' });
+    }
+  });
+
   app.get("/api/sessions/:id/ics", async (req, res) => {
     const id = parseInt(req.params.id);
     const sessionList = await storage.listSessions();
@@ -500,7 +537,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     const block = await storage.getBlockById(dbState.currentBlockId);
-    if (!block) return res.status(404).json({ message: "No active session" });  
+    if (!block) return res.status(404).json({ message: "No active session" });
 
     const now = Date.now();
     res.json({
@@ -512,6 +549,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       initialTimeToNextDecision: dbState.initialTimeToDecision,
       turnsToNextChoice: dbState.turnsToNextChoice,
     });
+  });
+
+  // GET /api/blocks/history
+  // Retrieves blocks in chronological order, optionally filtered by notable, with top 10 chats.
+  app.get('/api/blocks/history', async (req, res) => {
+    const { sessionId, notableOnly } = req.query;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+
+    try {
+      let queryConditions: SQL<unknown> | undefined = eq(blocks.sessionId, Number(sessionId));
+
+      // Optional notableOnly filter [cite: 18, 23]
+      if (notableOnly === 'true') {
+        queryConditions = and(queryConditions, eq(blocks.isNotable, true));
+      }
+
+      const historicalBlocks = await (db.query as any).blocks.findMany({
+        where: queryConditions,
+        orderBy: [asc(blocks.createdAt)], // Chronological order [cite: 19, 23]
+        with: {
+          chats: {
+            limit: 10, // Top 10 chats per block 
+            orderBy: [asc(chat.createdAt)]
+          }
+        }
+      });
+
+      res.json(historicalBlocks);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch historical blocks' });
+    }
   });
 
   app.get(api.chat.history.path, async (req, res) => {
@@ -736,12 +807,12 @@ export async function handleGameLoopTick(
   try {
     const activeChannelIds = await storage.getActiveChannels();
     logger.debug(`[GameLoop] Checking ${activeChannelIds.length} active channels`, 'game-loop');
-    
+
     for (const channel of activeChannelIds) {
       const channelId = channel.channelId;
       try {
         let dbState = getCachedState(channelId);
-        
+
         if (!dbState) {
           dbState = await storage.getChannelState(channelId);
           if (dbState) {
@@ -784,143 +855,285 @@ export async function handleGameLoopTick(
           continue;
           // ───────────────────────────────────────────────────────────
         }
-      const activeSession = await storage.getSessionById(dbState.activeSessionId);
-      if (!activeSession) {
-        // Stale FK — clear it so we don't loop forever on a missing session.
-        await storage.upsertChannelState(channelId, { activeSessionId: null, currentBlockId: null });
-        continue;
-      }
+        const activeSession = await storage.getSessionById(dbState.activeSessionId);
+        if (!activeSession) {
+          // Stale FK — clear it so we don't loop forever on a missing session.
+          await storage.upsertChannelState(channelId, { activeSessionId: null, currentBlockId: null });
+          continue;
+        }
 
-      // ── Session overrun: enter resolution phase ───────────────────────
-      if (dbState.currentPhase !== "resolution" && now >= activeSession.scheduledEnd.getTime()) {
-        const locked = await storage.tryAcquireGameLock(channelId, 90_000);
-        if (!locked) continue;
-        try {
-          logger.info(
-            `Session "${activeSession.title}" reaching scheduled end. Entering resolution.`,
-            "session"
-          );
+        // ── Session overrun: enter resolution phase ───────────────────────
+        if (dbState.currentPhase !== "resolution" && now >= activeSession.scheduledEnd.getTime()) {
+          const locked = await storage.tryAcquireGameLock(channelId, 90_000);
+          if (!locked) continue;
+          try {
+            logger.info(
+              `Session "${activeSession.title}" reaching scheduled end. Entering resolution.`,
+              "session"
+            );
 
-          let resolutionBlockId = dbState.currentBlockId;
-          const currentBlock = dbState.currentBlockId
-            ? await storage.getBlockById(dbState.currentBlockId)
-            : null;
+            let resolutionBlockId = dbState.currentBlockId;
+            const currentBlock = dbState.currentBlockId
+              ? await storage.getBlockById(dbState.currentBlockId)
+              : null;
 
-          if (currentBlock) {
-            try {
-              const previousContext = `Previous event: ${currentBlock.content}`;
-              const nextContent = await generateStoryBlock(channelId, previousContext, true);
-              let imageUrl: string;
+            if (currentBlock) {
               try {
-                imageUrl = await generateStoryImage(nextContent.content);
-              } catch {
-                imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                const previousContext = `Previous event: ${currentBlock.content}`;
+                const nextContent = await generateStoryBlock(channelId, previousContext, true);
+                let imageUrl: string;
+                try {
+                  imageUrl = await generateStoryImage(nextContent.content);
+                } catch {
+                  imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                }
+                const resBlock = await storage.createBlock({
+                  channelId,
+                  sessionId: activeSession.id,
+                  ...nextContent,
+                  imageUrl,
+                });
+                resolutionBlockId = resBlock.id;
+                logger.info(`Resolution block generated: ${resBlock.id}`, "gameloop");
+              } catch (err) {
+                logger.error(
+                  "Failed to generate resolution block",
+                  "gameloop",
+                  err instanceof Error ? err : new Error(String(err))
+                );
               }
-              const resBlock = await storage.createBlock({
-                channelId,
-                sessionId: activeSession.id,
-                ...nextContent,
-                imageUrl,
-              });
-              resolutionBlockId = resBlock.id;
-              logger.info(`Resolution block generated: ${resBlock.id}`, "gameloop");
-            } catch (err) {
-              logger.error(
-                "Failed to generate resolution block",
-                "gameloop",
-                err instanceof Error ? err : new Error(String(err))
-              );
             }
-          }
 
-          const resPhaseEndsAt = new Date(now + 60_000);
-          await storage.upsertChannelState(channelId, {
-            currentPhase: "resolution",
-            phaseEndsAt: resPhaseEndsAt,
-            decisionEndsAt: resPhaseEndsAt,
-            turnsToNextChoice: 0,
-            initialTimeToDecision: 0,
-            currentBlockId: resolutionBlockId,
-          });
-
-          if (!resolutionBlockId) {
-            break;
-          }
-          const resBlock = await storage.getBlockById(resolutionBlockId);
-          if (!resBlock) {
-            break;
-          }
-          updateChannelCache(channelId, {
-            currentPhase: "resolution",
-            phaseEndsAt: resPhaseEndsAt,
-            decisionEndsAt: resPhaseEndsAt,
-            initialTimeToDecision: 0,
-            turnsToNextChoice: 0,
-            currentBlockId: resolutionBlockId,
-            activeSessionId: activeSession.id,
-          }, resBlock as CachedBlock);
-
-          broadcast(channelId, {
-            type: "SYNC_STATE",
-            payload: {
-              ...resBlock,
-              createdAt: resBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-              phase: "resolution",
-              timeRemaining: 60_000,
-              timeToNextDecision: 0,
-              initialTimeToNextDecision: 0,
+            const resPhaseEndsAt = new Date(now + 60_000);
+            await storage.upsertChannelState(channelId, {
+              currentPhase: "resolution",
+              phaseEndsAt: resPhaseEndsAt,
+              decisionEndsAt: resPhaseEndsAt,
               turnsToNextChoice: 0,
-            },
-          });
-        } finally {
-          await storage.releaseGameLock(channelId);
+              initialTimeToDecision: 0,
+              currentBlockId: resolutionBlockId,
+            });
+
+            if (!resolutionBlockId) {
+              break;
+            }
+            const resBlock = await storage.getBlockById(resolutionBlockId);
+            if (!resBlock) {
+              break;
+            }
+            updateChannelCache(channelId, {
+              currentPhase: "resolution",
+              phaseEndsAt: resPhaseEndsAt,
+              decisionEndsAt: resPhaseEndsAt,
+              initialTimeToDecision: 0,
+              turnsToNextChoice: 0,
+              currentBlockId: resolutionBlockId,
+              activeSessionId: activeSession.id,
+            }, resBlock as CachedBlock);
+
+            broadcast(channelId, {
+              type: "SYNC_STATE",
+              payload: {
+                ...resBlock,
+                createdAt: resBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+                phase: "resolution",
+                timeRemaining: 60_000,
+                timeToNextDecision: 0,
+                initialTimeToNextDecision: 0,
+                turnsToNextChoice: 0,
+              },
+            });
+          } finally {
+            await storage.releaseGameLock(channelId);
+          }
+          continue;
         }
-        continue;
-      }
 
-      // ── Resolution ended: mark session complete ───────────────────────
-      if (dbState.currentPhase === "resolution" && now >= dbState.phaseEndsAt.getTime()) {
-        const locked = await storage.tryAcquireGameLock(channelId, 10_000);
-        if (!locked) continue;
-        try {
-          logger.info(
-            `Ending session "${activeSession.title}" for channel ${channelId} after resolution.`,
-            "session"
-          );
-          await storage.updateSessionStatus(activeSession.id, "completed");
-          await storage.upsertChannelState(channelId, {
-            activeSessionId: null,
-            currentBlockId: null,
-            currentPhase: "reading",
-          });
-          
-          // Clear cache on session end
-          channelCache.delete(channelId);
-          
-          broadcast(channelId, {
-            type: "SESSION_STATUS",
-            payload: { status: "completed", session: activeSession },
-          });
-        } finally {
-          await storage.releaseGameLock(channelId);
+        // ── Resolution ended: mark session complete ───────────────────────
+        if (dbState.currentPhase === "resolution" && now >= dbState.phaseEndsAt.getTime()) {
+          const locked = await storage.tryAcquireGameLock(channelId, 10_000);
+          if (!locked) continue;
+          try {
+            logger.info(
+              `Ending session "${activeSession.title}" for channel ${channelId} after resolution.`,
+              "session"
+            );
+            await storage.updateSessionStatus(activeSession.id, "completed");
+            await storage.upsertChannelState(channelId, {
+              activeSessionId: null,
+              currentBlockId: null,
+              currentPhase: "reading",
+            });
+
+            // Clear cache on session end
+            channelCache.delete(channelId);
+
+            broadcast(channelId, {
+              type: "SESSION_STATUS",
+              payload: { status: "completed", session: activeSession },
+            });
+          } finally {
+            await storage.releaseGameLock(channelId);
+          }
+          continue;
         }
-        continue;
-      }
 
-      // ── Normal game loop ─────────────────────────────────────────────
-      if (now >= dbState.phaseEndsAt.getTime()) {
-        const locked = await storage.tryAcquireGameLock(channelId, 90_000);
-        if (!locked) continue;
+        // ── Normal game loop ─────────────────────────────────────────────
+        if (now >= dbState.phaseEndsAt.getTime()) {
+          const locked = await storage.tryAcquireGameLock(channelId, 90_000);
+          if (!locked) continue;
 
-        try {
-          const currentBlock = dbState.currentBlockId
-            ? await storage.getBlockById(dbState.currentBlockId)
-            : null;
+          try {
+            const currentBlock = dbState.currentBlockId
+              ? await storage.getBlockById(dbState.currentBlockId)
+              : null;
 
-          if (dbState.currentPhase === "reading") {
+            if (dbState.currentPhase === "reading") {
 
-            if (dbState.turnsToNextChoice > 0) {
-              // ── Narrative turn: advance story without a vote ──────────
+              if (dbState.turnsToNextChoice > 0) {
+                // ── Narrative turn: advance story without a vote ──────────
+                let nextData: {
+                  title: string;
+                  content: string;
+                  imageUrl: string;
+                  optionA?: unknown;
+                  optionB?: unknown;
+                };
+
+                // Prefer the pre-generated pending block for choice A (used as
+                // the default narrative continuation).
+                const pending = currentBlock
+                  ? await storage.getPendingBlock(currentBlock.id, "A")
+                  : null;
+
+                if (pending) {
+                  nextData = {
+                    title: pending.title,
+                    content: pending.content,
+                    imageUrl: pending.imageUrl,
+                    optionA: pending.optionA,
+                    optionB: pending.optionB,
+                  };
+                  await storage.deletePendingBlocksForBlock(currentBlock!.id);
+                } else {
+                  // Fallback: generate inline if pre-generation hasn't finished.
+                  const opt = currentBlock?.optionA;
+                  const optData = opt as { label?: string; description?: string; } | null;
+                  const winnerText = `${optData?.label || "Choice A"}: ${optData?.description || "The story continues..."}`;
+                  const previousContext = `${currentBlock?.title ?? ""}\n${currentBlock?.content ?? ""}${winnerText}`;
+                  const nextContent = await generateStoryBlock(channelId, previousContext);
+                  let imageUrl: string;
+                  try {
+                    imageUrl = await generateStoryImage(nextContent.content);
+                  } catch {
+                    imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                  }
+                  nextData = { ...nextContent, imageUrl };
+                }
+
+                const newBlock = await storage.createBlock({
+                  channelId,
+                  sessionId: activeSession.id,
+                  ...nextData,
+                } as any);
+
+                const newTurns = dbState.turnsToNextChoice - 1;
+                const newPhaseEndsAt = new Date(now + NARRATIVE_TURN_MS);
+                const newDecisionEndsAt = new Date(newPhaseEndsAt.getTime() + newTurns * NARRATIVE_TURN_MS);
+
+                await storage.upsertChannelState(channelId, {
+                  currentBlockId: newBlock.id,
+                  turnsToNextChoice: newTurns,
+                  phaseEndsAt: newPhaseEndsAt,
+                  decisionEndsAt: newDecisionEndsAt,
+                });
+
+                updateChannelCache(channelId, {
+                  currentPhase: "reading",
+                  phaseEndsAt: newPhaseEndsAt,
+                  decisionEndsAt: newDecisionEndsAt,
+                  initialTimeToDecision: dbState.initialTimeToDecision,
+                  turnsToNextChoice: newTurns,
+                  currentBlockId: newBlock.id,
+                  activeSessionId: activeSession.id,
+                }, newBlock as CachedBlock);
+
+                pregenerateOption(channelId, newBlock, "A");
+                pregenerateOption(channelId, newBlock, "B");
+
+                logger.info(`Advanced story to block ${newBlock.id}`, "gameloop");
+                logger.debug(
+                  `Narrative turn. Turns remaining: ${newTurns}, ` +
+                  `Next phase ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC, ` +
+                  `Time to decision: ${Math.round((newDecisionEndsAt.getTime() - now) / 1000)}s`,
+                  "gameloop"
+                );
+
+                broadcast(channelId, {
+                  type: "SYNC_STATE",
+                  payload: {
+                    ...newBlock,
+                    createdAt: newBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+                    currentPhase: "reading",
+                    timeRemaining: NARRATIVE_TURN_MS,
+                    timeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
+                    initialTimeToNextDecision: dbState.initialTimeToDecision,
+                    turnsToNextChoice: newTurns,
+                  },
+                });
+
+              } else {
+                // ── Enter voting phase ────────────────────────────────────
+                const newPhaseEndsAt = new Date(now + VOTING_PHASE_MS);
+                await storage.upsertChannelState(channelId, {
+                  currentPhase: "voting",
+                  phaseEndsAt: newPhaseEndsAt,
+                  decisionEndsAt: newPhaseEndsAt,
+                  initialTimeToDecision: VOTING_PHASE_MS,
+                });
+
+                if (currentBlock) {
+                  updateChannelCache(channelId, {
+                    currentPhase: "voting",
+                    phaseEndsAt: newPhaseEndsAt,
+                    decisionEndsAt: newPhaseEndsAt,
+                    initialTimeToDecision: VOTING_PHASE_MS,
+                    turnsToNextChoice: 0,
+                    currentBlockId: currentBlock.id,
+                    activeSessionId: activeSession.id,
+                  }, currentBlock as CachedBlock);
+                }
+
+                logger.info(
+                  `ENTERING VOTING PHASE. Ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
+                  "gameloop"
+                );
+
+                if (currentBlock) {
+                  broadcast(channelId, {
+                    type: "SYNC_STATE",
+                    payload: {
+                      ...currentBlock,
+                      createdAt: currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+                      phase: "voting",
+                      timeRemaining: VOTING_PHASE_MS,
+                      timeToNextDecision: VOTING_PHASE_MS,
+                      initialTimeToNextDecision: VOTING_PHASE_MS,
+                      turnsToNextChoice: 0,
+                    },
+                  });
+                }
+              }
+
+            } else if (dbState.currentPhase === "voting") {
+              // ── Voting phase ended: tally and advance ─────────────────
+              const votes = currentBlock
+                ? await storage.getVotesForBlock(currentBlock.id)
+                : [];
+              const countA = votes.filter(v => v.choice === "A").length;
+              const countB = votes.filter(v => v.choice === "B").length;
+              const winner: "A" | "B" = countA >= countB ? "A" : "B";
+
               let nextData: {
                 title: string;
                 content: string;
@@ -929,35 +1142,52 @@ export async function handleGameLoopTick(
                 optionB?: unknown;
               };
 
-              // Prefer the pre-generated pending block for choice A (used as
-              // the default narrative continuation).
-              const pending = currentBlock
-                ? await storage.getPendingBlock(currentBlock.id, "A")
-                : null;
+              try {
+                const pending = currentBlock
+                  ? await storage.getPendingBlock(currentBlock.id, winner)
+                  : null;
 
-              if (pending) {
-                nextData = {
-                  title: pending.title,
-                  content: pending.content,
-                  imageUrl: pending.imageUrl,
-                  optionA: pending.optionA,
-                  optionB: pending.optionB,
-                };
-                await storage.deletePendingBlocksForBlock(currentBlock!.id);
-              } else {
-                // Fallback: generate inline if pre-generation hasn't finished.
-                const opt = currentBlock?.optionA;
-                const optData = opt as { label?: string; description?: string; } | null;
-                const winnerText = `${optData?.label || "Choice A"}: ${optData?.description || "The story continues..."}`;
-                const previousContext = `${currentBlock?.title ?? ""}\n${currentBlock?.content ?? ""}${winnerText}`;
-                const nextContent = await generateStoryBlock(channelId, previousContext);
-                let imageUrl: string;
-                try {
-                  imageUrl = await generateStoryImage(nextContent.content);
-                } catch {
-                  imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                if (pending) {
+                  nextData = {
+                    title: pending.title,
+                    content: pending.content,
+                    imageUrl: pending.imageUrl,
+                    optionA: pending.optionA,
+                    optionB: pending.optionB,
+                  };
+                  await storage.deletePendingBlocksForBlock(currentBlock!.id);
+                } else {
+                  // Fallback: winner's branch wasn't pre-generated in time.
+                  const opt = winner === "A" ? currentBlock?.optionA : currentBlock?.optionB;
+                  const optData = opt as { label?: string; description?: string; } | null;
+                  const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
+                  const previousContext = `Previous event: ${currentBlock?.content ?? ""}\nThe readers chose: ${winnerText}`;
+                  const nextContent = await generateStoryBlock(channelId, previousContext);
+                  let imageUrl: string;
+                  try {
+                    imageUrl = await generateStoryImage(nextContent.content);
+                  } catch {
+                    logger.warn(
+                      `Game loop image generation failed for ${channelId}, using fallback`,
+                      "gameloop"
+                    );
+                    imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
+                  }
+                  nextData = { ...nextContent, imageUrl };
                 }
-                nextData = { ...nextContent, imageUrl };
+              } catch (err) {
+                logger.error(
+                  "Failed to adopt next block",
+                  "gameloop",
+                  err instanceof Error ? err : new Error(String(err))
+                );
+                nextData = {
+                  title: "Temporal Distortion",
+                  content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
+                  imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+                  optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
+                  optionB: { label: "Wait", description: "Wait for the distortion to pass." },
+                };
               }
 
               const newBlock = await storage.createBlock({
@@ -966,22 +1196,24 @@ export async function handleGameLoopTick(
                 ...nextData,
               } as any);
 
-              const newTurns = dbState.turnsToNextChoice - 1;
-              const newPhaseEndsAt = new Date(now + NARRATIVE_TURN_MS);
+              const newTurns = getRandomTurns();
+              const newPhaseEndsAt = new Date(now + POST_VOTE_READING_MS);
               const newDecisionEndsAt = new Date(newPhaseEndsAt.getTime() + newTurns * NARRATIVE_TURN_MS);
 
               await storage.upsertChannelState(channelId, {
+                currentPhase: "reading",
                 currentBlockId: newBlock.id,
                 turnsToNextChoice: newTurns,
                 phaseEndsAt: newPhaseEndsAt,
                 decisionEndsAt: newDecisionEndsAt,
+                initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
               });
 
               updateChannelCache(channelId, {
                 currentPhase: "reading",
                 phaseEndsAt: newPhaseEndsAt,
                 decisionEndsAt: newDecisionEndsAt,
-                initialTimeToDecision: dbState.initialTimeToDecision,
+                initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
                 turnsToNextChoice: newTurns,
                 currentBlockId: newBlock.id,
                 activeSessionId: activeSession.id,
@@ -990,11 +1222,9 @@ export async function handleGameLoopTick(
               pregenerateOption(channelId, newBlock, "A");
               pregenerateOption(channelId, newBlock, "B");
 
-              logger.info(`Advanced story to block ${newBlock.id}`, "gameloop");
-              logger.debug(
-                `Narrative turn. Turns remaining: ${newTurns}, ` +
-                `Next phase ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC, ` +
-                `Time to decision: ${Math.round((newDecisionEndsAt.getTime() - now) / 1000)}s`,
+              logger.info(
+                `VOTING ENDED. Starting reading phase with ${newTurns} turns. ` +
+                `Overall ends at: ${formatInTZ(newDecisionEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
                 "gameloop"
               );
 
@@ -1004,209 +1234,50 @@ export async function handleGameLoopTick(
                   ...newBlock,
                   createdAt: newBlock.createdAt?.toISOString() ?? new Date().toISOString(),
                   currentPhase: "reading",
-                  timeRemaining: NARRATIVE_TURN_MS,
+                  timeRemaining: POST_VOTE_READING_MS,
                   timeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
-                  initialTimeToNextDecision: dbState.initialTimeToDecision,
+                  initialTimeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
                   turnsToNextChoice: newTurns,
                 },
               });
-
-            } else {
-              // ── Enter voting phase ────────────────────────────────────
-              const newPhaseEndsAt = new Date(now + VOTING_PHASE_MS);
-              await storage.upsertChannelState(channelId, {
-                currentPhase: "voting",
-                phaseEndsAt: newPhaseEndsAt,
-                decisionEndsAt: newPhaseEndsAt,
-                initialTimeToDecision: VOTING_PHASE_MS,
-              });
-
-              if (currentBlock) {
-                updateChannelCache(channelId, {
-                  currentPhase: "voting",
-                  phaseEndsAt: newPhaseEndsAt,
-                  decisionEndsAt: newPhaseEndsAt,
-                  initialTimeToDecision: VOTING_PHASE_MS,
-                  turnsToNextChoice: 0,
-                  currentBlockId: currentBlock.id,
-                  activeSessionId: activeSession.id,
-                }, currentBlock as CachedBlock);
-              }
-
-              logger.info(
-                `ENTERING VOTING PHASE. Ends at: ${formatInTZ(newPhaseEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
-                "gameloop"
-              );
-
-              if (currentBlock) {
-                broadcast(channelId, {
-                  type: "SYNC_STATE",
-                  payload: {
-                    ...currentBlock,
-                    createdAt: currentBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                    phase: "voting",
-                    timeRemaining: VOTING_PHASE_MS,
-                    timeToNextDecision: VOTING_PHASE_MS,
-                    initialTimeToNextDecision: VOTING_PHASE_MS,
-                    turnsToNextChoice: 0,
-                  },
-                });
-              }
             }
 
-          } else if (dbState.currentPhase === "voting") {
-            // ── Voting phase ended: tally and advance ─────────────────
-            const votes = currentBlock
-              ? await storage.getVotesForBlock(currentBlock.id)
-              : [];
-            const countA = votes.filter(v => v.choice === "A").length;
-            const countB = votes.filter(v => v.choice === "B").length;
-            const winner: "A" | "B" = countA >= countB ? "A" : "B";
-
-            let nextData: {
-              title: string;
-              content: string;
-              imageUrl: string;
-              optionA?: unknown;
-              optionB?: unknown;
-            };
-
-            try {
-              const pending = currentBlock
-                ? await storage.getPendingBlock(currentBlock.id, winner)
-                : null;
-
-              if (pending) {
-                nextData = {
-                  title: pending.title,
-                  content: pending.content,
-                  imageUrl: pending.imageUrl,
-                  optionA: pending.optionA,
-                  optionB: pending.optionB,
-                };
-                await storage.deletePendingBlocksForBlock(currentBlock!.id);
-              } else {
-                // Fallback: winner's branch wasn't pre-generated in time.
-                const opt = winner === "A" ? currentBlock?.optionA : currentBlock?.optionB;
-                const optData = opt as { label?: string; description?: string; } | null;
-                const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
-                const previousContext = `Previous event: ${currentBlock?.content ?? ""}\nThe readers chose: ${winnerText}`;
-                const nextContent = await generateStoryBlock(channelId, previousContext);
-                let imageUrl: string;
-                try {
-                  imageUrl = await generateStoryImage(nextContent.content);
-                } catch {
-                  logger.warn(
-                    `Game loop image generation failed for ${channelId}, using fallback`,
-                    "gameloop"
-                  );
-                  imageUrl = await storage.getRandomImage(channelId) || "/images/img_1771936309521_ieycq2.jpg";
-                }
-                nextData = { ...nextContent, imageUrl };
-              }
-            } catch (err) {
-              logger.error(
-                "Failed to adopt next block",
-                "gameloop",
-                err instanceof Error ? err : new Error(String(err))
-              );
-              nextData = {
-                title: "Temporal Distortion",
-                content: "A temporal distortion disrupts the timeline. We must re-establish connection.",
-                imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-                optionA: { label: "Reconnect", description: "Attempt to reconnect to the timeline." },
-                optionB: { label: "Wait", description: "Wait for the distortion to pass." },
-              };
-            }
-
-            const newBlock = await storage.createBlock({
-              channelId,
-              sessionId: activeSession.id,
-              ...nextData,
-            } as any);
-
-            const newTurns = getRandomTurns();
-            const newPhaseEndsAt = new Date(now + POST_VOTE_READING_MS);
-            const newDecisionEndsAt = new Date(newPhaseEndsAt.getTime() + newTurns * NARRATIVE_TURN_MS);
-
-            await storage.upsertChannelState(channelId, {
-              currentPhase: "reading",
-              currentBlockId: newBlock.id,
-              turnsToNextChoice: newTurns,
-              phaseEndsAt: newPhaseEndsAt,
-              decisionEndsAt: newDecisionEndsAt,
-              initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
-            });
-
-            updateChannelCache(channelId, {
-              currentPhase: "reading",
-              phaseEndsAt: newPhaseEndsAt,
-              decisionEndsAt: newDecisionEndsAt,
-              initialTimeToDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
-              turnsToNextChoice: newTurns,
-              currentBlockId: newBlock.id,
-              activeSessionId: activeSession.id,
-            }, newBlock as CachedBlock);
-
-            pregenerateOption(channelId, newBlock, "A");
-            pregenerateOption(channelId, newBlock, "B");
-
-            logger.info(
-              `VOTING ENDED. Starting reading phase with ${newTurns} turns. ` +
-              `Overall ends at: ${formatInTZ(newDecisionEndsAt.getTime(), 'UTC', "h:mm:ss a")} UTC`,
-              "gameloop"
+          } catch (err) {
+            logger.error(
+              `Game loop transition error for ${channelId}`,
+              "gameloop",
+              err instanceof Error ? err : new Error(String(err))
             );
+          } finally {
+            await storage.releaseGameLock(channelId);
+          }
 
+        } else {
+          const cachedBlock = getCachedBlock(channelId);
+          if (cachedBlock) {
             broadcast(channelId, {
               type: "SYNC_STATE",
               payload: {
-                ...newBlock,
-                createdAt: newBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                currentPhase: "reading",
-                timeRemaining: POST_VOTE_READING_MS,
-                timeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
-                initialTimeToNextDecision: Math.max(0, newDecisionEndsAt.getTime() - now),
-                turnsToNextChoice: newTurns,
+                ...cachedBlock,
+                createdAt: cachedBlock.createdAt?.toISOString() ?? new Date().toISOString(),
+                phase: dbState.currentPhase,
+                timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
+                timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
+                initialTimeToNextDecision: dbState.initialTimeToDecision,
+                turnsToNextChoice: dbState.turnsToNextChoice,
               },
             });
           }
-
-        } catch (err) {
-          logger.error(
-            `Game loop transition error for ${channelId}`,
-            "gameloop",
-            err instanceof Error ? err : new Error(String(err))
-          );
-        } finally {
-          await storage.releaseGameLock(channelId);
         }
 
-      } else {
-        const cachedBlock = getCachedBlock(channelId);
-        if (cachedBlock) {
-          broadcast(channelId, {
-            type: "SYNC_STATE",
-            payload: {
-              ...cachedBlock,
-              createdAt: cachedBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-              phase: dbState.currentPhase,
-              timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
-              timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
-              initialTimeToNextDecision: dbState.initialTimeToDecision,
-              turnsToNextChoice: dbState.turnsToNextChoice,
-            },
-          });
-        }
+      } catch (err) {
+        logger.error(
+          `Unhandled error in game loop for channel ${channelId}`,
+          "gameloop",
+          err instanceof Error ? err : new Error(String(err))
+        );
       }
-
-    } catch (err) {
-      logger.error(
-        `Unhandled error in game loop for channel ${channelId}`,
-        "gameloop",
-        err instanceof Error ? err : new Error(String(err))
-      );
     }
-  }
   } catch (err) {
     logger.error('Error in game loop tick', 'gameloop', err instanceof Error ? err : new Error(String(err)));
   }

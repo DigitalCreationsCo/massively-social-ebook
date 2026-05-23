@@ -172,140 +172,140 @@ export function useLiveState(channelId: string) {
     return () => clearInterval(interval);
   }, [activeSession, currentBlock?.phase]);
 
-   // WebSocket Connection
-   useEffect(() => {
-     if (!channelId || channelId.trim() === '') {
-       console.warn('[LiveState] Skipping WebSocket connection — channelId is empty');
-       return;
-     }
+  // WebSocket Connection
+  useEffect(() => {
+    if (!channelId || channelId.trim() === '') {
+      console.warn('[LiveState] Skipping WebSocket connection — channelId is empty');
+      return;
+    }
 
-     let cancelled = false;
-     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-     let reconnectAttempts = 0;
-     const MAX_RECONNECT_ATTEMPTS = 10;
-     const BASE_RECONNECT_DELAY = 1000;
-     const MAX_RECONNECT_DELAY = 30000;
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const BASE_RECONNECT_DELAY = 1000;
+    const MAX_RECONNECT_DELAY = 30000;
 
-     let wsUrl: string;
-     if (import.meta.env.VITE_WS_URL) {
-       wsUrl = `${import.meta.env.VITE_WS_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
-     } else {
-       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-       const host = window.location.host || 'localhost:5001';
-       wsUrl = `${protocol}//${host}/ws?channelId=${encodeURIComponent(channelId)}`;
-     }
+    let wsUrl: string;
+    if (import.meta.env.VITE_WS_URL) {
+      wsUrl = `${import.meta.env.VITE_WS_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host || 'localhost:5001';
+      wsUrl = `${protocol}//${host}/ws?channelId=${encodeURIComponent(channelId)}`;
+    }
 
-     const scheduleReconnect = () => {
-       if (cancelled) return;
-       if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-         console.error('[LiveState] Max reconnection attempts reached. Giving up.');
-         return;
-       }
-       reconnectAttempts++;
-       const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
-       const jitter = Math.random() * 1000;
-       console.log(`[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-       reconnectTimer = setTimeout(connect, delay + jitter);
-     };
+    const scheduleReconnect = () => {
+      if (cancelled) return;
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('[LiveState] Max reconnection attempts reached. Giving up.');
+        return;
+      }
+      reconnectAttempts++;
+      const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
+      const jitter = Math.random() * 1000;
+      console.log(`[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+      reconnectTimer = setTimeout(connect, delay + jitter);
+    };
 
-     const connect = () => {
-       if (cancelled) return;
+    const connect = () => {
+      if (cancelled) return;
 
-       try {
-         const socket = new WebSocket(wsUrl);
-         wsRef.current = socket;
+      try {
+        const socket = new WebSocket(wsUrl);
+        wsRef.current = socket;
 
-         socket.onopen = () => {
-           if (cancelled) { socket.close(); return; }
-           reconnectAttempts = 0;
-           setWsConnected(true);
-           console.log('[LiveState] Connected to channel:', channelId);
-         };
+        socket.onopen = () => {
+          if (cancelled) { socket.close(); return; }
+          reconnectAttempts = 0;
+          setWsConnected(true);
+          console.log('[LiveState] Connected to channel:', channelId);
+        };
 
-         socket.onclose = (event) => {
-           if (cancelled) return;
-           setWsConnected(false);
-           console.warn('[LiveState] WebSocket closed:', event.code, event.reason);
-           scheduleReconnect();
-         };
+        socket.onclose = (event) => {
+          if (cancelled) return;
+          setWsConnected(false);
+          console.warn('[LiveState] WebSocket closed:', event.code, event.reason);
+          scheduleReconnect();
+        };
 
-         socket.onerror = (error) => {
-           if (cancelled) return;
-           console.error('[LiveState] WebSocket error:', error);
-         };
+        socket.onerror = (error) => {
+          if (cancelled) return;
+          console.error('[LiveState] WebSocket error:', error);
+        };
 
-         socket.onmessage = (event) => {
-           try {
-             const message = JSON.parse(event.data);
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
 
-             if (message.type === 'SYNC_STATE') {
-               const payload = message.payload as StoryState;
-               setLocalTurnsToNextChoice(payload.turnsToNextChoice);
-               if (payload.timeRemaining !== undefined) {
-                 setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
-               }
-               if (payload.timeToNextDecision !== undefined) {
-                 setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
-               }
-               if (payload.initialTimeToNextDecision !== undefined) {
-                 setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
-               }
-             }
-             else if (message.type === 'CHAT_MESSAGE') {
-               const payload = message.payload as ChatMessage;
-               queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
-                 if (old.some(m => m.id === payload.id)) return old;
-                 return [...old, payload];
-               });
-             }
-             else if (message.type === 'VOTE_UPDATE') {
-               const payload = message.payload as VoteResults;
-               setVoteResults(payload);
-             }
-             else if (message.type === 'REACTION_RECEIVED') {
-               const payload = message.payload as Reaction;
-               setReactions(prev => [...prev, payload]);
-             }
-              else if (message.type === 'SESSION_STATUS') {
-                const payload = message.payload as { status: SessionStatus, session: Session | null; };
-                const now = Date.now();
-                const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
-
-                if (isPast && payload.status === 'active') {
-                  setSessionStatus('completed');
-                  setActiveSession(null);
-                  void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
-                } else if (payload.session) {
-                  setSessionStatus(payload.status);
-                  setActiveSession(payload.session);
-                  if (payload.status === 'active') {
-                    queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
-                    queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
-                  }
-                } else {
-                  setSessionStatus(payload.status);
-                  void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
-                }
+            if (message.type === 'SYNC_STATE') {
+              const payload = message.payload as StoryState;
+              setLocalTurnsToNextChoice(payload.turnsToNextChoice);
+              if (payload.timeRemaining !== undefined) {
+                setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
               }
-           } catch (err) {
-             console.error('[LiveState] Failed to parse WS message:', err);
-           }
-         };
-       } catch (err) {
-         console.error('[LiveState] Failed to create WebSocket:', err);
-         scheduleReconnect();
-       }
-     };
+              if (payload.timeToNextDecision !== undefined) {
+                setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
+              }
+              if (payload.initialTimeToNextDecision !== undefined) {
+                setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
+              }
+            }
+            else if (message.type === 'CHAT_MESSAGE') {
+              const payload = message.payload as ChatMessage;
+              queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
+                if (old.some(m => m.id === payload.id)) return old;
+                return [...old, payload];
+              });
+            }
+            else if (message.type === 'VOTE_UPDATE') {
+              const payload = message.payload as VoteResults;
+              setVoteResults(payload);
+            }
+            else if (message.type === 'REACTION_RECEIVED') {
+              const payload = message.payload as Reaction;
+              setReactions(prev => [...prev, payload]);
+            }
+            else if (message.type === 'SESSION_STATUS') {
+              const payload = message.payload as { status: SessionStatus, session: Session | null; };
+              const now = Date.now();
+              const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
 
-     connect();
+              if (isPast && payload.status === 'active') {
+                setSessionStatus('completed');
+                setActiveSession(null);
+                void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+              } else if (payload.session) {
+                setSessionStatus(payload.status);
+                setActiveSession(payload.session);
+                if (payload.status === 'active') {
+                  queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
+                  queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+                }
+              } else {
+                setSessionStatus(payload.status);
+                void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+              }
+            }
+          } catch (err) {
+            console.error('[LiveState] Failed to parse WS message:', err);
+          }
+        };
+      } catch (err) {
+        console.error('[LiveState] Failed to create WebSocket:', err);
+        scheduleReconnect();
+      }
+    };
 
-     return () => {
-       cancelled = true;
-       if (reconnectTimer) clearTimeout(reconnectTimer);
-       wsRef.current?.close();
-       wsRef.current = null;
-     };
-   }, [queryClient, channelId]);
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [queryClient, channelId]);
 
   // Refine the Macro Phase calculation to be more robust
   useEffect(() => {
@@ -345,6 +345,8 @@ export function useLiveState(channelId: string) {
       id: Date.now(),
       channelId,
       sessionId: activeSession?.id || null,
+      blockId: currentBlock?.id || null,
+      userId: username,
       username,
       text,
       createdAt: new Date()

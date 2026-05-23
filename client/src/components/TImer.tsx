@@ -1,31 +1,56 @@
 import { AnimatePresence, motion } from "framer-motion";
 
-export default function Timer({ timeLeft, timerHelpText }: { timeLeft: string, timerHelpText: string; }) {
+export default function Timer({
+    timeLeft,
+    timerHelpText
+}: {
+    timeLeft: string;
+    timerHelpText: string;
+}) {
     const characters = timeLeft.split("");
 
     return (
         timeLeft && (
             <div className="text-center space-y-1 mb-2">
-                <p className="text-[10px] tracking-[0.3em] text-primary/50 uppercase">
+                <p className="text-xs tracking-[0.3em] text-primary/50 uppercase">
                     { timerHelpText }
                 </p>
-                <div className="flex justify-start items-baseline overflow-hidden h-14 w-48 mx-auto">
+
+                <div className="flex justify-center items-center h-14 overflow-visible">
                     { characters.map((char, index) => (
-                        <div key={ `${index}-${char}` } className="relative w-fit">
-                            <AnimatePresence mode="popLayout">
+                        <div
+                            key={ index }
+                            className="relative w-6 h-full overflow-visible"
+                        >
+                            <AnimatePresence mode="wait" initial={ false }>
                                 <motion.span
-                                    key={ char }
-                                    initial={ { y: 30, opacity: 1 } }
-                                    animate={ { y: 0, opacity: 1 } }
-                                    exit={ { y: -30, opacity: 0 } }
-                                    transition={ {
-                                        duration: 0.2,
-                                        ease: [ 0.23, 1, 0.32, 1 ] // Custom quintic ease-out
+                                    key={ `${index}-${char}` }
+                                    initial={ {
+                                        y: "40%",
+                                        opacity: 0
                                     } }
-                                    className={ `w-fit text-center text-5xl font-serif font-semibold tabular-nums ${timeLeft === "Starting..."
-                                        ? "text-primary/50 animate-pulse"
-                                        : "text-primary text-glow-primary"
-                                        }` }
+                                    animate={ {
+                                        y: "0%",
+                                        opacity: 1
+                                    } }
+                                    exit={ {
+                                        y: "-30%",
+                                        opacity: 0
+                                    } }
+                                    transition={ {
+                                        duration: 0.22,
+                                        ease: [ 0.23, 1, 0.32, 1 ]
+                                    } }
+                                    className={ `
+                                        absolute inset-0
+                                        flex items-center justify-center
+                                        text-5xl font-serif font-semibold
+                                        tabular-nums
+                                        ${timeLeft === "Starting..."
+                                            ? "text-primary/50 animate-pulse"
+                                            : "text-primary text-glow-primary"
+                                        }
+                                    `}
                                 >
                                     { char }
                                 </motion.span>
@@ -36,4 +61,4 @@ export default function Timer({ timeLeft, timerHelpText }: { timeLeft: string, t
             </div>
         )
     );
-};
+}

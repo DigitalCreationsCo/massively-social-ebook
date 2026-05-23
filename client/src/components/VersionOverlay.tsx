@@ -19,7 +19,7 @@ export function VersionOverlay() {
     <div className="relative">
       <span
       data-testid="version-overlay"
-        className="absolute bottom-0 right-7 text-[10px] font-mono text-white/20 z-50 pointer-events-none select-none">
+        className="absolute bottom-0 w-full text-center text-[10px] font-mono text-white/20 z-50 pointer-events-none select-none">
       { finalDisplayVersion }
       </span>
     </div>

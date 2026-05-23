@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, Link } from "wouter";
 import { useLiveState } from "@/hooks/use-live-state";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ import {
 } from "@/components/ui/collapsible";
 import { motion, AnimatePresence } from "framer-motion";
 import Timer from "@/components/TImer";
+import { useSessionReplay } from "@/hooks/use-session-replay";
+import { Replay } from "@/components/Replay";
 
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -69,7 +71,38 @@ export default function UpcomingSession() {
     const [subscribeToStories, setSubscribeToStories] = useState(true);
     const [_, setLocation] = useLocation();
     const [step, setStep] = useState<1 | 2>(1);
-    const [ openFaq, setOpenFaq ] = useState<string | null>(null);
+    const [openFaq, setOpenFaq] = useState<string | null>(null);
+
+    const {
+        session: previousSession,
+        blocks: previousBlocks,
+    } = useSessionReplay({ channelId, notableOnly: true });
+
+    const replayRef = useRef<HTMLDivElement>(null);
+    const [isReplayVisible, setIsReplayVisible] = useState(false);
+
+    useEffect(() => {
+        const el = replayRef.current;
+        if (!el) return;
+
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry.isIntersecting) {
+                    setIsReplayVisible(true);
+                    // Once activated, no need to keep observing
+                    observer.disconnect();
+                }
+            },
+            {
+                // Trigger slightly before the element is fully in view
+                rootMargin: "0px 0px -10% 0px",
+                threshold: 0.15,
+            }
+        );
+
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         if (!isDialogOpen) {
@@ -271,7 +304,7 @@ export default function UpcomingSession() {
                         <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
                         <CardHeader className="text-center pb-0 pt-10">
 
-                            {/* <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight"> */ }
+                            {/* <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight"> */}
                             <CardDescription className="text-white/80 font-sans text-lg">
                                 {isScheduled && (
                                     <span>
@@ -289,9 +322,9 @@ export default function UpcomingSession() {
                                 {nextSession && (
                                     <>
                                         <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                            <h2 className="text-3xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{ nextSession.title }</h2>
+                                            <h2 className="text-3xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
                                             <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                                                { nextSession.description }
+                                                {nextSession.description}
                                             </p>
                                         </div>
                                         <Timer timeLeft={timeLeft} timerHelpText={timerHelpText} />
@@ -421,7 +454,19 @@ export default function UpcomingSession() {
                                         </DialogContent>
                                     </Dialog>
 
-                                    <Button
+                                    <div className="text-center pt-2">
+                                        <Button
+                                            variant="ghost"
+                                            onClick={() => {
+                                                trackEvent('Watch Previous Session Clicked', { channel: channelId });
+                                                document.getElementById('previous-session')?.scrollIntoView({ behavior: 'smooth' });
+                                            }}
+                                            className="text-base text-white/50 hover:text-white transition-colors"
+                                        >
+                                            Watch the previous session →
+                                        </Button>
+                                    </div>
+                                    {/* <Button
                                         variant="secondary"
                                         className="w-full font-sans text-xs uppercase tracking-[0.3em] py-6 transition-all"
                                         onClick={() => {
@@ -430,7 +475,7 @@ export default function UpcomingSession() {
                                         }}
                                     >
                                         Preview chapter
-                                    </Button>
+                                    </Button> */}
                                 </div>
                             </div>
                             <div className="pt-8 border-t border-white/5 text-center">
@@ -442,6 +487,84 @@ export default function UpcomingSession() {
                     </Card >
                 </div >
             </div >
+
+            {/* Previously Aired Section */}
+            <section
+                id="previous-session"
+                className="w-full min-h-screen px-6 py-12 bg-zinc-950/30"
+            >
+                <div className="max-w-md mx-auto space-y-10">
+
+                    <div className="px-6 text-center space-y-3">
+                        <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+                            Previously Aired
+                        </p>
+
+                        <h2 className="text-4xl font-serif text-white tracking-tight">
+                            Catch up before tonight’s session
+                        </h2>
+
+                        <p className="text-white/50 max-w-2xl mx-auto font-sans">
+                            Replay the previous chapter and experience how the story unfolded.
+                        </p>
+                    </div>
+
+                    <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all duration-500">
+
+                        <div className="grid lg:grid-cols-2 gap-0 items-stretch">
+
+                            {/* Thumbnail */}
+                            <div ref={replayRef} className="relative aspect-video bg-black overflow-hidden">
+                                {/* <img
+                                    src="/preview/previous-session.png"
+                                    alt="Previous Session"
+                                    className="w-full h-full object-cover opacity-90 group-hover:scale-[1.02] transition-transform duration-700"
+                                /> */}
+                                <Replay
+                                    session={previousSession}
+                                    blocks={previousBlocks || []}
+                                    isActive={isReplayVisible}
+                                />
+
+                                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
+                            </div>
+
+                            {/* Content */}
+                            <div className="p-10 flex flex-col justify-center space-y-6">
+
+                                <div className="space-y-4">
+                                    <p className="text-xs tracking-[0.3em] uppercase text-primary/50">
+                                        {/* Episode One */}
+                                        {previousSession?.episodeNumber}
+                                    </p>
+
+                                    <h3 className="text-3xl font-serif text-white leading-tight">
+                                        {/* Desert Rose: 12 Days Since the Last Rain */}
+                                        {previousSession?.title}
+                                    </h3>
+
+                                    <p className="text-white/60 leading-relaxed">
+                                        {/* Two friends travel across a foreign country, uncovering secrets and dangers. */}
+                                        {previousSession?.description}
+                                    </p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-4">
+                                    <Button
+                                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-serif px-8"
+                                        onClick={() => {
+                                            trackEvent('Replay Started', { channel: channelId });
+                                        }}
+                                    >
+                                        Watch Replay
+                                    </Button>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             {/* Preview Section */}
             < section id="preview" className="min-h-screen w-full px-6 mx-auto py-12" >
@@ -465,7 +588,7 @@ export default function UpcomingSession() {
                     </div>
 
                     <div className="min-h-[98vh]">
-                        {/* FAQ Aside */ }
+                        {/* FAQ Aside */}
                         <aside id="faq" className="border py-24 my-12 w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3">
                             <div className=" text-center space-y-4">
                                 <h2 className="text-3xl font-serif font-semibold text-white">FAQ</h2>
@@ -473,7 +596,7 @@ export default function UpcomingSession() {
                             </div>
 
                             <div className="space-y-3">
-                                { [
+                                {[
                                     {
                                         id: "session",
                                         q: "What is a 25-minute session?",
@@ -496,46 +619,46 @@ export default function UpcomingSession() {
                                     },
                                 ].map((faq) => (
                                     <Collapsible
-                                        key={ faq.id }
-                                        open={ openFaq === faq.id }
-                                        onOpenChange={ () => setOpenFaq(openFaq === faq.id ? null : faq.id) }
+                                        key={faq.id}
+                                        open={openFaq === faq.id}
+                                        onOpenChange={() => setOpenFaq(openFaq === faq.id ? null : faq.id)}
                                     >
                                         <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-lg p-4 text-left transition-colors hover:bg-white/5 data-[state=open]:bg-white/5">
-                                            <h3 className="text-2xl font-serif text-white">{ faq.q }</h3>
-                                            <ChevronDown className={ `h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${openFaq === faq.id ? "rotate-180" : ""}` } />
+                                            <h3 className="text-2xl font-serif text-white">{faq.q}</h3>
+                                            <ChevronDown className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${openFaq === faq.id ? "rotate-180" : ""}`} />
                                         </CollapsibleTrigger>
                                         <CollapsibleContent className="overflow-hidden transition-all duration-200 data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-                                            <div className="px-4 pb-4">
-                                                { faq.a ? (
-                                                    <p className="text-white/50 font-sans text-sm leading-relaxed">
-                                                        { faq.a }
+                                            <div className="px-4 py-4">
+                                                {faq.a ? (
+                                                    <p className="text-white/50 font-sans text-lg leading-relaxed">
+                                                        {faq.a}
                                                     </p>
                                                 ) : (
-                                                    <div className="space-y-3">
-                                                            <p className="text-white/50 font-sans text-sm leading-relaxed">
-                                                                You can add The 25th Chapter to your home screen for a native app-like experience.
-                                                                Click below for a simple guide.
-                                                            </p>
-                                                            <Link to="/install">
-                                                                <Button variant="outline" size="sm" className="border-white/20 bg-white/5 hover:bg-white/10">
-                                                                    Installation Instructions
-                                                                </Button>
-                                                            </Link>
-                                                        </div>
-                                                ) }
+                                                    <div className="space-y-4">
+                                                        <p className="text-white/50 font-sans text-lg leading-relaxed">
+                                                            You can add The 25th Chapter to your home screen for a native app-like experience.
+                                                            Click below for a simple guide.
+                                                        </p>
+                                                        <Link to="/install">
+                                                            <Button variant="outline" size="sm" className="text-lg border-white/20 bg-white/5 hover:bg-white/10">
+                                                                Installation Instructions
+                                                            </Button>
+                                                        </Link>
+                                                    </div>
+                                                )}
                                             </div>
                                         </CollapsibleContent>
                                     </Collapsible>
-                                )) }
+                                ))}
                             </div>
 
                             <Button
                                 variant="secondary"
                                 className="w-full bg-white/10 hover:bg-white/20 text-white/50 font-sans leading-relaxed text-center text-base py-6 border border-white/10"
-                                onClick={ () => {
+                                onClick={() => {
                                     trackEvent('Return to Top Clicked');
                                     window.scrollTo({ top: 0, behavior: 'smooth' });
-                                } }
+                                }}
                             >
                                 Return to top
                             </Button>

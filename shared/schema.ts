@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
+import { relations } from "drizzle-orm/_relations";
 
 // Define a custom tsvector type since Drizzle doesn't have it natively
 const tsvector = customType<{ data: string }>({
@@ -134,6 +135,7 @@ export const sessions = pgTable("sessions", {
       .where(sql`status IN ('active', 'scheduled')`),
     unqChannelScheduledStart: unique("unq_channel_start")
       .on(table.channelId, table.scheduledStart),
+    sessionHistoryIdx: index('idx_session_history_idx').on(table.channelId, table.status, table.scheduledEnd),
   };
 });
 
@@ -273,6 +275,7 @@ export const blocks = pgTable("blocks", {
     idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
     idxBlocksEmbedding: index("idx_blocks_embedding").using("hnsw", table.embedding.op("vector_cosine_ops")),
     idxBlocksSearch: index("idx_blocks_search").using("gin", table.searchVector),
+    idxBlockReplay: index("idx_block_replay").on(table.sessionId, table.isNotable, table.createdAt),
   };
 });
 
@@ -328,10 +331,26 @@ export const chat = pgTable("chat", {
     .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
   sessionId: integer("session_id")
     .references(() => sessions.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
-  username: text("username").notNull(),
+  blockId: integer("block_id")
+    .references(() => blocks.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
+  username: text("username"),
   text: text("text").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  idxChatBlock: index("idx_chat_block").on(table.blockId, table.createdAt),
+  idxChatSession: index("idx_chat_session").on(table.sessionId, table.createdAt),
+}));
+
+export const blocksRelations = relations(blocks, ({ many }) => ({
+  chats: many(chat),
+}));
+
+export const chatRelations = relations(chat, ({ one }) => ({
+  block: one(blocks, {
+    fields: [ chat.blockId ],
+    references: [ blocks.id ],
+  }),
+}));
 
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
 export type ChatMessage = typeof chat.$inferSelect;

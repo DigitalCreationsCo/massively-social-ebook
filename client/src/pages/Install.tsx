@@ -9,7 +9,7 @@ export default function Install() {
   return (
     <main className="flex flex-col h-[100dvh] w-full bg-black text-foreground overflow-auto">
       <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-start p-4">
-        <Button variant="ghost" size="icon" onClick={() => setLocation('/')}>
+        <Button variant="ghost" size="icon" onClick={ () => setLocation('/upcoming') }>
           <ArrowLeft className="size-5" />
         </Button>
       </header>
