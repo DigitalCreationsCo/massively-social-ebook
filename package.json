@@ -1,6 +1,6 @@
 {
   "name": "the-25th-chapter",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -10,9 +10,9 @@
     "dev": "rm -rf node_modules/.vite && NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
     "build": "NODE_ENV=production tsx scripts/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
-    "release:patch": "npm version patch && git push origin main --tags",
-    "release:minor": "npm version minor && git push origin main --tags",
-    "release:major": "npm version major && git push origin main --tags",
+    "release:patch": "HUSKY=0 npm version patch && git push origin main --tags",
+    "release:minor": "HUSKY=0 npm version minor && git push origin main --tags",
+    "release:major": "HUSKY=0 npm version major && git push origin main --tags",
     "check": "tsc",
     "test": "vitest",
     "db:dev": "supabase start",

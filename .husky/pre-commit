@@ -1,11 +1,11 @@
-# #!/bin/bash
+#!/bin/bash
 
-# set -e
+set -e
 
-# echo "[+] pre-commit: running tests..."
-# npm run test -- --run
+echo "[+] pre-commit: running tests..."
+npm run test -- --run
 
-# echo "[+] pre-commit: running build..."
-# npm run build
+echo "[+] pre-commit: running build..."
+npm run build
 
-# echo "[+] pre-commit: validation passed."
+echo "[+] pre-commit: validation passed."
