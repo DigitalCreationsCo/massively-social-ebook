@@ -327,10 +327,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         queryConditions = and(queryConditions, eq(sessions.id, Number(sessionId)));
       }
 
-      const sessionResult = await (db.query as any).sessions.findFirst({
-        where: queryConditions,
-        orderBy: [desc(sessions.scheduledEnd)], // Always get the most recent if no ID provided
-      });
+      const [sessionResult] = await db.select()
+        .from(sessions)
+        .where(queryConditions)
+        .orderBy(desc(sessions.scheduledEnd)) // Always get the most recent if no ID provided
+        .limit(1);
 
       if (!sessionResult) {
         return res.status(404).json({ error: 'No completed sessions found.' });
@@ -338,6 +339,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       res.json(sessionResult);
     } catch (error) {
+      logger.error(
+        'Failed to fetch session history',
+        'routes',
+        error instanceof Error ? error : new Error(String(error))
+      );
       res.status(500).json({ error: 'Failed to fetch session history' });
     }
   });
@@ -581,6 +587,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       res.json(historicalBlocks);
     } catch (error) {
+      logger.error(
+        'Failed to fetch historical blocks',
+        'routes',
+        error instanceof Error ? error : new Error(String(error))
+      );
       res.status(500).json({ error: 'Failed to fetch historical blocks' });
     }
   });
