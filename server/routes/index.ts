@@ -533,8 +533,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ── WebSocket Setup ──────────────────────────────────────────────────────
+  //
+  // noServer + manual upgrade routing: attaching via `{ server, path: "/ws" }`
+  // makes `ws` call abortHandshake(400) on every other WebSocket path (including
+  // Vite HMR at /__vite_hmr), which breaks hot module reload in development.
 
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on("upgrade", (request, socket, head) => {
+    const pathname = new URL(request.url || "", `http://${request.headers.host}`).pathname;
+    if (pathname !== "/ws") return;
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  });
 
   // Map of WS connection → channel.  This is intentionally process-local:
   // each instance only delivers to connections it owns.  For multi-instance

@@ -72,8 +72,8 @@ export default function UpcomingSession() {
         }
     }, [isDialogOpen]);
 
-    const [ timeLeft, setTimeLeft ] = useState("");
-    const [ timerHelpText, setTimerHelpText ] = useState("Starts In");
+    const [timeLeft, setTimeLeft] = useState("");
+    const [timerHelpText, setTimerHelpText] = useState("Starts In");
 
     useEffect(() => {
         if (!nextSession?.scheduledStart) return;
@@ -265,15 +265,15 @@ export default function UpcomingSession() {
                         <CardHeader className="text-center pb-0 pt-12">
 
                             <CardTitle className="text-3xl font-serif text-white tracking-tight mb-6 leading-tight">
-                                The next story starts soon.
+                                The next story starts soon. hello
                             </CardTitle>
                             <CardDescription className="text-white/80 font-sans text-lg">
                                 {isScheduled && (
                                     <span>
-                                        { isTodayInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Today" :
+                                        {isTodayInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Today" :
                                             isTomorrowInTZ(new Date(nextSession.scheduledStart), userTimeZone) ? "Tomorrow" :
                                                 formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "EEEE, MMMM do")
-                                        } at { formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "h:mm a") } { getTimezoneDisplay(userTimeZone).split(' ')[ 0 ] }
+                                        } at {formatInTZ(new Date(nextSession.scheduledStart), userTimeZone, "h:mm a")} {getTimezoneDisplay(userTimeZone).split(' ')[0]}
                                     </span>
                                 )}
                             </CardDescription>
@@ -281,18 +281,16 @@ export default function UpcomingSession() {
 
                         <CardContent className="space-y-10 pt-8 pb-12 px-8">
                             <div className="space-y-10">
-                                { nextSession && (
+                                {nextSession && (
                                     <>
-                                        <div className="space-y-4">
-                                    <p className="text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
-                                    <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                                        <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
-                                        <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                                            {nextSession.description}
-                                        </p>
-                                    </div>
-                                        </div>
-                                        {/* Urgency Trigger */ }
+                                            <p className="py-2 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">25th Chapter Presents</p>
+                                            <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
+                                                <h2 className="text-2xl font-serif text-white text-center mb-4 font-semibold tracking-tight leading-tight">{nextSession.title}</h2>
+                                                <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
+                                                    {nextSession.description}
+                                                </p>
+                                            </div>
+                                        {/* Urgency Trigger */}
                                         {/* { timeLeft && (
                                             <div className="text-center space-y-1 mb-2">
                                                 <p className="text-[10px] tracking-[0.3em] text-primary/50 uppercase">{ timerHelpText }</p>
@@ -301,9 +299,9 @@ export default function UpcomingSession() {
                                                 </div>
                                             </div>
                                         ) } */}
-                                        <Timer timeLeft={ timeLeft } timerHelpText={ timerHelpText } />
+                                        <Timer timeLeft={timeLeft} timerHelpText={timerHelpText} />
                                     </>
-                                ) }
+                                )}
 
                                 <div className="space-y-4">
                                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
