@@ -301,10 +301,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const now = Date.now();
     const active = await storage.getActiveSession(channelId);
     if (active && active.scheduledEnd.getTime() > now) {
-      return res.json(active);
+      return res.json({ session: active, channel: { ...channel, createdAt: channel.createdAt?.toISOString() ?? new Date().toISOString() } });
     }
     const next = await storage.getNextSession(channelId);
-    res.json(next || null);
+    res.json({ session: next || null, channel: { ...channel, createdAt: channel.createdAt?.toISOString() ?? new Date().toISOString() } });
   });
 
   // GET /api/sessions/history
@@ -567,11 +567,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     try {
-      let where: { sessionId: number, notableOnly?: boolean } = { sessionId: Number(sessionId) };
+      let where: Partial<Record<keyof typeof blocks, any>> = { sessionId: Number(sessionId) };
 
       // Optional notableOnly filter [cite: 18, 23]
       if (notableOnly === 'true') {
-        where = { ...where, notableOnly: true };
+        where = { ...where, isNotable: true };
       }
 
       const historicalBlocks = await db.query.blocks.findMany({

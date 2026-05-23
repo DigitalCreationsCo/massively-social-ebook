@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
 import { generateGuestName } from '@/lib/utils';
 import { useToast } from './use-toast';
-import type { Session, Reaction, Phase, MacroPhase, SessionStatus, ChatMessage } from '@shared/schema';
+import type { Session, Channel, Reaction, Phase, MacroPhase, SessionStatus, ChatMessage } from '@shared/schema';
 import { trackEvent, identifyUser } from '@/lib/analytics';
 
 export { ChatMessage };
@@ -63,26 +63,30 @@ export function useLiveState(channelId: string) {
   const [localTurnsToNextChoice, setLocalTurnsToNextChoice] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | 'loading'>('loading');
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [macroPhase, setMacroPhase] = useState<MacroPhase>('waiting');
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
   const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
 
-  const { data: initialSession, isLoading: sessionLoading } = useQuery({
+  const { data: initialData, isLoading: sessionLoading } = useQuery({
     queryKey: [api.sessions.next.path, channelId],
     queryFn: async () => {
       const res = await fetch(`${api.sessions.next.path}?channelId=${channelId}`);
       if (!res.ok) return null;
-      return res.json() as Promise<Session | null>;
+      return res.json() as Promise<{ session: Session | null; channel: Channel } | null>;
     },
     staleTime: 5000,
   });
+  const initialSession = initialData?.session ?? null;
+  const initialChannel = initialData?.channel ?? null;
 
   useEffect(() => {
     if (sessionLoading) return;
     if (!initialSession) {
       if (!wsConnected) {
         setActiveSession(null);
+        setActiveChannel(initialChannel);
         setSessionStatus('scheduled');
       }
       return;
@@ -91,13 +95,15 @@ export function useLiveState(channelId: string) {
     if (isPast && initialSession.status === 'active') {
       setSessionStatus('completed');
       setActiveSession(null);
+      setActiveChannel(initialChannel);
       return;
     }
     if (!isPast) {
       setSessionStatus(initialSession.status as SessionStatus);
       setActiveSession(initialSession);
+      setActiveChannel(initialChannel);
     }
-  }, [initialSession, sessionLoading, wsConnected]);
+  }, [initialSession, initialChannel, sessionLoading, wsConnected]);
 
   // Fetch initial REST state
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
@@ -447,6 +453,7 @@ export function useLiveState(channelId: string) {
     mostRecentMessage,
     sessionStatus,
     activeSession,
+    activeChannel,
     isSessionLive,
     macroPhase
   };

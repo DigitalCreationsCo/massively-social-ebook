@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
+import { relations } from "@shared/relations";
 
 const { Pool } = pg;
 
@@ -31,4 +32,4 @@ pool.on('remove', () => {
   console.log('[DB] Connection removed from pool');
 });
 
-export const db = drizzle({ client: pool, schema });
+export const db = drizzle({ client: pool, schema, relations });

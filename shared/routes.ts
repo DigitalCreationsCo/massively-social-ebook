@@ -14,7 +14,7 @@ export const sessionResponseSchema = z.object({
   scheduledStart: z.string(),
   scheduledEnd: z.string(),
   timezone: z.string(),
-  status: z.enum([ 'scheduled', 'active', 'completed', 'cancelled' ]),
+  status: z.enum(['scheduled', 'active', 'completed', 'cancelled']),
   createdAt: z.string(),
 });
 
@@ -23,6 +23,7 @@ export const channelSchema = z.object({
   channelId: z.string(),
   name: z.string(),
   description: z.string().nullable(),
+  coverImage: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -76,12 +77,20 @@ export const api = {
       }
     }
   },
+  nextSessionResponse: z.object({
+    session: sessionResponseSchema.nullable(),
+    channel: channelSchema,
+  }),
+
   sessions: {
     next: {
       method: 'GET' as const,
       path: '/api/sessions/next' as const,
       responses: {
-        200: sessionResponseSchema.nullable(),
+        200: z.object({
+          session: sessionResponseSchema.nullable(),
+          channel: channelSchema,
+        }),
       },
     },
     reminder: {
@@ -89,7 +98,7 @@ export const api = {
       path: '/api/sessions/reminder' as const,
       body: z.object({
         sessionId: z.number(),
-        email: z.string().email().optional(), // for future SMTP
+        email: z.email().optional(), // for future SMTP
       }),
     },
   },

@@ -5,6 +5,9 @@ import { useLiveState } from '@/hooks/use-live-state';
 import { useLocation } from 'wouter';
 import { useToast } from '@/hooks/use-toast';
 
+vi.mock('@tanstack/react-query', () => ({
+    useQuery: vi.fn().mockReturnValue({ data: null, isLoading: false }),
+}));
 vi.mock('@/hooks/use-live-state');
 vi.mock('wouter', () => ({
     useLocation: vi.fn(),

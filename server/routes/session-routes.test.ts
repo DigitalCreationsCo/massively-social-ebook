@@ -5,8 +5,13 @@ import { registerRoutes } from '.';
 import { storage } from '../storage';
 import { createServer } from 'http';
 
+// Mock DB to avoid actual database connection
+vi.mock('server/db', () => ({
+    db: {},
+}));
+
 // Mock everything needed for routes.ts initialization
-vi.mock('./storage', () => ({
+vi.mock('../storage', () => ({
     storage: {
         getCurrentBlock: vi.fn(),
         createBlock: vi.fn(),
@@ -17,6 +22,7 @@ vi.mock('./storage', () => ({
         createSession: vi.fn(),
         cancelSession: vi.fn(),
         getRandomImage: vi.fn(),
+        getChannel: vi.fn(),
         getUserByEmail: vi.fn(),
         updateUserPushToken: vi.fn(),
         createUser: vi.fn(),
@@ -47,20 +53,30 @@ describe('Session REST API', () => {
     });
 
     describe('GET /api/sessions/next', () => {
-        it('returns 200 with the next session if found', async () => {
+        const mockChannel = { channelId: 'scifi', name: 'Sci-Fi', description: null, coverImage: null, createdAt: new Date('2025-01-01') };
+
+        it('returns 200 with session and channel if session found', async () => {
+            mockedStorage.getChannel.mockResolvedValue(mockChannel as any);
             const mockSession = { id: 1, title: 'Next Session' };
             mockedStorage.getNextSession.mockResolvedValue(mockSession as any);
 
             const res = await request(app).get('/api/sessions/next?channelId=scifi');
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(mockSession);
+            expect(res.body).toEqual({
+                session: mockSession,
+                channel: { ...mockChannel, createdAt: mockChannel.createdAt.toISOString() },
+            });
         });
 
-        it('returns 200 with null if no session found', async () => {
+        it('returns 200 with null session and channel if no session found', async () => {
+            mockedStorage.getChannel.mockResolvedValue(mockChannel as any);
             mockedStorage.getNextSession.mockResolvedValue(null as any);
             const res = await request(app).get('/api/sessions/next?channelId=mystery');
             expect(res.status).toBe(200);
-            expect(res.body).toBeNull();
+            expect(res.body).toEqual({
+                session: null,
+                channel: { ...mockChannel, createdAt: mockChannel.createdAt.toISOString() },
+            });
         });
     });
 

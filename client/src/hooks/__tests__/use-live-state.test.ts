@@ -87,7 +87,7 @@ describe('useLiveState', () => {
     it('sets initial state correctly', () => {
         const { result } = renderHook(() => useLiveState('scifi'));
         expect(result.current.macroPhase).toBe('waiting');
-        expect(result.current.sessionStatus).toBe('loading');
+        expect(result.current.sessionStatus).toBe('scheduled');
         expect(result.current.wsConnected).toBe(false);
     });
 

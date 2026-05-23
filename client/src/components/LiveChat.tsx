@@ -14,6 +14,7 @@ interface LiveChatProps {
   username: string;
   onSend: (text: string) => void;
   isOpen: boolean;
+  keepOpen: boolean;
   onToggle: () => void;
 }
 
@@ -34,7 +35,7 @@ function formatTime(isoString: string): string {
   return `${Math.floor(diff / 60)}m`;
 }
 
-export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen, onToggle }: LiveChatProps) {
+export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen, keepOpen, onToggle }: LiveChatProps) {
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,7 +48,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     }
-  }, [ history, isOpen ]);
+  }, [history, isOpen]);
 
   // Focus input when chat opens
   useEffect(() => {
@@ -85,67 +86,67 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
 
   return (
     <>
-      { (
+      {(
         <div className="flex justify-between py-5 px-5 gap-5">
           {
-              <motion.button
-                initial={ { opacity: 0, y: 20 } }
-                animate={ { opacity: 1, y: 0 } }
-                aria-label="Open chat"
-                onClick={ onToggle }
-              className="z-50 flex flex-1 border items-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm  border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
-              >
-              { mostRecentMessage ? (
+            <motion.button
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              aria-label="Open chat"
+              onClick={onToggle}
+              className="z-50 flex flex-1 border items-center text-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm  border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
+            >
+              {mostRecentMessage ? (
                 <>
-                <span className="text-primary font-medium">{ mostRecentMessage.username }: </span>
-                  <span className="text-white/80">{ mostRecentMessage.text.length > 15 ? mostRecentMessage.text.slice(0, 15) + '...' : mostRecentMessage.text }</span>
+                  <span className="text-primary font-medium">{mostRecentMessage.username}: </span>
+                  <span className="text-white/80">{mostRecentMessage.text.length > 15 ? mostRecentMessage.text.slice(0, 15) + '...' : mostRecentMessage.text}</span>
                 </>
               ) : (
                 <span className="flex items-center gap-2 text-primary font-medium justify-center">
                   <MessageCircle className="size-5" />
                   Join The Chat</span>
-              ) }
+              )}
             </motion.button>
           }
 
           {/* <button
-            onClick={ onToggle }
+            onClick={onToggle}
             className="bottom-5 right-5 z-50 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
             aria-label="Open chat"
           >
-          <MessageCircle className="size-5" />
-          {unreadCount > 0 && (
-            <Badge
+            <MessageCircle className="size-5" />
+            {unreadCount > 0 && (
+              <Badge
                 variant="destructive"
                 className="absolute -top-1 -right-1 h-5 min-w-5 text-[10px] px-1"
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </Badge>
-          )}
-        </button> */}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </Badge>
+            )}
+          </button> */}
         </div>
       )}
 
       {/* Chat drawer - from v0 style */}
       {isOpen && (
-        <motion.div 
+        <motion.div
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-background/95 backdrop-blur-md border-t border-border"
-          style={ { height: '40dvh' } }
+          style={{ height: '40dvh' }}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
-              <MessageCircle className="size-4 text-primary" />
+              {/* <MessageCircle className="size-4 text-primary" /> */}
               <span className="text-sm font-medium text-foreground">Live Chat</span>
-              <span className="text-xs text-muted-foreground">
+              {/* <span className="text-xs text-muted-foreground">
                 {history.length} messages
-              </span>
+              </span> */}
             </div>
-            <Button
+            {!keepOpen && <Button
               variant="ghost"
               size="icon"
               onClick={onToggle}
@@ -153,49 +154,49 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
               className="h-8 w-8"
             >
               <ChevronDown className="size-4" />
-            </Button>
+            </Button>}
           </div>
 
           {/* Messages */}
           <ScrollArea className="flex-1 min-h-0">
             <div className="flex flex-col gap-1.5 px-4 py-3">
-              <AnimatePresence initial={ false } mode="popLayout">
+              <AnimatePresence initial={false} mode="popLayout">
                 <>
-                  { history.length === 0 ? (
+                  {history.length === 0 ? (
                     <motion.div
                       key="empty"
-                      initial={ { opacity: 0 } }
-                      animate={ { opacity: 1 } }
-                      exit={ { opacity: 0 } }
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
                       className="text-center text-white/30 italic text-sm py-8"
                     >
-                      Be the first to speak...
+                      Be the first to speak.
                     </motion.div>
                   ) : (
-                  history.map((msg) => {
-                    const isMe = msg.username === username;
-                    return (
-                      <motion.div
-                        key={msg.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-baseline gap-2 text-sm"
-                      >
-                        <span
-                          className="shrink-0 font-medium text-xs"
-                          style={{ color: isMe ? 'hsl(var(--primary))' : getUserColor(msg.username) }}
+                    history.map((msg) => {
+                      const isMe = msg.username === username;
+                      return (
+                        <motion.div
+                          key={msg.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-baseline gap-2 text-sm"
                         >
-                          {isMe ? 'You' : msg.username}
-                        </span>
-                        <span className="text-foreground/80 break-words min-w-0">
-                          {msg.text}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground ml-auto tabular-nums">
-                          { formatTime(msg.createdAt.toISOString()) }
-                        </span>
-                      </motion.div>
-                    )
-                  })
+                          <span
+                            className="shrink-0 font-medium text-xs"
+                            style={{ color: isMe ? 'hsl(var(--primary))' : getUserColor(msg.username) }}
+                          >
+                            {isMe ? 'You' : msg.username}
+                          </span>
+                          <span className="text-foreground/80 break-words min-w-0">
+                            {msg.text}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground ml-auto tabular-nums">
+                            {formatTime(msg.createdAt.toISOString())}
+                          </span>
+                        </motion.div>
+                      )
+                    })
                   )
                   }
                 </>
@@ -207,14 +208,14 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
           {/* Input */}
           <form
             onSubmit={handleSubmit}
-            className="flex items-center gap-2 px-4 py-3 border-t border-border shrink-0"
+            className="flex items-center gap-2 px-4 py-3 shrink-0"
           >
             <Input
               ref={inputRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Say something..."
-              className="flex-1 h-12 bg-secondary border-0 text-sm text-foreground placeholder:text-muted-foreground"
+              placeholder="Share something"
+              className="flex-1 h-12 text-sm text-foreground placeholder:text-muted-foreground"
               maxLength={200}
               autoComplete="off"
             />
@@ -222,7 +223,7 @@ export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen,
               type="submit"
               size="icon"
               disabled={!inputText.trim()}
-              className="h-12 w-12"
+              className="h-12 w-12 rounded-full bg-none! border-none! text-white!"
             >
               <Send className="size-4" />
             </Button>

@@ -8,7 +8,7 @@ export function PushToggle() {
   // If already subscribed, we might want to show "Unsubscribe" (not implemented in hook yet)
   // Or just show "Notifications On".
   // For now, if subscribed, just show static indicator or disable button.
-  
+
   if (isSubscribed) {
     return (
       <>
@@ -27,14 +27,14 @@ export function PushToggle() {
     <button
       onClick={subscribeUser}
       disabled={isLoading}
-      className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium px-3 py-1.5 border border-primary/20 hover:bg-primary/5 rounded-full transition-colors"
+      className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium px-3 py-1.5 border-primary/20 hover:bg-primary/5 rounded-full transition-colors"
     >
       {isLoading ? (
         <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
       ) : (
         <BellOff className="w-4 h-4" />
       )}
-      <span>Enable Updates</span>
+      <span>Turn on notifications</span>
     </button>
   );
 }

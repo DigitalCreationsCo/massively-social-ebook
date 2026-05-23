@@ -3,7 +3,6 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
-import { relations } from "drizzle-orm/_relations";
 
 // Define a custom tsvector type since Drizzle doesn't have it natively
 const tsvector = customType<{ data: string }>({
@@ -339,17 +338,6 @@ export const chat = pgTable("chat", {
 }, (table) => ({
   idxChatBlock: index("idx_chat_block").on(table.blockId, table.createdAt),
   idxChatSession: index("idx_chat_session").on(table.sessionId, table.createdAt),
-}));
-
-export const blocksRelations = relations(blocks, ({ many }) => ({
-  chats: many(chat),
-}));
-
-export const chatRelations = relations(chat, ({ one }) => ({
-  block: one(blocks, {
-    fields: [ chat.blockId ],
-    references: [ blocks.id ],
-  }),
 }));
 
 export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });

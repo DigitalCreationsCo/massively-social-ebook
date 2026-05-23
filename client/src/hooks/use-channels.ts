@@ -6,6 +6,7 @@ export interface ChannelInfo {
   channelId: string;
   name: string;
   description: string | null;
+  coverImage?: string | null;
   createdAt: string;
 }
 
