@@ -1,6 +1,6 @@
 {
   "name": "the-25th-chapter",
-  "version": "0.3.23",
+  "version": "0.3.24",
   "type": "module",
   "workspaces": [
     "packages/*"
