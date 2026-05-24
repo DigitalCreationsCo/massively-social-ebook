@@ -162,12 +162,85 @@ describe('useLiveState', () => {
             result.current.submitChat('Hello world');
         });
 
-        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('SUBMIT_CHAT'));
-        expect(mockQueryClient.setQueryData).toHaveBeenCalled();
-        expect(analytics.trackEvent).toHaveBeenCalledWith('Chat Message Sent', expect.any(Object));
+    expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('SUBMIT_CHAT'));
+    expect(mockQueryClient.setQueryData).toHaveBeenCalled();
+    expect(analytics.trackEvent).toHaveBeenCalledWith('Chat Message Sent', expect.any(Object));
+  });
+
+  it('replaces optimistic message with server-confirmed message (no duplicates)', async () => {
+    // Deterministic clientId so we can simulate the server echo
+    const MOCK_UUID = 'test-uuid-0000-0000-000000000000';
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(MOCK_UUID);
+
+    // Clear mock call history from any earlier tests
+    mockQueryClient.setQueryData.mockClear();
+
+    const { result } = renderHook(() => useLiveState('scifi'));
+    await act(async () => { vi.runOnlyPendingTimers(); });
+
+    // ── Step 1: Submit a chat message ─────────────────────────────────
+    act(() => {
+      result.current.submitChat('Hello world');
     });
+
+    // Extract the optimistic-update callback that submitChat passed to
+    // setQueryData, then run it to see what gets stored in the cache.
+    // Use the LAST call to /api/chat to avoid picking up stale calls
+    // from earlier tests (setQueryData is never restored by afterEach).
+    const chatCalls = mockQueryClient.setQueryData.mock.calls
+      .filter(([key]: [string[]]) => key[0] === '/api/chat');
+    const optimisticUpdater = chatCalls[chatCalls.length - 1]?.[1] as ((old: unknown[]) => unknown[]) | undefined;
+    expect(optimisticUpdater).toBeDefined();
+
+    const afterOptimistic = optimisticUpdater!([]);
+    expect(afterOptimistic).toHaveLength(1);
+    expect(afterOptimistic[0]).toMatchObject({ text: 'Hello world' });
+
+    // Verify WebSocket payload includes clientId for server to echo back
+    const wsSendCall = wsInstance.send.mock.calls
+      .find(([data]: [string]) => data.includes('SUBMIT_CHAT'));
+    expect(wsSendCall).toBeDefined();
+    const sentPayload = JSON.parse(wsSendCall[0]);
+    expect(sentPayload.payload.clientId).toBe(MOCK_UUID);
+
+    // ── Step 2: Server broadcasts back (with the same clientId) ──────
+    mockQueryClient.setQueryData.mockClear();
+
+    const serverMsg = {
+      id: 42,
+      channelId: 'scifi',
+      sessionId: null,
+      blockId: null,
+      userId: 'test',
+      username: 'test',
+      text: 'Hello world',
+      createdAt: new Date().toISOString(),
+      clientId: MOCK_UUID,       // <--- echoed by server
+    };
+
+    act(() => {
+      wsInstance.onmessage({
+        data: JSON.stringify({ type: 'CHAT_MESSAGE', payload: serverMsg }),
+      });
+    });
+
+    // Extract the replacement callback that the CHAT_MESSAGE handler
+    // passed to setQueryData.
+    const replaceCalls = mockQueryClient.setQueryData.mock.calls
+      .filter(([key]: [string[]]) => key[0] === '/api/chat');
+    const replaceUpdater = replaceCalls[replaceCalls.length - 1]?.[1] as ((old: unknown[]) => unknown[]) | undefined;
+    expect(replaceUpdater).toBeDefined();
+
+    // Pass in the array that currently holds the optimistic message
+    const afterReplace = replaceUpdater!(afterOptimistic);
+
+    // The optimistic placeholder must be REPLACED, not duplicated.
+    expect(afterReplace).toHaveLength(1);       // ← NOT 2!
+    expect(afterReplace[0].id).toBe(42);         // Server-confirmed id
+    expect(afterReplace[0].text).toBe('Hello world');
+  });
     
-    it('submits vote and updates sessionStorage', async () => {
+  it('submits vote and updates sessionStorage', async () => {
         const { result } = renderHook(() => useLiveState('scifi'));
         await act(async () => { vi.runOnlyPendingTimers(); });
 

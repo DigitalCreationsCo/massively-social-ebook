@@ -716,7 +716,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const currentChannelId = clientChannelIds.get(ws) || ("mystery" as ChannelId);
 
         if (message.type === "SUBMIT_CHAT") {
-          const { username, text } = message.payload as { username: string; text: string; };
+          const { username, text, clientId } = message.payload as { username: string; text: string; clientId?: string };
           if (username && text) {
             const dbState = await storage.getChannelState(currentChannelId);
             let sessionId = dbState?.activeSessionId ?? undefined;
@@ -730,6 +730,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               payload: {
                 ...newMsg,
                 createdAt: newMsg.createdAt?.toISOString() ?? new Date().toISOString(),
+                ...(clientId ? { clientId } : {}),
               },
             });
           }

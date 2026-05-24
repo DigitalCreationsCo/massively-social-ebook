@@ -1,11 +1,19 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { shouldShowLiveSession } from '@shared/session';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@shared/routes';
-import { generateGuestName } from '@/lib/utils';
-import { useToast } from './use-toast';
-import type { Session, Channel, Reaction, Phase, MacroPhase, SessionStatus, ChatMessage } from '@shared/schema';
-import { trackEvent, identifyUser } from '@/lib/analytics';
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { shouldShowLiveSession } from "@shared/session";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@shared/routes";
+import { generateGuestName } from "@/lib/utils";
+import { useToast } from "./use-toast";
+import type {
+  Session,
+  Channel,
+  Reaction,
+  Phase,
+  MacroPhase,
+  SessionStatus,
+  ChatMessage,
+} from "@shared/schema";
+import { trackEvent, identifyUser } from "@/lib/analytics";
 
 export { ChatMessage };
 
@@ -42,10 +50,10 @@ export function useLiveState(channelId: string) {
   const { toast } = useToast();
 
   const [username] = useState(() => {
-    const stored = sessionStorage.getItem('reader_name');
+    const stored = sessionStorage.getItem("reader_name");
     if (stored) return stored;
     const newName = generateGuestName();
-    sessionStorage.setItem('reader_name', newName);
+    sessionStorage.setItem("reader_name", newName);
     return newName;
   });
   useEffect(() => {
@@ -54,27 +62,39 @@ export function useLiveState(channelId: string) {
     }
   }, [username]);
 
-
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // Tracks clientId → optimistic message id so we can replace the optimistic
+  // placeholder with the server-confirmed message when CHAT_MESSAGE arrives.
+  const pendingClientIds = useRef(new Map<string, number>());
   const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
   const [localTimeToDecision, setLocalTimeToDecision] = useState(0);
-  const [localInitialTimeToDecision, setLocalInitialTimeToDecision] = useState(0);
+  const [localInitialTimeToDecision, setLocalInitialTimeToDecision] =
+    useState(0);
   const [localTurnsToNextChoice, setLocalTurnsToNextChoice] = useState(0);
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus | 'loading'>('loading');
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | "loading">(
+    "loading",
+  );
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
-  const [macroPhase, setMacroPhase] = useState<MacroPhase>('waiting');
+  const [macroPhase, setMacroPhase] = useState<MacroPhase>("waiting");
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
-  const [viewerCount, setViewerCount] = useState(() => 1247 + Math.floor(Math.random() * 500));
+  const [viewerCount, setViewerCount] = useState(
+    () => 1247 + Math.floor(Math.random() * 500),
+  );
 
   const { data: initialData, isLoading: sessionLoading } = useQuery({
     queryKey: [api.sessions.next.path, channelId],
     queryFn: async () => {
-      const res = await fetch(`${api.sessions.next.path}?channelId=${channelId}`);
+      const res = await fetch(
+        `${api.sessions.next.path}?channelId=${channelId}`,
+      );
       if (!res.ok) return null;
-      return res.json() as Promise<{ session: Session | null; channel: Channel } | null>;
+      return res.json() as Promise<{
+        session: Session | null;
+        channel: Channel;
+      } | null>;
     },
     staleTime: 5000,
   });
@@ -87,13 +107,13 @@ export function useLiveState(channelId: string) {
       if (!wsConnected) {
         setActiveSession(null);
         setActiveChannel(initialChannel);
-        setSessionStatus('scheduled');
+        setSessionStatus("scheduled");
       }
       return;
     }
     const isPast = new Date(initialSession.scheduledEnd).getTime() < Date.now();
-    if (isPast && initialSession.status === 'active') {
-      setSessionStatus('completed');
+    if (isPast && initialSession.status === "active") {
+      setSessionStatus("completed");
       setActiveSession(null);
       setActiveChannel(initialChannel);
       return;
@@ -109,9 +129,11 @@ export function useLiveState(channelId: string) {
   const { data: currentBlock, isLoading: blockLoading } = useQuery({
     queryKey: [api.blocks.current.path, channelId],
     queryFn: async () => {
-      const res = await fetch(`${api.blocks.current.path}?channelId=${channelId}`);
+      const res = await fetch(
+        `${api.blocks.current.path}?channelId=${channelId}`,
+      );
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error('Failed to fetch current block');
+      if (!res.ok) throw new Error("Failed to fetch current block");
       return res.json() as Promise<StoryState>;
     },
     retry: false,
@@ -120,8 +142,10 @@ export function useLiveState(channelId: string) {
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
     queryKey: [api.chat.history.path, channelId],
     queryFn: async () => {
-      const res = await fetch(`${api.chat.history.path}?channelId=${channelId}`);
-      if (!res.ok) throw new Error('Failed to fetch chat history');
+      const res = await fetch(
+        `${api.chat.history.path}?channelId=${channelId}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch chat history");
       return res.json() as Promise<ChatMessage[]>;
     },
   });
@@ -132,17 +156,27 @@ export function useLiveState(channelId: string) {
       setLocalTimeRemaining(Math.floor(currentBlock.timeRemaining / 1000));
     }
     if (currentBlock?.timeToNextDecision !== undefined) {
-      setLocalTimeToDecision(Math.floor(currentBlock.timeToNextDecision / 1000));
+      setLocalTimeToDecision(
+        Math.floor(currentBlock.timeToNextDecision / 1000),
+      );
     }
     if (currentBlock?.initialTimeToNextDecision !== undefined) {
-      setLocalInitialTimeToDecision(Math.floor(currentBlock.initialTimeToNextDecision / 1000));
+      setLocalInitialTimeToDecision(
+        Math.floor(currentBlock.initialTimeToNextDecision / 1000),
+      );
     }
-  }, [currentBlock?.timeRemaining, currentBlock?.timeToNextDecision, currentBlock?.initialTimeToNextDecision, currentBlock?.phase, currentBlock?.id]);
+  }, [
+    currentBlock?.timeRemaining,
+    currentBlock?.timeToNextDecision,
+    currentBlock?.initialTimeToNextDecision,
+    currentBlock?.phase,
+    currentBlock?.id,
+  ]);
 
   // Simulate viewer count fluctuations
   useEffect(() => {
     const interval = setInterval(() => {
-      setViewerCount(prev => {
+      setViewerCount((prev) => {
         const change = Math.floor(Math.random() * 21) - 10;
         return Math.max(100, prev + change);
       });
@@ -153,7 +187,7 @@ export function useLiveState(channelId: string) {
   // Calculate Macro Phase
   useEffect(() => {
     if (!activeSession) {
-      setMacroPhase('waiting');
+      setMacroPhase("waiting");
       return;
     }
     const updatePhase = () => {
@@ -161,16 +195,15 @@ export function useLiveState(channelId: string) {
       const start = new Date(activeSession.scheduledStart).getTime();
       const diff = now - start;
 
-      if (currentBlock?.phase === 'resolution') {
-        setMacroPhase('afterparty');
+      if (currentBlock?.phase === "resolution") {
+        setMacroPhase("afterparty");
       } else if (diff < -START_BEFORE_MS) {
-        setMacroPhase('waiting');
+        setMacroPhase("waiting");
       } else if (diff < 0) {
-        setMacroPhase('gathering');
+        setMacroPhase("gathering");
       } else {
-        setMacroPhase('reading');
+        setMacroPhase("reading");
       }
-
     };
 
     updatePhase();
@@ -180,8 +213,10 @@ export function useLiveState(channelId: string) {
 
   // WebSocket Connection
   useEffect(() => {
-    if (!channelId || channelId.trim() === '') {
-      console.warn('[LiveState] Skipping WebSocket connection — channelId is empty');
+    if (!channelId || channelId.trim() === "") {
+      console.warn(
+        "[LiveState] Skipping WebSocket connection — channelId is empty",
+      );
       return;
     }
 
@@ -196,21 +231,28 @@ export function useLiveState(channelId: string) {
     if (import.meta.env.VITE_WS_URL) {
       wsUrl = `${import.meta.env.VITE_WS_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
     } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host || 'localhost:5001';
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host || "localhost:5001";
       wsUrl = `${protocol}//${host}/ws?channelId=${encodeURIComponent(channelId)}`;
     }
 
     const scheduleReconnect = () => {
       if (cancelled) return;
       if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('[LiveState] Max reconnection attempts reached. Giving up.');
+        console.error(
+          "[LiveState] Max reconnection attempts reached. Giving up.",
+        );
         return;
       }
       reconnectAttempts++;
-      const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
+      const delay = Math.min(
+        BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1),
+        MAX_RECONNECT_DELAY,
+      );
       const jitter = Math.random() * 1000;
-      console.log(`[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+      console.log(
+        `[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`,
+      );
       reconnectTimer = setTimeout(connect, delay + jitter);
     };
 
@@ -222,83 +264,124 @@ export function useLiveState(channelId: string) {
         wsRef.current = socket;
 
         socket.onopen = () => {
-          if (cancelled) { socket.close(); return; }
+          if (cancelled) {
+            socket.close();
+            return;
+          }
           reconnectAttempts = 0;
           setWsConnected(true);
-          console.log('[LiveState] Connected to channel:', channelId);
+          console.log("[LiveState] Connected to channel:", channelId);
         };
 
         socket.onclose = (event) => {
           if (cancelled) return;
           setWsConnected(false);
-          console.warn('[LiveState] WebSocket closed:', event.code, event.reason);
+          console.warn(
+            "[LiveState] WebSocket closed:",
+            event.code,
+            event.reason,
+          );
           scheduleReconnect();
         };
 
         socket.onerror = (error) => {
           if (cancelled) return;
-          console.error('[LiveState] WebSocket error:', error);
+          console.error("[LiveState] WebSocket error:", error);
         };
 
         socket.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
 
-            if (message.type === 'SYNC_STATE') {
+            if (message.type === "SYNC_STATE") {
               const payload = message.payload as StoryState;
               setLocalTurnsToNextChoice(payload.turnsToNextChoice);
               if (payload.timeRemaining !== undefined) {
                 setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
               }
               if (payload.timeToNextDecision !== undefined) {
-                setLocalTimeToDecision(Math.floor(payload.timeToNextDecision / 1000));
+                setLocalTimeToDecision(
+                  Math.floor(payload.timeToNextDecision / 1000),
+                );
               }
               if (payload.initialTimeToNextDecision !== undefined) {
-                setLocalInitialTimeToDecision(Math.floor(payload.initialTimeToNextDecision / 1000));
+                setLocalInitialTimeToDecision(
+                  Math.floor(payload.initialTimeToNextDecision / 1000),
+                );
               }
-            }
-            else if (message.type === 'CHAT_MESSAGE') {
-              const payload = message.payload as ChatMessage;
-              queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
-                if (old.some(m => m.id === payload.id)) return old;
-                return [...old, payload];
-              });
-            }
-            else if (message.type === 'VOTE_UPDATE') {
+            } else if (message.type === "CHAT_MESSAGE") {
+              const payload = message.payload as ChatMessage & {
+                clientId?: string;
+              };
+              queryClient.setQueryData<ChatMessage[]>(
+                [api.chat.history.path, channelId],
+                (old = []) => {
+                  // If this message has a clientId we're tracking, replace the
+                  // optimistic placeholder with the server-confirmed message.
+                  if (
+                    payload.clientId &&
+                    pendingClientIds.current.has(payload.clientId)
+                  ) {
+                    const optimisticId = pendingClientIds.current.get(
+                      payload.clientId,
+                    )!;
+                    pendingClientIds.current.delete(payload.clientId);
+                    return old.map((m) =>
+                      m.id === optimisticId ? payload : m,
+                    );
+                  }
+                  // For messages from other clients (no clientId), guard
+                  // against any accidental duplicates by server id.
+                  if (old.some((m) => m.id === payload.id)) return old;
+                  return [...old, payload];
+                },
+              );
+            } else if (message.type === "VOTE_UPDATE") {
               const payload = message.payload as VoteResults;
               setVoteResults(payload);
-            }
-            else if (message.type === 'REACTION_RECEIVED') {
+            } else if (message.type === "REACTION_RECEIVED") {
               const payload = message.payload as Reaction;
-              setReactions(prev => [...prev, payload]);
-            }
-            else if (message.type === 'SESSION_STATUS') {
-              const payload = message.payload as { status: SessionStatus, session: Session | null; };
+              setReactions((prev) => [...prev, payload]);
+            } else if (message.type === "SESSION_STATUS") {
+              const payload = message.payload as {
+                status: SessionStatus;
+                session: Session | null;
+              };
               const now = Date.now();
-              const isPast = payload.session && new Date(payload.session.scheduledEnd).getTime() < now;
+              const isPast =
+                payload.session &&
+                new Date(payload.session.scheduledEnd).getTime() < now;
 
-              if (isPast && payload.status === 'active') {
-                setSessionStatus('completed');
+              if (isPast && payload.status === "active") {
+                setSessionStatus("completed");
                 setActiveSession(null);
-                void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+                void queryClient.invalidateQueries({
+                  queryKey: [api.sessions.next.path, channelId],
+                });
               } else if (payload.session) {
                 setSessionStatus(payload.status);
                 setActiveSession(payload.session);
-                if (payload.status === 'active') {
-                  queryClient.invalidateQueries({ queryKey: [api.blocks.current.path, channelId] });
-                  queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+                if (payload.status === "active") {
+                  queryClient.invalidateQueries({
+                    queryKey: [api.blocks.current.path, channelId],
+                  });
+                  queryClient.invalidateQueries({
+                    queryKey: [api.sessions.next.path, channelId],
+                  });
                 }
               } else {
                 setSessionStatus(payload.status);
-                void queryClient.invalidateQueries({ queryKey: [api.sessions.next.path, channelId] });
+                void queryClient.invalidateQueries({
+                  queryKey: [api.sessions.next.path, channelId],
+                });
               }
             }
           } catch (err) {
-            console.error('[LiveState] Failed to parse WS message:', err);
+            console.error("[LiveState] Failed to parse WS message:", err);
           }
         };
       } catch (err) {
-        console.error('[LiveState] Failed to create WebSocket:', err);
+        console.error("[LiveState] Failed to create WebSocket:", err);
         scheduleReconnect();
       }
     };
@@ -316,7 +399,7 @@ export function useLiveState(channelId: string) {
   // Refine the Macro Phase calculation to be more robust
   useEffect(() => {
     if (!activeSession) {
-      setMacroPhase('waiting');
+      setMacroPhase("waiting");
       return;
     }
 
@@ -325,14 +408,14 @@ export function useLiveState(channelId: string) {
       const start = new Date(activeSession.scheduledStart).getTime();
       const end = new Date(activeSession.scheduledEnd).getTime();
 
-      if (now > end || currentBlock?.phase === 'resolution') {
-        setMacroPhase('afterparty');
+      if (now > end || currentBlock?.phase === "resolution") {
+        setMacroPhase("afterparty");
       } else if (now < start - START_BEFORE_MS) {
-        setMacroPhase('waiting');
+        setMacroPhase("waiting");
       } else if (now < start) {
-        setMacroPhase('gathering');
+        setMacroPhase("gathering");
       } else {
-        setMacroPhase('reading');
+        setMacroPhase("reading");
       }
     };
 
@@ -341,92 +424,136 @@ export function useLiveState(channelId: string) {
     return () => clearInterval(interval);
   }, [activeSession, currentBlock?.phase]);
 
-  const submitChat = useCallback((text: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      toast({ title: "Connection lost", description: "Trying to reconnect...", variant: "destructive" });
-      return;
-    }
+  const submitChat = useCallback(
+    (text: string) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        toast({
+          title: "Connection lost",
+          description: "Trying to reconnect...",
+          variant: "destructive",
+        });
+        return;
+      }
 
-    const tempMsg: ChatMessage = {
-      id: Date.now(),
-      channelId,
-      sessionId: activeSession?.id || null,
-      blockId: currentBlock?.id || null,
-      userId: username,
+      const clientId = crypto.randomUUID();
+      const optimisticId = Date.now();
+
+      const tempMsg: ChatMessage = {
+        id: optimisticId,
+        channelId,
+        sessionId: activeSession?.id || null,
+        blockId: currentBlock?.id || null,
+        userId: username,
+        username,
+        text,
+        createdAt: new Date(),
+      };
+
+      // Track this optimistic message so we can replace it when the server
+      // broadcasts back the confirmed message (instead of appending a duplicate).
+      pendingClientIds.current.set(clientId, optimisticId);
+
+      queryClient.setQueryData<ChatMessage[]>(
+        [api.chat.history.path, channelId],
+        (old = []) => [...old, tempMsg],
+      );
+
+      trackEvent("Chat Message Sent", { channel: channelId });
+
+      wsRef.current.send(
+        JSON.stringify({
+          type: "SUBMIT_CHAT",
+          payload: { username, text, clientId },
+        }),
+      );
+    },
+    [username, queryClient, toast, channelId],
+  );
+
+  const submitVote = useCallback(
+    (choice: "A" | "B") => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        toast({
+          title: "Vote failed",
+          description: "You are offline.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
+
+      wsRef.current.send(
+        JSON.stringify({
+          type: "SUBMIT_VOTE",
+          payload: { choice, userId: username },
+        }),
+      );
+
+      // Update local vote results optimistically
+      setVoteResults((prev) => ({
+        ...prev,
+        [choice]: prev[choice] + 1,
+      }));
+
+      toast({
+        title: "Vote cast!",
+        description: `You chose ${currentBlock?.optionA && choice === "A" ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
+        duration: 2000,
+      });
+    },
+    [
+      currentBlock?.id,
+      currentBlock?.optionA,
+      currentBlock?.optionB,
+      toast,
       username,
-      text,
-      createdAt: new Date()
-    };
-    queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => [...old, tempMsg]);
+      channelId,
+    ],
+  );
 
-    trackEvent('Chat Message Sent', { channel: channelId });
+  const submitReaction = useCallback(
+    (blockId: number, emoji: string, paragraphIndex?: number) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    wsRef.current.send(JSON.stringify({
-      type: 'SUBMIT_CHAT',
-      payload: { username, text }
-    }));
-  }, [username, queryClient, toast, channelId]);
+      trackEvent("Reaction Sent", { channel: channelId, emoji, blockId });
 
-  const submitVote = useCallback((choice: 'A' | 'B') => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      toast({ title: "Vote failed", description: "You are offline.", variant: "destructive" });
-      return;
-    }
+      wsRef.current.send(
+        JSON.stringify({
+          type: "SUBMIT_REACTION",
+          payload: { blockId, emoji, userId: username, paragraphIndex },
+        }),
+      );
 
+      // Optimistic update
+      setReactions((prev) => [
+        ...prev,
+        {
+          id: Date.now(), // Temporary ID
+          channelId: channelId,
+          sessionId: activeSession?.id || 0,
+          blockId,
+          userId: username,
+          emoji,
+          paragraphIndex,
+          createdAt: new Date(),
+        },
+      ]);
+    },
+    [username, channelId, activeSession],
+  );
 
-    sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
-
-    wsRef.current.send(JSON.stringify({
-      type: 'SUBMIT_VOTE',
-      payload: { choice, userId: username }
-    }));
-
-
-    // Update local vote results optimistically
-    setVoteResults(prev => ({
-      ...prev,
-      [choice]: prev[choice] + 1
-    }));
-
-    toast({
-      title: "Vote cast!",
-      description: `You chose ${currentBlock?.optionA && choice === 'A' ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
-      duration: 2000
-    });
-  }, [currentBlock?.id, currentBlock?.optionA, currentBlock?.optionB, toast, username, channelId]);
-
-  const submitReaction = useCallback((blockId: number, emoji: string, paragraphIndex: number) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    trackEvent('Reaction Sent', { channel: channelId, emoji, blockId });
-
-    wsRef.current.send(JSON.stringify({
-      type: 'SUBMIT_REACTION',
-      payload: { blockId, emoji, userId: username, paragraphIndex }
-    }));
-
-    // Optimistic update
-    setReactions(prev => [...prev, {
-      id: Date.now(), // Temporary ID
-      channelId: channelId,
-      sessionId: activeSession?.id || 0,
-      blockId,
-      userId: username,
-      emoji,
-      paragraphIndex,
-      createdAt: new Date()
-    }]);
-  }, [username, channelId, activeSession]);
-
-  const hasVotedCurrent = sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
+  const hasVotedCurrent =
+    sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
 
   const isSessionLive = useMemo(
     () => shouldShowLiveSession(sessionStatus, activeSession),
-    [sessionStatus, activeSession]
+    [sessionStatus, activeSession],
   );
 
   // Get most recent chat message
-  const mostRecentMessage = (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
+  const mostRecentMessage =
+    (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
 
   // Reset vote results when the story block changes
   useEffect(() => {
@@ -455,6 +582,6 @@ export function useLiveState(channelId: string) {
     activeSession,
     activeChannel,
     isSessionLive,
-    macroPhase
+    macroPhase,
   };
 }

@@ -1,12 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, MessageCircle, ChevronDown, UserCircle2 } from 'lucide-react';
-import { useLiveState, type ChatMessage } from '@/hooks/use-live-state';
-import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { useState, useRef, useEffect } from "react";
+import { ArrowUp, ChevronDown, MessageCircle } from "lucide-react";
+import type { ChatMessage } from "@/hooks/use-live-state";
+import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface LiveChatProps {
   history: ChatMessage[];
@@ -18,218 +16,308 @@ interface LiveChatProps {
   onToggle: () => void;
 }
 
-// Deterministic color generator based on username string
-function getUserColor(username: string) {
+// Deterministic color per username — consistent across renders
+function getUserColor(username: string): string {
   let hash = 0;
   for (let i = 0; i < username.length; i++) {
     hash = username.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const h = Math.abs(hash) % 360;
-  return `hsl(${h}, 70%, 65%)`;
+  return `hsl(${Math.abs(hash) % 360}, 65%, 68%)`;
 }
 
-function formatTime(isoString: string): string {
-  const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
-  if (diff < 10) return "now";
-  if (diff < 60) return `${diff}s`;
-  return `${Math.floor(diff / 60)}m`;
-}
-
-export function LiveChat({ history, mostRecentMessage, username, onSend, isOpen, keepOpen, onToggle }: LiveChatProps) {
-  const [inputText, setInputText] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
+export function LiveChat({
+  history,
+  mostRecentMessage,
+  username,
+  onSend,
+  isOpen,
+  keepOpen,
+  onToggle,
+}: LiveChatProps) {
+  const [inputText, setInputText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (isOpen && bottomRef.current) {
-      // Small timeout to ensure DOM layout has updated after AnimatePresence
-      setTimeout(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 50);
-    }
-  }, [history, isOpen]);
+  const isEffectivelyOpen = isOpen || keepOpen;
+  const isClosable = !keepOpen;
 
-  // Focus input when chat opens
+  // ── Auto-scroll to newest message ──────────────────────────────────────
+  // requestAnimationFrame defers the scroll until after framer-motion has
+  // updated the DOM, preventing a scroll-before-paint glitch.
   useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
+    if (!isEffectivelyOpen) return;
+    const raf = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [history, isEffectivelyOpen]);
+
+  // ── Focus input when chat opens ────────────────────────────────────────
+  // Small delay lets the spring animation settle before triggering the
+  // keyboard (avoids a race on iOS that can mis-position the viewport).
+  useEffect(() => {
+    if (!isEffectivelyOpen) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 320);
+    return () => clearTimeout(t);
+  }, [isEffectivelyOpen]);
+
+  // ── Unread counter ──────────────────────────────────────────────────────
+  const [unreadCount, setUnreadCount] = useState(0);
+  const lastSeenIdRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isEffectivelyOpen && history.length > 0) {
+      const latestId = history[history.length - 1].id;
+      if (latestId > lastSeenIdRef.current && lastSeenIdRef.current > 0) {
+        setUnreadCount((n) => n + 1);
+      }
     }
-  }, [isOpen]);
+    if (isEffectivelyOpen) {
+      if (history.length > 0) {
+        lastSeenIdRef.current = history[history.length - 1].id;
+      }
+      setUnreadCount(0);
+    }
+  }, [history, isEffectivelyOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
     if (!trimmed) return;
     onSend(trimmed);
-    setInputText('');
+    setInputText("");
   };
 
-  // Count unread (messages after chat was closed)
-  const [unreadCount, setUnreadCount] = useState(0);
-  const lastSeenRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!isOpen && history.length > 0) {
-      const latestId = history[history.length - 1].id;
-      if (latestId > lastSeenRef.current && lastSeenRef.current > 0) {
-        setUnreadCount(prev => prev + 1);
-      }
-    }
-    if (isOpen) {
-      if (history.length > 0) {
-        lastSeenRef.current = history[history.length - 1].id;
-      }
-      setUnreadCount(0);
-    }
-  }, [history, isOpen]);
-
   return (
-    <>
-      {(
-        <div className="flex justify-between py-5 px-5 gap-5">
-          {
-            <motion.button
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              aria-label="Open chat"
-              onClick={onToggle}
-              className="z-50 flex flex-1 border items-center text-center gap-2 bottom-5 left-5 bg-black/80 backdrop-blur-sm  border-white/15 rounded-lg px-3 py-2 h-12 w-12 text-sm"
-            >
-              {mostRecentMessage ? (
-                <>
-                  <span className="text-primary font-medium">{mostRecentMessage.username}: </span>
-                  <span className="text-white/80">{mostRecentMessage.text.length > 15 ? mostRecentMessage.text.slice(0, 15) + '...' : mostRecentMessage.text}</span>
-                </>
-              ) : (
-                <span className="flex items-center gap-2 text-primary font-medium justify-center">
-                  <MessageCircle className="size-5" />
-                  Join The Chat</span>
-              )}
-            </motion.button>
-          }
-
-          {/* <button
-            onClick={onToggle}
-            className="bottom-5 right-5 z-50 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg h-12 w-12 transition-transform hover:scale-105 active:scale-95"
-            aria-label="Open chat"
-          >
-            <MessageCircle className="size-5" />
-            {unreadCount > 0 && (
-              <Badge
-                variant="destructive"
-                className="absolute -top-1 -right-1 h-5 min-w-5 text-[10px] px-1"
-              >
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </Badge>
-            )}
-          </button> */}
-        </div>
+    // ── Chat wrapper ────────────────────────────────────────────────────
+    // This element is a flex child inside the bottom zone (see LiveEbook).
+    //
+    // Closed → fixed peek-bar height (44px, flex-shrink: 0).
+    // Open   → flex: 1, min-height: 0 so it fills all remaining space
+    //          in the bottom zone without overflowing.
+    //
+    // framer-motion `layout` animates the height transition between states
+    // using a spring — no JS height calculations, no CSS max-height hacks.
+    // The story zone above is completely unaffected.
+    <motion.div
+      layout
+      className={cn(
+        "flex flex-col overflow-hidden",
+        "border-t border-white/[0.07]",
+        isEffectivelyOpen
+          ? "flex-1 min-h-0" // fills remaining space in bottom zone
+          : "flex-shrink-0", // collapses to peek-bar height
       )}
+      style={!isEffectivelyOpen ? { height: 44 } : undefined}
+      transition={{ type: "spring", damping: 32, stiffness: 280, mass: 0.9 }}
+    >
+      {/* ── Peek bar / Chat header ──────────────────────────────────────
+          When closed: shows latest message as a teaser + unread count.
+          When open:   shows "Live Chat" label with close affordance.
+          Height is always exactly 44px (h-11) — acts as the toggle target.
+         ────────────────────────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={isClosable ? onToggle : undefined}
+        className={cn(
+          "flex-shrink-0 h-11 w-full flex items-center gap-2.5 px-5 text-left",
+          "border-b border-white/[0.05]",
+          isClosable
+            ? "cursor-pointer active:bg-white/[0.03] transition-colors"
+            : "cursor-default",
+        )}
+        aria-label={
+          isEffectivelyOpen && isClosable ? "Close live chat" : "Open live chat"
+        }
+        aria-expanded={isEffectivelyOpen}
+      >
+        {/* Live pulse dot */}
+        <span
+          className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-primary"
+          style={{
+            animation: "livePulse 2.4s ease-in-out infinite",
+          }}
+          aria-hidden="true"
+        />
 
-      {/* Chat drawer - from v0 style */}
-      {isOpen && (
-        <motion.div
-          initial={{ y: '100%' }}
-          animate={{ y: 0 }}
-          exit={{ y: '100%' }}
-          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-background/95 backdrop-blur-md border-t border-border"
-          style={{ height: '40dvh' }}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
-            <div className="flex items-center gap-2">
-              {/* <MessageCircle className="size-4 text-primary" /> */}
-              <span className="text-sm font-medium text-foreground">Live Chat</span>
-              {/* <span className="text-xs text-muted-foreground">
-                {history.length} messages
-              </span> */}
+        {isEffectivelyOpen ? (
+          // Open state: label
+          <>
+            <span className="flex-1 text-[11px] font-medium tracking-[0.12em] uppercase text-white/40">
+              Live Chat
+              {isClosable && (
+                <span className="text-white/20 font-normal normal-case tracking-normal">
+                  {" "}
+                  · tap to close
+                </span>
+              )}
+            </span>
+            {isClosable && (
+              <ChevronDown
+                className="size-3.5 text-white/25 flex-shrink-0"
+                aria-hidden="true"
+              />
+            )}
+          </>
+        ) : (
+          // Closed state: message teaser
+          <>
+            {mostRecentMessage ? (
+              <>
+                <span
+                  className="flex-shrink-0 text-xs font-semibold"
+                  style={{ color: getUserColor(mostRecentMessage.username) }}
+                >
+                  {mostRecentMessage.username}:
+                </span>
+                <span className="flex-1 text-xs text-white/45 truncate min-w-0">
+                  {mostRecentMessage.text}
+                </span>
+              </>
+            ) : (
+              <>
+                <MessageCircle
+                  className="size-3.5 text-white/30 flex-shrink-0"
+                  aria-hidden="true"
+                />
+                <span className="flex-1 text-xs text-white/35">
+                  Join the chat
+                </span>
+              </>
+            )}
+
+            {/* Unread badge */}
+            {unreadCount > 0 && (
+              <span className="flex-shrink-0 text-[10px] font-mono bg-primary/15 text-primary rounded-full px-1.5 py-0.5 leading-none">
+                +{unreadCount > 99 ? "99" : unreadCount}
+              </span>
+            )}
+
+            {/* Chevron pointing up = "open chat" */}
+            <ChevronDown
+              className="size-3.5 text-white/20 flex-shrink-0 rotate-180"
+              aria-hidden="true"
+            />
+          </>
+        )}
+      </button>
+
+      {/* ── Message list ───────────────────────────────────────────────────
+          Only rendered when open. flex-1 + min-h-0 lets it fill space.
+
+          Scroll is LOCKED to this container only:
+          • overflow-y: auto — scrollable
+          • overscroll-behavior: contain — prevents page scroll bleed
+          • touchAction: pan-y — mobile scroll stays inside this element
+          • onTouchMove stopPropagation — belt-and-suspenders for older iOS
+         ────────────────────────────────────────────────────────────── */}
+      {isEffectivelyOpen && (
+        <>
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
+            style={{ touchAction: "pan-y" }}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-2 px-5 py-4">
+              <AnimatePresence initial={false} mode="popLayout">
+                {history.length === 0 ? (
+                  <motion.p
+                    key="empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="text-center text-white/25 text-sm py-8 font-serif italic"
+                  >
+                    Be the first to speak.
+                  </motion.p>
+                ) : (
+                  history.map((msg) => {
+                    const isMe = msg.username === username;
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                        className="flex items-baseline gap-1.5"
+                      >
+                        <span
+                          className="flex-shrink-0 text-[11px] font-semibold leading-relaxed"
+                          style={{
+                            color: isMe
+                              ? "hsl(var(--primary))"
+                              : getUserColor(msg.username),
+                          }}
+                        >
+                          {isMe ? "You" : msg.username}
+                        </span>
+                        <span className="text-[13px] text-white/65 break-words min-w-0 leading-relaxed">
+                          {msg.text}
+                        </span>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </AnimatePresence>
+
+              {/* Scroll anchor — scrollIntoView target */}
+              <div ref={messagesEndRef} aria-hidden="true" />
             </div>
-            {!keepOpen && <Button
-              variant="ghost"
-              size="icon"
-              onClick={onToggle}
-              aria-label="Close chat"
-              className="h-8 w-8"
-            >
-              <ChevronDown className="size-4" />
-            </Button>}
           </div>
 
-          {/* Messages */}
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="flex flex-col gap-1.5 px-4 py-3">
-              <AnimatePresence initial={false} mode="popLayout">
-                <>
-                  {history.length === 0 ? (
-                    <motion.div
-                      key="empty"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="text-center text-white/30 italic text-sm py-8"
-                    >
-                      Be the first to speak.
-                    </motion.div>
-                  ) : (
-                    history.map((msg) => {
-                      const isMe = msg.username === username;
-                      return (
-                        <motion.div
-                          key={msg.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="flex items-baseline gap-2 text-sm"
-                        >
-                          <span
-                            className="shrink-0 font-medium text-xs"
-                            style={{ color: isMe ? 'hsl(var(--primary))' : getUserColor(msg.username) }}
-                          >
-                            {isMe ? 'You' : msg.username}
-                          </span>
-                          <span className="text-foreground/80 break-words min-w-0">
-                            {msg.text}
-                          </span>
-                          <span className="shrink-0 text-[10px] text-muted-foreground ml-auto tabular-nums">
-                            {formatTime(msg.createdAt.toISOString())}
-                          </span>
-                        </motion.div>
-                      )
-                    })
-                  )
-                  }
-                </>
-              </AnimatePresence>
-              <div ref={bottomRef} />
-            </div>
-          </ScrollArea>
-
-          {/* Input */}
+          {/* ── Input bar ──────────────────────────────────────────────────
+              flex-shrink-0 keeps it pinned to the bottom of the chat panel.
+              The bottom zone's `bottom: keyboardHeight` (set in LiveEbook)
+              ensures this sits precisely above the software keyboard with
+              zero extra calculations needed here.
+             ────────────────────────────────────────────────────────────── */}
           <form
             onSubmit={handleSubmit}
-            className="flex items-center gap-2 px-4 py-3 shrink-0"
+            className="flex-shrink-0 flex items-center gap-4 p-5 pr-4"
           >
             <Input
               ref={inputRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Share something"
-              className="flex-1 h-12 text-sm text-foreground placeholder:text-muted-foreground"
+              placeholder="Say something…"
+              className={cn(
+                "flex-1",
+                "text-white placeholder:text-white/25 h-12",
+              )}
               maxLength={200}
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="sentences"
+              spellCheck={false}
+              enterKeyHint="send"
             />
             <Button
               type="submit"
               size="icon"
               disabled={!inputText.trim()}
-              className="h-12 w-12 rounded-full bg-none! border-none! text-white!"
+              className={cn(
+                "flex-shrink-0 h-12 w-12 p-0! m-0!",
+                "bg-primary/10 text-white",
+                "disabled:opacity-20 disabled:bg-transparent disabled:border border-none",
+                "transition-all duration-150",
+              )}
+              aria-label="Send message"
             >
-              <Send className="size-4" />
+              <ArrowUp className="" />
             </Button>
           </form>
-        </motion.div>
+        </>
       )}
-    </>
+
+      {/* Keyframe for the live-pulse dot — injected once */}
+      <style>{`
+        @keyframes livePulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.35; }
+        }
+      `}</style>
+    </motion.div>
   );
 }
