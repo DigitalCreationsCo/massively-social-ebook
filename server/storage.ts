@@ -253,24 +253,16 @@ export class DatabaseStorage implements IStorage {
       return cached.data;
     }
 
-    const replayBlocks = await db.query.blocks.findMany({
-      where: (table, { eq, and }) => {
-        if (notableOnly) {
-          return and(eq(table.sessionId, sessionId), eq(table.isNotable, true));
-        }
-
-        return eq(table.sessionId, sessionId);
-      },
-
-      columns: {
-        embedding: false,
-        searchVector: false,
-      },
-
-      orderBy: asc(blocks.createdAt),
-
-      limit: 100,
-    });
+    const replayBlocks = await db
+      .select()
+      .from(blocks)
+      .where(
+        notableOnly
+          ? and(eq(blocks.sessionId, sessionId), eq(blocks.isNotable, true))
+          : eq(blocks.sessionId, sessionId),
+      )
+      .orderBy(asc(blocks.createdAt))
+      .limit(100);
 
     const blockIds = replayBlocks.map((b) => b.id);
 

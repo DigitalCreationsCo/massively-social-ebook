@@ -30,39 +30,62 @@ export function useSessionReplay({
     error: sessionError,
   } = useQuery({
     queryKey: ["session", "history", channelId, requestedSessionId],
-    queryFn: async (): Promise<Session> => {
+    queryFn: async (): Promise<Session | null> => {
       const url = new URL("/api/sessions/history", window.location.origin);
       url.searchParams.append("channelId", channelId);
       if (requestedSessionId)
         url.searchParams.append("sessionId", requestedSessionId.toString());
 
       const res = await fetch(url.toString());
-      if (!res.ok) throw new Error("Failed to fetch session");
+      // 404 means no completed sessions exist — not a real error.
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to fetch session history");
       return res.json();
     },
     enabled: !!channelId,
   });
+
+  const sessionId = session?.id;
 
   const {
     data: blocks,
     isLoading: isBlocksLoading,
     error: blocksError,
   } = useQuery({
-    queryKey: ["blocks", "history", session?.id, notableOnly],
+    queryKey: ["blocks", "history", sessionId, notableOnly],
     queryFn: async (): Promise<BlockWithChats[]> => {
+      if (!sessionId) throw new Error("No session ID — cannot fetch blocks");
+
       const url = new URL("/api/blocks/history", window.location.origin);
-      url.searchParams.append("sessionId", session!.id.toString());
+      url.searchParams.append("sessionId", sessionId.toString());
       if (notableOnly) url.searchParams.append("notableOnly", "true");
 
       const res = await fetch(url.toString());
-      if (!res.ok) throw new Error("Failed to fetch blocks");
+      if (!res.ok) throw new Error("Failed to fetch historical blocks");
       return res.json();
     },
-    enabled: !!session?.id,
+    enabled: !!sessionId,
   });
 
+  // Log errors — this hook's consumer currently ignores `error`.
+  if (sessionError) {
+    console.error(
+      "[useSessionReplay] Failed to fetch session history for channel",
+      channelId,
+      sessionError,
+    );
+  }
+  if (blocksError) {
+    console.error(
+      "[useSessionReplay] Failed to fetch historical blocks for session",
+      sessionId,
+      blocksError,
+    );
+  }
+
   return {
-    session,
+    // Normalise null from the 404 case into undefined for the consumer.
+    session: session ?? undefined,
     blocks,
     isLoading: isSessionLoading || isBlocksLoading,
     error: sessionError || blocksError,
