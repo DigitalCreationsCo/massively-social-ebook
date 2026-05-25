@@ -14,7 +14,7 @@ console.log("Connecting to DB with URL:", process.env.DATABASE_URL?.substring(0,
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+  ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
   query_timeout: 15000,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
