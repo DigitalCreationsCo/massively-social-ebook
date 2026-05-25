@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "rm -rf node_modules/.vite && NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
     "build": "NODE_ENV=production tsx scripts/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "DOTENV_CONFIG_PATH=.env.production.local NODE_ENV=production node -r dotenv/config dist/index.cjs",
     "release:patch": "HUSKY=0 npm version patch && git push origin main --tags",
     "release:minor": "HUSKY=0 npm version minor && git push origin main --tags",
     "release:major": "HUSKY=0 npm version major && git push origin main --tags",
