@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { isAdmin } from "../middleware/auth";
 import { logger } from "../logger";
-import { generateStoryImage } from "../blocks/ai";
+import { generateAndUploadStoryImage } from "../image-uploader";
 import type { InsertSchedule, ScheduleDay } from "@shared/schema";
 import { datetimeLocalToUTC } from "@shared/date";
 
@@ -150,9 +150,10 @@ export function registerAdminRoutes(app: Express): void {
       const { channelId, name, description } = req.body;
       let { coverImage } = req.body;
       
-      if (!coverImage && description) {
+      if (!coverImage && description && channelId) {
         try {
-          coverImage = await generateStoryImage(description);
+          // Generate image AND upload to GCS — stores an HTTPS public URL
+          coverImage = await generateAndUploadStoryImage(description, channelId, 'cover');
         } catch (err) {
           logger.error("Failed to generate cover image during channel creation", "admin", err instanceof Error ? err : new Error(String(err)));
         }
@@ -185,8 +186,16 @@ export function registerAdminRoutes(app: Express): void {
       if (!description) {
         return res.status(400).json({ message: "Description is required to generate cover image" });
       }
-      
-      const coverImage = await generateStoryImage(description);
+
+      // Fetch channel to get the string channelId for GCS path scoping
+      const channels = await storage.getChannels();
+      const channelRecord = channels.find((c) => c.id === id);
+      if (!channelRecord) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+
+      // Generate image AND upload to GCS — stores an HTTPS public URL
+      const coverImage = await generateAndUploadStoryImage(description, channelRecord.channelId, 'cover');
       const channel = await storage.updateChannel(id, { coverImage });
       res.json(channel);
     } catch (err) {

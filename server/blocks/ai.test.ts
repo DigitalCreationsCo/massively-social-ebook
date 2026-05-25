@@ -22,7 +22,8 @@ const { mockGenerateContext } = vi.hoisted(() => ({
 vi.mock('narrative-engine', () => ({
     NarrativeEngine: class {
         generateContext = mockGenerateContext;
-    }
+    },
+    configureLabEngine: vi.fn(),
 }));
 
 vi.mock('./storage', () => ({
@@ -133,7 +134,7 @@ describe('AI Generators', () => {
     });
 
     describe('generateStoryImage', () => {
-        it('should generate an image and return data URL', async () => {
+        it('should generate an image and return raw base64 (no data URI prefix)', async () => {
             const base64Image = 'YmFzZTY0dGVzdGk='; // base64 for "base64testi"
 
             (ai.models.generateContent as any).mockResolvedValueOnce({
@@ -162,10 +163,13 @@ describe('AI Generators', () => {
                     }
                 }
             });
-            expect(result).toBe(`data:image/jpeg;base64,${base64Image}`);
+            // Returns RAW base64 — NOT a data: URI.  The caller is responsible
+            // for uploading to object storage.
+            expect(result).toBe(base64Image);
+            expect(result).not.toContain('data:image');
         });
 
-        it('should return fallback image if no image data is returned', async () => {
+        it('should throw if no image data is returned from Gemini', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
                 candidates: [ {
                     content: {
@@ -174,46 +178,35 @@ describe('AI Generators', () => {
                 } ]
             });
 
-            const url = await generateStoryImage('A test image description');
-            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+            await expect(
+                generateStoryImage('A test image description'),
+            ).rejects.toThrow('No image data returned from Gemini.');
         });
 
-        it('should return fallback image if candidates is undefined', async () => {
+        it('should throw if candidates is undefined', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({});
 
-            const url = await generateStoryImage('A test image description');
-            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+            await expect(
+                generateStoryImage('A test image description'),
+            ).rejects.toThrow('No image data returned from Gemini.');
         });
 
-        it('should return fallback image if content is undefined', async () => {
+        it('should throw if content is undefined', async () => {
             (ai.models.generateContent as any).mockResolvedValueOnce({
                 candidates: [ {} ]
             });
 
-            const url = await generateStoryImage('A test image description');
-            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
+            await expect(
+                generateStoryImage('A test image description'),
+            ).rejects.toThrow('No image data returned from Gemini.');
         });
 
-        it('should return fallback image on API error', async () => {
+        it('should propagate API errors (no silent fallback)', async () => {
             (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
 
-            const url = await generateStoryImage('A test image description');
-            expect(url).toBe('/images/img_1771936309521_ieycq2.jpg');
-        });
-
-        it('should log warning on fallback', async () => {
-            const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
-
-            (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
-
-            await generateStoryImage('A test image description');
-
-            expect(consoleWarnSpy).toHaveBeenCalledWith(
-                'Failed to generate image, using fallback:',
-                expect.any(Error)
-            );
-
-            consoleWarnSpy.mockRestore();
+            await expect(
+                generateStoryImage('A test image description'),
+            ).rejects.toThrow('API Error');
         });
     });
 });

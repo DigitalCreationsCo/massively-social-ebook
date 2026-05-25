@@ -20,7 +20,10 @@ vi.mock('./blocks/ai', () => ({
     optionA: { label: 'A', description: 'Option A' },
     optionB: { label: 'B', description: 'Option B' },
   }),
-  generateStoryImage: vi.fn().mockResolvedValue('/images/test.jpg'),
+}));
+
+vi.mock('./image-uploader', () => ({
+  generateAndUploadStoryImage: vi.fn().mockResolvedValue('https://storage.googleapis.com/bucket/images/test.jpg'),
 }));
 
 vi.mock('./logger', () => ({

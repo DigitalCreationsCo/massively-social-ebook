@@ -17,7 +17,10 @@ vi.mock('./storage', () => ({
 
 vi.mock('./ai', () => ({
     generateStoryBlock: vi.fn(),
-    generateStoryImage: vi.fn(),
+}));
+
+vi.mock('./image-uploader', () => ({
+    generateAndUploadStoryImage: vi.fn(),
 }));
 
 describe('Admin Security Middleware', () => {

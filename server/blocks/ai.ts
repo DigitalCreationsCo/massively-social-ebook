@@ -152,31 +152,38 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   return result;
 }
 
+/**
+ * Generates an image via Google Gemini and returns the raw base64 payload.
+ *
+ * IMPORTANT: This function returns ONLY the base64-encoded bytes, NOT a
+ * `data:` URI.  It is the caller's responsibility (via image-uploader.ts)
+ * to upload the bytes to object storage and store the resulting URL in the
+ * database.  No base64 strings must ever be persisted in the application DB.
+ *
+ * On failure the function **throws** — the caller should handle fallback
+ * (e.g., `getRandomImage()` or a static fallback URL).
+ */
 export async function generateStoryImage(description: string): Promise<string> {
   const prompt = createImageInstructions({ description });
 
-  try {
-    const response = await ai.models.generateContent({
-      model: lmParamsGoogle.imageModel,
-      contents: prompt,
-      config: {
-        responseModalities: ["image"],
-        candidateCount: 1,
-        imageConfig: {
-          aspectRatio: "16:9",
-        }
-      }
-    });
+  const response = await ai.models.generateContent({
+    model: lmParamsGoogle.imageModel,
+    contents: prompt,
+    config: {
+      responseModalities: ["image"],
+      candidateCount: 1,
+      imageConfig: {
+        aspectRatio: "16:9",
+      },
+    },
+  });
 
-    const base64Image = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  const base64Image =
+    response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
-    if (!base64Image) {
-      throw new Error("No image data returned.");
-    }
-
-    return `data:image/jpeg;base64,${base64Image}`;
-  } catch (err) {
-    console.warn("Failed to generate image, using fallback:", err);
-    return "/images/img_1771936309521_ieycq2.jpg";
+  if (!base64Image) {
+    throw new Error("No image data returned from Gemini.");
   }
+
+  return base64Image; // raw base64 — NO `data:` prefix
 }

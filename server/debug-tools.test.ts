@@ -17,13 +17,22 @@ vi.mock('./storage', () => ({
         createSession: vi.fn(),
         cancelSession: vi.fn(),
         getRandomImage: vi.fn(),
+        getChannelState: vi.fn(),
+        upsertChannelState: vi.fn(),
+        tryAcquireGameLock: vi.fn(),
+        releaseGameLock: vi.fn(),
+        updateSessionScheduledEnd: vi.fn(),
+        getChannel: vi.fn(),
         updateSessionStatus: vi.fn(),
     },
 }));
 
 vi.mock('./ai', () => ({
     generateStoryBlock: vi.fn(),
-    generateStoryImage: vi.fn(),
+}));
+
+vi.mock('./image-uploader', () => ({
+    generateAndUploadStoryImage: vi.fn(),
 }));
 
 const mockedStorage = vi.mocked(storage);
@@ -80,6 +89,7 @@ describe('Debug Tools API', () => {
         it('POST /api/debug/sessions/start starts a session', async () => {
             mockedStorage.getNextSession.mockResolvedValue({ id: 123, scheduledStart: new Date(), scheduledEnd: new Date() } as any);
             mockedStorage.updateSessionStatus.mockResolvedValue({ id: 123, status: 'active' } as any);
+            mockedStorage.getChannel.mockResolvedValue({ channelId: 'm2w4k' } as any);
 
             const res = await request(app)
                 .post('/api/debug/sessions/start')
@@ -94,6 +104,7 @@ describe('Debug Tools API', () => {
         it('POST /api/debug/sessions/skip triggers phase skip', async () => {
             // Mock active session
             mockedStorage.getActiveSession.mockResolvedValue({ id: 123, scheduledEnd: new Date(Date.now() + 10000) } as any);
+            mockedStorage.getChannelState.mockResolvedValue({ activeSessionId: 123 } as any);
             
             // Re-register to pick up active session
             const app2 = express();
@@ -111,6 +122,7 @@ describe('Debug Tools API', () => {
 
         it('POST /api/debug/sessions/resolve triggers resolution', async () => {
             mockedStorage.getActiveSession.mockResolvedValue({ id: 123, scheduledEnd: new Date() } as any);
+            mockedStorage.getChannelState.mockResolvedValue({ activeSessionId: 123 } as any);
             
             const app3 = express();
             app3.use(express.json());

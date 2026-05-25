@@ -2,7 +2,8 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage";
-import { generateStoryBlock, generateStoryImage } from "../blocks/ai";
+import { generateStoryBlock } from "../blocks/ai";
+import { generateAndUploadStoryImage } from "../image-uploader";
 import { api } from "@shared/routes";
 import {
   WS_EVENTS,
@@ -211,7 +212,11 @@ function pregenerateOption(
       const nextContent = await generateStoryBlock(channelId, previousContext);
       let imageUrl: string;
       try {
-        imageUrl = await generateStoryImage(nextContent.content);
+        imageUrl = await generateAndUploadStoryImage(
+          nextContent.content,
+          channelId,
+          "pending",
+        );
       } catch (imageErr) {
         logger.warn(
           `Image generation failed for ${channelId} option ${option}, using fallback`,
@@ -286,7 +291,7 @@ async function startSessionForChannelId(
       );
       let imageUrl: string;
       try {
-        imageUrl = await generateStoryImage(nextContent.content);
+        imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
       } catch {
         imageUrl =
           (await storage.getRandomImage(channelId)) ||
@@ -329,7 +334,7 @@ async function startSessionForChannelId(
       );
       let imageUrl: string;
       try {
-        imageUrl = await generateStoryImage(nextContent.content);
+        imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
       } catch {
         imageUrl =
           (await storage.getRandomImage(channelId)) ||
@@ -1244,7 +1249,7 @@ export async function handleGameLoopTick(
                 );
                 let imageUrl: string;
                 try {
-                  imageUrl = await generateStoryImage(nextContent.content);
+                  imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
                 } catch {
                   imageUrl =
                     (await storage.getRandomImage(channelId)) ||
@@ -1404,7 +1409,7 @@ export async function handleGameLoopTick(
                   );
                   let imageUrl: string;
                   try {
-                    imageUrl = await generateStoryImage(nextContent.content);
+                    imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
                   } catch {
                     imageUrl =
                       (await storage.getRandomImage(channelId)) ||
@@ -1599,7 +1604,7 @@ export async function handleGameLoopTick(
                   );
                   let imageUrl: string;
                   try {
-                    imageUrl = await generateStoryImage(nextContent.content);
+                    imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
                   } catch {
                     logger.warn(
                       `Game loop image generation failed for ${channelId}, using fallback`,

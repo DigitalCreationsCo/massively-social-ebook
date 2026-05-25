@@ -31,7 +31,10 @@ vi.mock('../storage', () => ({
 
 vi.mock('./ai', () => ({
     generateStoryBlock: vi.fn(),
-    generateStoryImage: vi.fn(),
+}));
+
+vi.mock('../image-uploader', () => ({
+    generateAndUploadStoryImage: vi.fn(),
 }));
 
 const mockedStorage = vi.mocked(storage);
@@ -39,18 +42,19 @@ const mockedStorage = vi.mocked(storage);
 describe('Session REST API', () => {
     let app: express.Express;
 
-    beforeEach(async () => {
-        vi.clearAllMocks();
-        app = express();
-        app.use(express.json());
+        beforeEach(async () => {
+            vi.clearAllMocks();
+            process.env.ADMIN_TOKEN = 'test-token';
+            app = express();
+            app.use(express.json());
 
-        // Mock getCurrentBlock to avoid seeding loops during registerRoutes
-        mockedStorage.getCurrentBlock.mockResolvedValue({ id: 1 } as any);
-        mockedStorage.getActiveSession.mockResolvedValue(undefined);
+            // Mock getCurrentBlock to avoid seeding loops during registerRoutes
+            mockedStorage.getCurrentBlock.mockResolvedValue({ id: 1 } as any);
+            mockedStorage.getActiveSession.mockResolvedValue(undefined);
 
-        const server = createServer(app);
-        await registerRoutes(server, app);
-    });
+            const server = createServer(app);
+            await registerRoutes(server, app);
+        });
 
     describe('GET /api/sessions/next', () => {
         const mockChannel = { channelId: 'scifi', name: 'Sci-Fi', description: null, coverImage: null, createdAt: new Date('2025-01-01') };
@@ -146,7 +150,9 @@ describe('Session REST API', () => {
     describe('Admin API', () => {
         it('GET /api/admin/sessions lists all sessions', async () => {
             mockedStorage.listSessions.mockResolvedValue([ { id: 1 } ] as any);
-            const res = await request(app).get('/api/admin/sessions');
+            const res = await request(app)
+                .get('/api/admin/sessions')
+                .set('x-admin-token', 'test-token');
             expect(res.status).toBe(200);
             expect(res.body).toHaveLength(1);
         });
@@ -157,6 +163,7 @@ describe('Session REST API', () => {
 
             const res = await request(app)
                 .post('/api/admin/sessions')
+                .set('x-admin-token', 'test-token')
                 .send({
                     channelId: 'scifi',
                     title: 'New',
@@ -170,7 +177,9 @@ describe('Session REST API', () => {
 
         it('PATCH /api/admin/sessions/:id/cancel cancels a session', async () => {
             mockedStorage.cancelSession.mockResolvedValue({ id: 1, status: 'cancelled' } as any);
-            const res = await request(app).patch('/api/admin/sessions/1/cancel');
+            const res = await request(app)
+                .patch('/api/admin/sessions/1/cancel')
+                .set('x-admin-token', 'test-token');
             expect(res.status).toBe(200);
             expect(res.body.status).toBe('cancelled');
         });

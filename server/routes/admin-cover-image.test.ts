@@ -8,22 +8,23 @@ import { registerAdminRoutes } from './admin-routes';
 // vi.hoisted() creates variables at the same hoisted scope so they're
 // available when the mock factories execute.
 
-const { mockStorage, mockGenerateStoryImage } = vi.hoisted(() => ({
+const { mockStorage, mockGenerateAndUploadImage } = vi.hoisted(() => ({
   mockStorage: {
     getChannels: vi.fn(),
     createChannel: vi.fn(),
     updateChannel: vi.fn(),
     deleteChannel: vi.fn(),
   },
-  mockGenerateStoryImage: vi.fn(),
+  mockGenerateAndUploadImage: vi.fn(),
 }));
 
 vi.mock('../storage', () => ({
   storage: mockStorage,
 }));
 
-vi.mock('../blocks/ai', () => ({
-  generateStoryImage: (...args: unknown[]) => mockGenerateStoryImage(...args),
+vi.mock('../image-uploader', () => ({
+  generateAndUploadStoryImage: (...args: unknown[]) =>
+    mockGenerateAndUploadImage(...args),
 }));
 
 vi.mock('../logger', () => ({
@@ -64,14 +65,14 @@ describe('Admin Channels Cover Image Routes', () => {
   describe('POST /admin/api/channels', () => {
     const baseBody = { channelId: 'horror', name: 'Horror Stories' };
 
-    it('auto-generates cover image from description when none provided', async () => {
-      const fakeBase64Cover = 'data:image/jpeg;base64,abc123';
-      mockGenerateStoryImage.mockResolvedValue(fakeBase64Cover);
+    it('auto-generates and uploads cover image from description when none provided', async () => {
+      const fakeGcsUrl = 'https://storage.googleapis.com/bucket/channels/horror/images/cover/uuid.jpg';
+      mockGenerateAndUploadImage.mockResolvedValue(fakeGcsUrl);
       mockStorage.createChannel.mockResolvedValue({
         id: 1,
         ...baseBody,
         description: 'A dark and scary world',
-        coverImage: fakeBase64Cover,
+        coverImage: fakeGcsUrl,
         createdAt: new Date(),
       });
 
@@ -81,9 +82,13 @@ describe('Admin Channels Cover Image Routes', () => {
         .send({ ...baseBody, description: 'A dark and scary world' });
 
       expect(res.status).toBe(201);
-      expect(mockGenerateStoryImage).toHaveBeenCalledWith('A dark and scary world');
+      expect(mockGenerateAndUploadImage).toHaveBeenCalledWith(
+        'A dark and scary world',
+        'horror',
+        'cover',
+      );
       expect(mockStorage.createChannel).toHaveBeenCalledWith(
-        expect.objectContaining({ coverImage: fakeBase64Cover }),
+        expect.objectContaining({ coverImage: fakeGcsUrl }),
       );
     });
 
@@ -102,7 +107,7 @@ describe('Admin Channels Cover Image Routes', () => {
         .send({ ...baseBody, coverImage: providedUrl });
 
       expect(res.status).toBe(201);
-      expect(mockGenerateStoryImage).not.toHaveBeenCalled();
+      expect(mockGenerateAndUploadImage).not.toHaveBeenCalled();
       expect(mockStorage.createChannel).toHaveBeenCalledWith(
         expect.objectContaining({ coverImage: providedUrl }),
       );
@@ -121,11 +126,11 @@ describe('Admin Channels Cover Image Routes', () => {
         .send(baseBody);
 
       expect(res.status).toBe(201);
-      expect(mockGenerateStoryImage).not.toHaveBeenCalled();
+      expect(mockGenerateAndUploadImage).not.toHaveBeenCalled();
     });
 
     it('creates channel even if image generation fails (graceful degradation)', async () => {
-      mockGenerateStoryImage.mockRejectedValue(new Error('AI service unavailable'));
+      mockGenerateAndUploadImage.mockRejectedValue(new Error('AI service unavailable'));
       mockStorage.createChannel.mockResolvedValue({
         id: 4,
         ...baseBody,
@@ -140,7 +145,7 @@ describe('Admin Channels Cover Image Routes', () => {
         .send({ ...baseBody, description: 'A spooky forest' });
 
       expect(res.status).toBe(201);
-      expect(mockGenerateStoryImage).toHaveBeenCalled();
+      expect(mockGenerateAndUploadImage).toHaveBeenCalled();
       // coverImage should be undefined because generation failed
       expect(mockStorage.createChannel).toHaveBeenCalledWith(
         expect.objectContaining({ coverImage: undefined }),
@@ -198,14 +203,18 @@ describe('Admin Channels Cover Image Routes', () => {
   // ── POST /admin/api/channels/:id/generate-cover ─────────────────────────
 
   describe('POST /admin/api/channels/:id/generate-cover', () => {
-    it('generates and saves a new cover image from description', async () => {
-      const generatedImage = 'data:image/jpeg;base64,regen123';
-      mockGenerateStoryImage.mockResolvedValue(generatedImage);
+    it('generates, uploads to GCS, and saves a new cover image from description', async () => {
+      const fakeGcsUrl = 'https://storage.googleapis.com/bucket/channels/horror/images/cover/uuid.jpg';
+      mockGenerateAndUploadImage.mockResolvedValue(fakeGcsUrl);
+      // The endpoint looks up the channel to get its channelId for GCS path
+      mockStorage.getChannels.mockResolvedValue([
+        { id: 1, channelId: 'horror', name: 'Horror Stories', description: '', coverImage: null, createdAt: new Date() },
+      ]);
       mockStorage.updateChannel.mockResolvedValue({
         id: 1,
         channelId: 'horror',
         name: 'Horror Stories',
-        coverImage: generatedImage,
+        coverImage: fakeGcsUrl,
         createdAt: new Date(),
       });
 
@@ -215,7 +224,52 @@ describe('Admin Channels Cover Image Routes', () => {
         .send({ description: 'A grim haunted house' });
 
       expect(res.status).toBe(200);
-      expect(mockGenerateStoryImage).toHaveBeenCalledWith('A grim haunted house');
+      expect(mockGenerateAndUploadImage).toHaveBeenCalledWith(
+        'A grim haunted house',
+        'horror',
+        'cover',
+      );
+      expect(mockStorage.updateChannel).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ coverImage: fakeGcsUrl }),
+      );
+      expect(res.body.coverImage).toBe(fakeGcsUrl);
+    });
+
+    it('returns 400 when description is missing', async () => {
+      const res = await request(app)
+        .post('/admin/api/channels/1/generate-cover')
+        .set(AUTH_HEADER)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Description is required');
+      expect(mockGenerateAndUploadImage).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when image generation fails', async () => {
+      mockGenerateAndUploadImage.mockRejectedValue(new Error('Model overloaded'));
+      mockStorage.getChannels.mockResolvedValue([
+        { id: 1, channelId: 'horror', name: 'Horror Stories', description: '', coverImage: null, createdAt: new Date() },
+      ]);
+
+      const res = await request(app)
+        .post('/admin/api/channels/1/generate-cover')
+        .set(AUTH_HEADER)
+        .send({ description: 'Some description' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.message).toContain('Failed to generate cover image');
+    });
+  });
+
+      const res = await request(app)
+        .post('/admin/api/channels/1/generate-cover')
+        .set(AUTH_HEADER)
+        .send({ description: 'A grim haunted house' });
+
+      expect(res.status).toBe(200);
+      expect(mockGenerateAndUploadImage).toHaveBeenCalledWith('A grim haunted house');
       expect(mockStorage.updateChannel).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ coverImage: generatedImage }),
@@ -231,11 +285,11 @@ describe('Admin Channels Cover Image Routes', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.message).toContain('Description is required');
-      expect(mockGenerateStoryImage).not.toHaveBeenCalled();
+      expect(mockGenerateAndUploadImage).not.toHaveBeenCalled();
     });
 
     it('returns 500 when image generation fails', async () => {
-      mockGenerateStoryImage.mockRejectedValue(new Error('Model overloaded'));
+      mockGenerateAndUploadImage.mockRejectedValue(new Error('Model overloaded'));
 
       const res = await request(app)
         .post('/admin/api/channels/1/generate-cover')
