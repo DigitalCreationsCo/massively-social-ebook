@@ -113,6 +113,29 @@ function getCachedState(channelId: ChannelId): CachedChannelState | null {
   return entry.state;
 }
 
+/**
+ * Validates that the WebSocket is registered to a channel.
+ * Logs a warning and closes the connection if not registered.
+ *
+ * Previously the caller fell back to a "mystery" sentinel channelId
+ * when the WS was unregistered, which caused cascading DB queries
+ * that wasted pool connections and masked the real bug.
+ *
+ * @returns The channelId, or null if the WS is not registered.
+ */
+export function getChannelIdForWs(
+  ws: WebSocket,
+  clientMap: Map<WebSocket, ChannelId>
+): ChannelId | null {
+  const channelId = clientMap.get(ws);
+  if (!channelId) {
+    logger.warn("WebSocket message from unregistered client", "ws");
+    ws.close(4000, "Not registered");
+    return null;
+  }
+  return channelId;
+}
+
 // ---------------------------------------------------------------------------
 // Pre-generation — fire-and-forget writes to the pending_blocks table.
 //
@@ -713,7 +736,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     ws.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString()) as WsMessage;
-        const currentChannelId = clientChannelIds.get(ws) || ("mystery" as ChannelId);
+
+        const currentChannelId = getChannelIdForWs(ws, clientChannelIds);
+        if (!currentChannelId) return;
 
         if (message.type === "SUBMIT_CHAT") {
           const { username, text, clientId } = message.payload as { username: string; text: string; clientId?: string };
