@@ -516,8 +516,8 @@ export default function UpcomingSession() {
   const isLoading = isLiveSessionLoading || isReplayLoading;
 
   const randomIndexBlockWithImage = useMemo(() => {
-    const validIndexes = (previousBlocks || [])
-      .map((block, index) => (block.imageUrl ? index : -1))
+    const validIndexes = (previousBlocks ?? [])
+      .map((block, index) => (block?.imageUrl ? index : -1))
       .filter((index) => index !== -1);
 
     if (validIndexes.length === 0) {
@@ -864,8 +864,7 @@ export default function UpcomingSession() {
       <section className="relative w-full pt-24 pb-16 px-6 bg-gradient-to-b from-transparent to-zinc-950/80">
         <CoverImage
           src={
-            (previousBlocks &&
-              previousBlocks[randomIndexBlockWithImage].imageUrl) ||
+            previousBlocks?.[randomIndexBlockWithImage]?.imageUrl ??
             coverImageUrl
           }
         />
