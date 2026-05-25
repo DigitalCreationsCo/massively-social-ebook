@@ -1,8 +1,8 @@
 import { defineConfig } from "drizzle-kit";
-import * as dotenv from 'dotenv';
+import * as dotenv from "dotenv";
 dotenv.config({
-  path: '.env.local',
-  override: true
+  path: ".env.local",
+  override: true,
 });
 
 if (!process.env.DATABASE_URL) {
@@ -10,7 +10,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 export default defineConfig({
-  out: "./migrations-dev",
+  out: "./migrations",
   schema: "./shared/schema.ts",
   schemaFilter: "public",
   dialect: "postgresql",

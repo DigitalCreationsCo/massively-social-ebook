@@ -1,6 +1,7 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
+import { config } from "dotenv";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -34,6 +35,18 @@ const allowlist = [
 ];
 
 async function buildAll() {
+  const envConfig = config({ path: ".env.production.local" });
+  if (envConfig.error) {
+    console.error(`Failed to load .env.custom: ${envConfig.error.message}`);
+  }
+  const combinedEnv = { ...envConfig.parsed, ...process.env };
+  const define = {};
+  for (const k in combinedEnv) {
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k)) {
+      define[`process.env.${k}`] = JSON.stringify(combinedEnv[k]);
+    }
+  }
+
   await rm("dist", { recursive: true, force: true });
 
   console.log("building client...");
@@ -57,9 +70,7 @@ async function buildAll() {
     bundle: true,
     format: "cjs",
     outfile: "dist/index.cjs",
-    define: {
-      "process.env.NODE_ENV": '"production"',
-    },
+    define,
     minify: true,
     external: externals,
     logLevel: "info",

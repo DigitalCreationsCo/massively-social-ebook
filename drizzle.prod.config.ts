@@ -1,7 +1,7 @@
 import { defineConfig } from "drizzle-kit";
-import * as dotenv from 'dotenv';
+import * as dotenv from "dotenv";
 dotenv.config({
-  path: '.env.production.local',
+  path: ".env.production.local",
   override: true,
 });
 
@@ -10,7 +10,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 export default defineConfig({
-  out: "./migrations-prod",
+  out: "./migrations",
   schema: "./shared/schema.ts",
   schemaFilter: "public",
   dialect: "postgresql",

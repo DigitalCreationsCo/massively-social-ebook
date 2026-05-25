@@ -1,4 +1,18 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, boolean, index, char, primaryKey, vector, unique, customType } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  timestamp,
+  integer,
+  jsonb,
+  boolean,
+  index,
+  char,
+  primaryKey,
+  vector,
+  unique,
+  customType,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
@@ -7,7 +21,7 @@ import { sql } from "drizzle-orm";
 // Define a custom tsvector type since Drizzle doesn't have it natively
 const tsvector = customType<{ data: string }>({
   dataType() {
-    return 'tsvector';
+    return "tsvector";
   },
 });
 
@@ -16,12 +30,15 @@ export const schedules = pgTable("schedules", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  scheduledDays: text("scheduled_days").array(),   // e.g. ['monday','wednesday','friday']
-  scheduledTime: text("scheduled_time"),           // e.g. '14:30' (24h, local to timezone)
+    .references(() => channels.channelId, {
+      onUpdate: "cascade",
+      onDelete: "cascade",
+    }),
+  scheduledDays: text("scheduled_days").array(), // e.g. ['monday','wednesday','friday']
+  scheduledTime: text("scheduled_time"), // e.g. '14:30' (24h, local to timezone)
   intervalEnabled: boolean("interval_enabled").notNull().default(false),
   timezone: text("timezone").notNull().default("UTC"),
-  nextRunAt: timestamp("next_run_at", { withTimezone: true }),             // computed by scheduler, updated after each spawn
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }), // computed by scheduler, updated after each spawn
 
   // ── Title composition ──────────────────────────────────────────────────
   //
@@ -39,110 +56,143 @@ export const schedules = pgTable("schedules", {
 });
 
 // Custom Zod schema for schedules with validations
-const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
-export type ScheduleDay = typeof validDays[number];
+const validDays = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+export type ScheduleDay = (typeof validDays)[number];
 
 // Zod schema for TitleConfig (mirrors title.ts types for runtime validation)
-const titleFormatEnum = z.enum(['numbered', 'numbered_subtitle', 'in_world', 'season_episode']);
-const numberSourceEnum = z.enum(['episode', 'absolute', 'day_of_month']);
+const titleFormatEnum = z.enum([
+  "numbered",
+  "numbered_subtitle",
+  "in_world",
+  "season_episode",
+]);
+const numberSourceEnum = z.enum(["episode", "absolute", "day_of_month"]);
 
-export const titleConfigSchema = z.object({
-  format: titleFormatEnum,
-  programName: z.string().min(1),
-  numberSource: numberSourceEnum.optional(),
-  sessionLabel: z.string().optional(),
-  subtitle: z.string().optional(),
-  inWorldTemplate: z.string().optional(),
-  inWorldMode: z.enum(['countup', 'countdown']).optional(),
-  inWorldTotal: z.number().int().positive().optional(),
-  seasonSize: z.number().int().min(1).default(30).optional(),
-  showSeason: z.boolean().optional(),
-  seasonLabel: z.string().optional(),
-}).refine(
-  (c) => c.format !== 'in_world' || !!c.inWorldTemplate,
-  { message: "inWorldTemplate is required when format is 'in_world'", path: ['inWorldTemplate'] }
-).refine(
-  (c) => c.inWorldMode !== 'countdown' || !!c.inWorldTotal,
-  { message: "inWorldTotal is required when inWorldMode is 'countdown'", path: ['inWorldTotal'] }
-);
+export const titleConfigSchema = z
+  .object({
+    format: titleFormatEnum,
+    programName: z.string().min(1),
+    numberSource: numberSourceEnum.optional(),
+    sessionLabel: z.string().optional(),
+    subtitle: z.string().optional(),
+    inWorldTemplate: z.string().optional(),
+    inWorldMode: z.enum(["countup", "countdown"]).optional(),
+    inWorldTotal: z.number().int().positive().optional(),
+    seasonSize: z.number().int().min(1).default(30).optional(),
+    showSeason: z.boolean().optional(),
+    seasonLabel: z.string().optional(),
+  })
+  .refine((c) => c.format !== "in_world" || !!c.inWorldTemplate, {
+    message: "inWorldTemplate is required when format is 'in_world'",
+    path: ["inWorldTemplate"],
+  })
+  .refine((c) => c.inWorldMode !== "countdown" || !!c.inWorldTotal, {
+    message: "inWorldTotal is required when inWorldMode is 'countdown'",
+    path: ["inWorldTotal"],
+  });
 
 export const insertScheduleSchema = createInsertSchema(schedules, {
   scheduledDays: z.array(z.enum(validDays)).optional(),
-  scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Must be valid 24h time (HH:MM)").optional(),
+  scheduledTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Must be valid 24h time (HH:MM)")
+    .optional(),
   titleConfig: titleConfigSchema.optional(),
 }).omit({
   id: true,
   createdAt: true,
   nextRunAt: true,
-  sessionCount: true,   // managed exclusively by the scheduler
+  sessionCount: true, // managed exclusively by the scheduler
 });
 export type Schedule = typeof schedules.$inferSelect;
 export type InsertSchedule = z.infer<typeof insertScheduleSchema>;
 
-export type Phase = 'reading' | 'voting' | 'resolution';
-export type MacroPhase = 'waiting' | 'gathering' | 'reading' | 'afterparty';
-export type SessionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
+export type Phase = "reading" | "voting" | "resolution";
+export type MacroPhase = "waiting" | "gathering" | "reading" | "afterparty";
+export type SessionStatus = "scheduled" | "active" | "completed" | "cancelled";
 
 // Sessions table - individual session occurrences
-export const sessions = pgTable("sessions", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id")
-    .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  scheduleId: integer("schedule_id")
-    .references(() => schedules.id, { onDelete: "set null" }), // nullable - one-off sessions have no schedule
-  title: text("title").notNull(),
-  description: text("description"),
-  scheduledStart: timestamp("scheduled_start", { withTimezone: true }).notNull(),
-  scheduledEnd: timestamp("scheduled_end", { withTimezone: true }).notNull(),
-  timezone: text("timezone").notNull().default("UTC"),
-  status: text("status").notNull().default('scheduled'), // SessionStatus
-  notifyCount: integer("notify_count").notNull().default(0),
-
-  // ── Seasonal position ──────────────────────────────────────────────────
-  //
-  // These three are denormalized from the schedule's sessionCount at spawn
-  // time so queries like "all S2 sessions" are cheap index scans.
-  //
-  // sessionNumber: 1-based total across the schedule's lifetime
-  // seasonNumber:  1-based season index  (floor((sessionNumber-1)/seasonSize)+1)
-  // episodeNumber: 1-based within season (((sessionNumber-1)%seasonSize)+1)
-  //
-  // All three are nullable to stay compatible with one-off sessions that
-  // have no schedule and no positional context.
-  sessionNumber: integer("session_number"),
-  seasonNumber: integer("season_number"),
-  episodeNumber: integer("episode_number"),
-
-  // ── Per-session subtitle override ──────────────────────────────────────
-  //
-  // When a schedule uses 'numbered_subtitle' format, this field lets an
-  // admin (or a future AI pipeline) set a unique subtitle for each session
-  // instead of relying on the static config.subtitle fallback.
-  //
-  // e.g. "The Confession", "Into the Fog", "Last Call"
-  subtitle: text("subtitle"),
-
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-}, (table) => {
-  return {
-    idxSessionsActiveCleanup: index("idx_sessions_active_cleanup")
-      .on(table.scheduledEnd)
-      .where(sql`status IN ('active', 'scheduled')`),
-    idxSessionsStatusScheduledStart: index("idx_sessions_status_start")
-      .on(table.status, table.scheduledStart)
-      .where(sql`status IN ('active', 'scheduled')`),
-    unqChannelScheduledStart: unique("unq_channel_start")
-      .on(table.channelId, table.scheduledStart),
-    sessionHistoryIdx: index('idx_session_history_idx').on(table.channelId, table.status, table.scheduledEnd),
-  };
-});
-
-export const insertSessionSchema = createInsertSchema(sessions,
+export const sessions = pgTable(
+  "sessions",
   {
-    subtitle: z.string().optional(),
-  }
-).omit({
+    id: serial("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, {
+        onUpdate: "cascade",
+        onDelete: "cascade",
+      }),
+    scheduleId: integer("schedule_id").references(() => schedules.id, {
+      onDelete: "set null",
+    }), // nullable - one-off sessions have no schedule
+    title: text("title").notNull(),
+    description: text("description"),
+    scheduledStart: timestamp("scheduled_start", {
+      withTimezone: true,
+    }).notNull(),
+    scheduledEnd: timestamp("scheduled_end", { withTimezone: true }).notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    status: text("status").notNull().default("scheduled"), // SessionStatus
+    notifyCount: integer("notify_count").notNull().default(0),
+
+    // ── Seasonal position ──────────────────────────────────────────────────
+    //
+    // These three are denormalized from the schedule's sessionCount at spawn
+    // time so queries like "all S2 sessions" are cheap index scans.
+    //
+    // sessionNumber: 1-based total across the schedule's lifetime
+    // seasonNumber:  1-based season index  (floor((sessionNumber-1)/seasonSize)+1)
+    // episodeNumber: 1-based within season (((sessionNumber-1)%seasonSize)+1)
+    //
+    // All three are nullable to stay compatible with one-off sessions that
+    // have no schedule and no positional context.
+    sessionNumber: integer("session_number"),
+    seasonNumber: integer("season_number"),
+    episodeNumber: integer("episode_number"),
+
+    // ── Per-session subtitle override ──────────────────────────────────────
+    //
+    // When a schedule uses 'numbered_subtitle' format, this field lets an
+    // admin (or a future AI pipeline) set a unique subtitle for each session
+    // instead of relying on the static config.subtitle fallback.
+    //
+    // e.g. "The Confession", "Into the Fog", "Last Call"
+    subtitle: text("subtitle"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => {
+    return {
+      idxSessionsActiveCleanup: index("idx_sessions_active_cleanup")
+        .on(table.scheduledEnd)
+        .where(sql`status IN ('active', 'scheduled')`),
+      idxSessionsStatusScheduledStart: index("idx_sessions_status_start")
+        .on(table.status, table.scheduledStart)
+        .where(sql`status IN ('active', 'scheduled')`),
+      unqChannelScheduledStart: unique("unq_channel_start").on(
+        table.channelId,
+        table.scheduledStart,
+      ),
+      sessionHistoryIdx: index("idx_session_history_idx").on(
+        table.channelId,
+        table.status,
+        table.scheduledEnd,
+      ),
+    };
+  },
+);
+
+export const insertSessionSchema = createInsertSchema(sessions, {
+  subtitle: z.string().optional(),
+}).omit({
   id: true,
   createdAt: true,
   status: true,
@@ -191,18 +241,30 @@ export type InsertChannel = z.infer<typeof InsertChannel>;
 //   activeSessionId      — FK to the running session (NULL = no session)
 //   processingLockedUntil — advisory lock expiry; see tryAcquireGameLock
 export const channelStates = pgTable("channel_states", {
-  channelId: text("channel_id").primaryKey()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  currentPhase: text("current_phase").notNull().default('reading'),
+  channelId: text("channel_id")
+    .primaryKey()
+    .references(() => channels.channelId, {
+      onUpdate: "cascade",
+      onDelete: "cascade",
+    }),
+  currentPhase: text("current_phase").notNull().default("reading"),
   phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }).notNull(),
-  decisionEndsAt: timestamp("decision_ends_at", { withTimezone: true }).notNull(),
-  initialTimeToDecision: integer("initial_time_to_decision").notNull().default(0),
+  decisionEndsAt: timestamp("decision_ends_at", {
+    withTimezone: true,
+  }).notNull(),
+  initialTimeToDecision: integer("initial_time_to_decision")
+    .notNull()
+    .default(0),
   turnsToNextChoice: integer("turns_to_next_choice").notNull().default(3),
-  currentBlockId: integer("current_block_id")
-    .references(() => blocks.id, { onDelete: "set null" }),
-  activeSessionId: integer("active_session_id")
-    .references(() => sessions.id, { onDelete: "set null" }),
-  processingLockedUntil: timestamp("processing_locked_until", { withTimezone: true }),
+  currentBlockId: integer("current_block_id").references(() => blocks.id, {
+    onDelete: "set null",
+  }),
+  activeSessionId: integer("active_session_id").references(() => sessions.id, {
+    onDelete: "set null",
+  }),
+  processingLockedUntil: timestamp("processing_locked_until", {
+    withTimezone: true,
+  }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -230,55 +292,94 @@ export type BlockWithSession = Block & {
 // Column notes:
 //   forBlockId — the block whose option continuation this pre-generates
 //   choice     — 'A' | 'B'
-export const pendingBlocks = pgTable("pending_blocks", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id").notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  forBlockId: integer("for_block_id").notNull()
-    .references(() => blocks.id, { onDelete: "cascade" }),
-  choice: text("choice").notNull(), // 'A' | 'B'
-  title: text("title").notNull(),
-  content: text("content").notNull(),
-  imageUrl: text("image_url").notNull(),
-  optionA: jsonb("option_a"),
-  optionB: jsonb("option_b"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+export const pendingBlocks = pgTable(
+  "pending_blocks",
+  {
+    id: serial("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, {
+        onUpdate: "cascade",
+        onDelete: "cascade",
+      }),
+    forBlockId: integer("for_block_id")
+      .notNull()
+      .references(() => blocks.id, { onDelete: "cascade" }),
+    choice: text("choice").notNull(), // 'A' | 'B'
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    imageUrl: text("image_url").notNull(),
+    optionA: jsonb("option_a"),
+    optionB: jsonb("option_b"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => {
+    return {
+      idxPendingLookup: index("idx_pending_lookup").on(
+        table.forBlockId,
+        table.choice,
+      ),
+    };
+  },
+);
 
 export type PendingBlock = typeof pendingBlocks.$inferSelect;
 export type InsertPendingBlock = typeof pendingBlocks.$inferInsert;
 
 // Blocks table - narrative blocks within a session
-export const blocks = pgTable("blocks", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id")
-    .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  sessionId: integer("session_id")
-    .notNull()
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  title: text("title"),
-  content: text("content").notNull(),
-  imageUrl: text("image_url"),
-  optionA: jsonb("option_a"),
-  optionB: jsonb("option_b"),
-  isNotable: boolean("is_notable").default(false).notNull(),
-  embedding: vector("embedding", { dimensions: 768 }),
-  searchVector: tsvector("search_vector").generatedAlwaysAs(
-    (): any => sql`to_tsvector('english', ${blocks.content})`
-  ),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-}, (table) => {
-  return {
-    idxBlocksChannelId: index("idx_blocks_channel_id").on(table.channelId),
-    idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
-    idxBlocksEmbedding: index("idx_blocks_embedding").using("hnsw", table.embedding.op("vector_cosine_ops")),
-    idxBlocksSearch: index("idx_blocks_search").using("gin", table.searchVector),
-    idxBlockReplay: index("idx_block_replay").on(table.sessionId, table.isNotable, table.createdAt),
-  };
-});
+export const blocks = pgTable(
+  "blocks",
+  {
+    id: serial("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, {
+        onUpdate: "cascade",
+        onDelete: "cascade",
+      }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    title: text("title"),
+    content: text("content").notNull(),
+    imageUrl: text("image_url"),
+    optionA: jsonb("option_a"),
+    optionB: jsonb("option_b"),
+    isNotable: boolean("is_notable").default(false).notNull(),
+    embedding: vector("embedding", { dimensions: 768 }),
+    searchVector: tsvector("search_vector").generatedAlwaysAs(
+      (): any => sql`to_tsvector('english', ${blocks.content})`,
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => {
+    return {
+      idxBlocksChannelId: index("idx_blocks_channel_id").on(table.channelId),
+      idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
+      idxBlocksEmbedding: index("idx_blocks_embedding").using(
+        "hnsw",
+        table.embedding.op("vector_cosine_ops"),
+      ),
+      idxBlocksSearch: index("idx_blocks_search").using(
+        "gin",
+        table.searchVector,
+      ),
+      idxBlocksSessionCreated: index("idx_blocks_session_created").on(
+        table.sessionId,
+        table.createdAt,
+      ),
+      idxBlocksSessionNotableCreated: index(
+        "idx_blocks_session_notable_created",
+      ).on(table.sessionId, table.isNotable, table.createdAt),
+    };
+  },
+);
 
-export const insertBlockSchema = createInsertSchema(blocks).omit({ id: true, createdAt: true, embedding: true });
+export const insertBlockSchema = createInsertSchema(blocks).omit({
+  id: true,
+  createdAt: true,
+  embedding: true,
+});
 export type Block = typeof blocks.$inferSelect;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
 
@@ -287,60 +388,102 @@ export const lore = pgTable("lore", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+    .references(() => channels.channelId, {
+      onUpdate: "cascade",
+      onDelete: "cascade",
+    }),
   content: text("content").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const insertLoreSchema = createInsertSchema(lore).omit({ id: true, createdAt: true });
+export const insertLoreSchema = createInsertSchema(lore).omit({
+  id: true,
+  createdAt: true,
+});
 export type Lore = typeof lore.$inferSelect;
 export type InsertLore = z.infer<typeof insertLoreSchema>;
 
 // Votes table
-export const votes = pgTable("votes", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id")
-    .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  sessionId: integer("session_id")
-    .notNull()
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  blockId: integer("block_id")
-    .notNull()
-    .references(() => blocks.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull(),
-  choice: char("choice", { length: 1 }).notNull(), // 'A' or 'B'
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => {
-  return {
-    pk: primaryKey({ columns: [table.sessionId, table.blockId, table.userId, table.createdAt] })
-  };
-});
+export const votes = pgTable(
+  "votes",
+  {
+    id: serial("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, {
+        onUpdate: "cascade",
+        onDelete: "cascade",
+      }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    blockId: integer("block_id")
+      .notNull()
+      .references(() => blocks.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    choice: char("choice", { length: 1 }).notNull(), // 'A' or 'B'
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => {
+    return {
+      pk: primaryKey({
+        columns: [
+          table.sessionId,
+          table.blockId,
+          table.userId,
+          table.createdAt,
+        ],
+      }),
+    };
+  },
+);
 
-export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
+export const insertVoteSchema = createInsertSchema(votes).omit({
+  id: true,
+  createdAt: true,
+});
 export type Vote = typeof votes.$inferSelect;
 export type InsertVote = z.infer<typeof insertVoteSchema>;
 
 // Chat table
-export const chat = pgTable("chat", {
-  id: serial("id").primaryKey(),
-  channelId: text("channel_id")
-    .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
-  sessionId: integer("session_id")
-    .references(() => sessions.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
-  blockId: integer("block_id")
-    .references(() => blocks.id, { onDelete: "set null" }), // nullable - chat may exist outside sessions
-  username: text("username"),
-  text: text("text").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({
-  idxChatBlock: index("idx_chat_block").on(table.blockId, table.createdAt),
-  idxChatSession: index("idx_chat_session").on(table.sessionId, table.createdAt),
-}));
+export const chat = pgTable(
+  "chat",
+  {
+    id: serial("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, {
+        onUpdate: "cascade",
+        onDelete: "cascade",
+      }),
+    sessionId: integer("session_id").references(() => sessions.id, {
+      onDelete: "set null",
+    }), // nullable - chat may exist outside sessions
+    blockId: integer("block_id").references(() => blocks.id, {
+      onDelete: "set null",
+    }), // nullable - chat may exist outside sessions
+    username: text("username"),
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    idxChatBlock: index("idx_chat_block").on(table.blockId, table.createdAt),
+    idxChatSession: index("idx_chat_session").on(
+      table.sessionId,
+      table.createdAt,
+    ),
+  }),
+);
 
-export const insertChatSchema = createInsertSchema(chat).omit({ id: true, createdAt: true });
+export const insertChatSchema = createInsertSchema(chat).omit({
+  id: true,
+  createdAt: true,
+});
 export type ChatMessage = typeof chat.$inferSelect;
 export type InsertChat = z.infer<typeof insertChatSchema>;
 
@@ -349,7 +492,10 @@ export const reactions = pgTable("reactions", {
   id: serial("id").primaryKey(),
   channelId: text("channel_id")
     .notNull()
-    .references(() => channels.channelId, { onUpdate: 'cascade', onDelete: "cascade" }),
+    .references(() => channels.channelId, {
+      onUpdate: "cascade",
+      onDelete: "cascade",
+    }),
   sessionId: integer("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
@@ -362,7 +508,10 @@ export const reactions = pgTable("reactions", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const insertReactionSchema = createInsertSchema(reactions).omit({ id: true, createdAt: true });
+export const insertReactionSchema = createInsertSchema(reactions).omit({
+  id: true,
+  createdAt: true,
+});
 export type Reaction = typeof reactions.$inferSelect;
 export type InsertReaction = z.infer<typeof insertReactionSchema>;
 
@@ -375,7 +524,10 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+});
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
@@ -387,12 +539,15 @@ export const systemSettings = pgTable("system_settings", {
 });
 
 // Separated Notification Tables
-export const notificationsSessionWarning = pgTable("notifications_session_warning", {
-  id: serial("id").primaryKey(),
-  sessionId: integer("session_id").notNull(),
-  userId: text("user_id").notNull(),
-  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
-});
+export const notificationsSessionWarning = pgTable(
+  "notifications_session_warning",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: integer("session_id").notNull(),
+    userId: text("user_id").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
+  },
+);
 
 export const notificationsDaily = pgTable("notifications_daily", {
   id: serial("id").primaryKey(),
@@ -407,35 +562,37 @@ export const notificationsWeekly = pgTable("notifications_weekly", {
 });
 
 // Notification target type for disambiguation
-export type NotificationTargetType = 'session' | 'user' | 'schedule';
+export type NotificationTargetType = "session" | "user" | "schedule";
 
 // Notification Logs table
 // Kept for backward compatibility
 export const notificationLogs = pgTable("notification_logs", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(), // '5_min_warning', 'session_started', 'session_ended', 'weekly_brief'
-  targetType: text("target_type").notNull().default('session'), // 'session' | 'user' | 'schedule'
+  targetType: text("target_type").notNull().default("session"), // 'session' | 'user' | 'schedule'
   targetId: text("target_id").notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow(),
   status: text("status").notNull(), // 'sent', 'failed', 'skipped'
   metadata: jsonb("metadata"), // optional: push payload, error message, etc.
 });
 
-export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({ id: true, sentAt: true });
+export const insertNotificationLogSchema = createInsertSchema(
+  notificationLogs,
+).omit({ id: true, sentAt: true });
 export type NotificationLog = typeof notificationLogs.$inferSelect;
 export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
 
 // ─── WebSocket Events ────────────────────────────────────────────────────────
 
 export const WS_EVENTS = {
-  SYNC_STATE: 'sync_state',
-  CHAT_MESSAGE: 'chat_message',
-  VOTE_UPDATE: 'vote_update',
-  SUBMIT_CHAT: 'submit_chat',
-  SUBMIT_VOTE: 'submit_vote',
-  SUBMIT_REACTION: 'submit_reaction',
-  REACTION_RECEIVED: 'reaction_received',
-  SESSION_STATUS: 'session_status'
+  SYNC_STATE: "sync_state",
+  CHAT_MESSAGE: "chat_message",
+  VOTE_UPDATE: "vote_update",
+  SUBMIT_CHAT: "submit_chat",
+  SUBMIT_VOTE: "submit_vote",
+  SUBMIT_REACTION: "submit_reaction",
+  REACTION_RECEIVED: "reaction_received",
+  SESSION_STATUS: "session_status",
 } as const;
 
 export type WsMessage<T = unknown> = {

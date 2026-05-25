@@ -41,7 +41,12 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import { motion, AnimatePresence } from "framer-motion";
+import {
+  motion,
+  AnimatePresence,
+  useScroll,
+  useTransform,
+} from "framer-motion";
 import Timer from "@/components/TImer";
 import { useSessionReplay } from "@/hooks/use-session-replay";
 import { Replay } from "@/components/Replay";
@@ -79,10 +84,21 @@ export function getTimezoneAbbr(tz: string): string {
 function CoverImage({
   src,
   className,
+  parallaxSpeed = 0,
+  parallaxDirection = "up",
 }: {
   src?: string;
   className?: string | string[];
+  parallaxSpeed?: number;
+  parallaxDirection?: "up" | "down";
 }) {
+  const { scrollY } = useScroll();
+  const direction = parallaxDirection === "up" ? -1 : 1;
+  const y = useTransform(
+    scrollY,
+    (latest) => latest * parallaxSpeed * direction,
+  );
+
   if (!src) return null;
   return (
     <div
@@ -92,7 +108,7 @@ function CoverImage({
         className,
       )}
     >
-      <img
+      <motion.img
         src={src}
         alt=""
         className="
@@ -104,9 +120,8 @@ function CoverImage({
                       select-none
                   "
         draggable={false}
+        style={{ y }}
       />
-
-      {/* atmospheric fade */}
     </div>
   );
 }
@@ -208,19 +223,10 @@ function ReserveSeatButton({
             className,
           )}
         >
-          Remind Me
+          Join Tonight's Story
         </Button>
       </DialogTrigger>
       <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
-        <DialogHeader>
-          <DialogTitle className="text-3xl font-serif font-semibold mb-4">
-            Set Reminder
-          </DialogTitle>
-          <DialogDescription className="text-white/60 font-sans text-sm">
-            Enter your email address to receive an invitation to the next
-            session.
-          </DialogDescription>
-        </DialogHeader>
         <form
           onSubmit={handleFormSubmit}
           className="py-2 overflow-visible px-1 -mx-1"
@@ -235,6 +241,15 @@ function ReserveSeatButton({
                 transition={{ duration: 0.2 }}
                 className="space-y-6"
               >
+                <DialogHeader>
+                  <DialogTitle className="text-3xl font-serif font-semibold mb-4">
+                    Remind Me
+                  </DialogTitle>
+                  <DialogDescription className="text-white/60 font-sans">
+                    Enter your email address to receive an invitation to
+                    tonight's story.
+                  </DialogDescription>
+                </DialogHeader>
                 <div className="space-y-3 mt-4">
                   <Label
                     htmlFor="email"
@@ -271,14 +286,19 @@ function ReserveSeatButton({
                 transition={{ duration: 0.2 }}
                 className="space-y-6 mt-4"
               >
+                <DialogHeader>
+                  <DialogTitle className="text-3xl font-serif font-semibold mb-4">
+                    Subscribe To New Stories
+                  </DialogTitle>
+                </DialogHeader>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
                     <div className="flex flex-col space-y-1">
-                      <Label className="text-sm font-medium text-white">
+                      <Label className="font-medium text-white">
                         Subscribe to updates
                       </Label>
                       <p className="text-xs text-white/50">
-                        Weekly email about new features
+                        Monthly email about new features
                       </p>
                     </div>
                     <Switch
@@ -289,7 +309,7 @@ function ReserveSeatButton({
 
                   <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
                     <div className="flex flex-col space-y-1">
-                      <Label className="text-sm font-medium text-white">
+                      <Label className="font-medium text-white">
                         Subscribe to new stories
                       </Label>
                       <p className="text-xs text-white/50">
@@ -377,7 +397,7 @@ export default function UpcomingSession() {
     },
     staleTime: 60_000,
   });
-  const coverImage = channel?.coverImage ?? null;
+  const coverImageUrl = channel?.coverImage ?? null;
 
   const {
     session: previousSession,
@@ -536,7 +556,7 @@ export default function UpcomingSession() {
   // }
 
   return (
-    <div className="min-h-screen w-full bg-black flex flex-col items-center">
+    <div className="min-h-screen w-full bg-black flex flex-col items-center touch-pan-y">
       {jsonLd && (
         <script
           type="application/ld+json"
@@ -544,7 +564,7 @@ export default function UpcomingSession() {
         />
       )}
 
-      <CoverImage src={coverImage} className="scale-[95%] opacity-[0.5]" />
+      <CoverImage src={coverImageUrl} className="scale-[95%] opacity-[0.5]" />
 
       {/* Hero Section */}
       <section className="relative min-h-screen h-screen max-w-3xl w-full flex items-start justify-center py-2 pb-12 px-6 mb-12 overflow-hidden">
@@ -553,7 +573,11 @@ export default function UpcomingSession() {
             25th Chapter Presents
           </p>
           <Card className="relative z-10 h-full bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
-            <CoverImage src={coverImage} />
+            <CoverImage
+              src={coverImageUrl}
+              parallaxSpeed={0.05}
+              parallaxDirection="down"
+            />
             <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
             <CardHeader className="isolate z-10 text-center pb-0 pt-10">
               <CardDescription className="text-white/80 font-sans text-lg">
@@ -840,7 +864,9 @@ export default function UpcomingSession() {
       <section className="relative w-full pt-24 pb-16 px-6 bg-gradient-to-b from-transparent to-zinc-950/80">
         <CoverImage
           src={
-            previousBlocks?.[randomIndexBlockWithImage].imageUrl ?? coverImage
+            (previousBlocks &&
+              previousBlocks[randomIndexBlockWithImage].imageUrl) ||
+            coverImageUrl
           }
         />
         <div className="max-w-md mx-auto text-center space-y-8 z-10">
@@ -855,6 +881,9 @@ export default function UpcomingSession() {
               channelId={channelId}
               sessionId={nextSession?.id}
             />
+            <p className="py-5 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">
+              The 25th Chapter
+            </p>
           </div>
           <Button
             variant="ghost"

@@ -27,15 +27,18 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
-  const allowedOrigins = [ process.env.CLIENT_ORIGIN, "https://25thchapter.com" ];
+  const allowedOrigins = [process.env.CLIENT_ORIGIN, "https://25thchapter.com"];
   const origin = req.headers.origin || "";
-  
+
   if (allowedOrigins.includes(origin) || !origin) {
     res.header("Access-Control-Allow-Origin", origin || "*");
   }
-  
+
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+  );
   res.header("Access-Control-Allow-Credentials", "true");
 
   if (req.method === "OPTIONS") {
@@ -60,7 +63,7 @@ app.use(createRequestLogger());
       "Internal Server Error",
       "express",
       err instanceof Error ? err : new Error(String(err)),
-      { status, message }
+      { status, message },
     );
 
     if (res.headersSent) {
@@ -87,7 +90,7 @@ app.use(createRequestLogger());
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5001 if not specified.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5001", 10);  
+  const port = parseInt(process.env.PORT || "5001", 10);
   httpServer.listen(
     {
       port,

@@ -1,4 +1,4 @@
-import { BlockWithChats } from "@/hooks/use-session-replay";
+import { BlockWithChats } from "@shared/replay-cache";
 import { Session, ChatMessage } from "@shared/schema";
 import {
   AbsoluteFill,

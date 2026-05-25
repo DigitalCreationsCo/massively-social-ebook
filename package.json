@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "rm -rf node_modules/.vite && NODE_ENV=development tsx watch -r dotenv/config server/index.ts",
     "build": "NODE_ENV=production tsx scripts/build.ts",
-    "start": "DOTENV_CONFIG_PATH=.env.production.local NODE_ENV=production node -r dotenv/config dist/index.cjs",
+    "start": "NODE_ENV=production node --env-file=.env.production.local dist/index.cjs",
     "release:patch": "HUSKY=0 npm version patch && git push origin main --tags",
     "release:minor": "HUSKY=0 npm version minor && git push origin main --tags",
     "release:major": "HUSKY=0 npm version major && git push origin main --tags",
@@ -79,6 +79,7 @@
     "googleapis": "^171.4.0",
     "input-otp": "^1.4.2",
     "isomorphic-fetch": "^3.0.0",
+    "lru-cache": "^11.5.0",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "mixpanel-browser": "^2.75.0",
