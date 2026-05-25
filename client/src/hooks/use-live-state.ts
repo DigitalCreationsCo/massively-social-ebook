@@ -33,6 +33,7 @@ export interface StoryState {
   timeToNextDecision: number;
   initialTimeToNextDecision: number;
   turnsToNextChoice: number;
+  phaseInitialMs?: number;
 }
 
 export interface VoteOption {
@@ -71,9 +72,11 @@ export function useLiveState(channelId: string) {
   const [localTimeToDecision, setLocalTimeToDecision] = useState(0);
   const [localInitialTimeToDecision, setLocalInitialTimeToDecision] =
     useState(0);
+  const [localInitialTimeRemaining, setLocalInitialTimeRemaining] =
+    useState(0);
   const [localTurnsToNextChoice, setLocalTurnsToNextChoice] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | "loading">(
-    "loading",
+    "scheduled",
   );
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
@@ -165,10 +168,16 @@ export function useLiveState(channelId: string) {
         Math.floor(currentBlock.initialTimeToNextDecision / 1000),
       );
     }
+    if (currentBlock?.phaseInitialMs !== undefined) {
+      setLocalInitialTimeRemaining(
+        Math.floor(currentBlock.phaseInitialMs / 1000),
+      );
+    }
   }, [
     currentBlock?.timeRemaining,
     currentBlock?.timeToNextDecision,
     currentBlock?.initialTimeToNextDecision,
+    currentBlock?.phaseInitialMs,
     currentBlock?.phase,
     currentBlock?.id,
   ]);
@@ -183,33 +192,6 @@ export function useLiveState(channelId: string) {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
-
-  // Calculate Macro Phase
-  useEffect(() => {
-    if (!activeSession) {
-      setMacroPhase("waiting");
-      return;
-    }
-    const updatePhase = () => {
-      const now = Date.now();
-      const start = new Date(activeSession.scheduledStart).getTime();
-      const diff = now - start;
-
-      if (currentBlock?.phase === "resolution") {
-        setMacroPhase("afterparty");
-      } else if (diff < -START_BEFORE_MS) {
-        setMacroPhase("waiting");
-      } else if (diff < 0) {
-        setMacroPhase("gathering");
-      } else {
-        setMacroPhase("reading");
-      }
-    };
-
-    updatePhase();
-    const interval = setInterval(updatePhase, 1000);
-    return () => clearInterval(interval);
-  }, [activeSession, currentBlock?.phase]);
 
   // WebSocket Connection
   useEffect(() => {
@@ -307,6 +289,11 @@ export function useLiveState(channelId: string) {
               if (payload.initialTimeToNextDecision !== undefined) {
                 setLocalInitialTimeToDecision(
                   Math.floor(payload.initialTimeToNextDecision / 1000),
+                );
+              }
+              if (payload.phaseInitialMs !== undefined) {
+                setLocalInitialTimeRemaining(
+                  Math.floor(payload.phaseInitialMs / 1000),
                 );
               }
             } else if (message.type === "CHAT_MESSAGE") {
@@ -568,6 +555,7 @@ export function useLiveState(channelId: string) {
     localTimeRemaining,
     localTimeToDecision,
     localInitialTimeToDecision,
+    localInitialTimeRemaining,
     localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,

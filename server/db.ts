@@ -41,3 +41,35 @@ pool.on("remove", () => {
 });
 
 export const db = drizzle({ client: pool, schema, relations });
+
+// ── Pool Starvation Monitor ──────────────────────────────────────────────
+// Logs a warning whenever requests queue up waiting for a connection.
+// This surfaces pool-exhaustion bugs before they cause 6s+ request delays.
+const POOL_WARN_THRESHOLD = 2; // warn when 2+ requests are queued
+let poolStarvationWarned = false;
+
+setInterval(() => {
+  const waiting = pool.waitingCount;
+  if (waiting >= POOL_WARN_THRESHOLD) {
+    if (!poolStarvationWarned) {
+      console.warn(
+        `[DB POOL] Connection starvation detected: ${waiting} request(s) queued. ` +
+        `Total: ${pool.totalCount}, Idle: ${pool.idleCount}. ` +
+        `Consider increasing pool.max or reducing concurrent DB work.`,
+      );
+      poolStarvationWarned = true;
+    }
+  } else {
+    poolStarvationWarned = false;
+  }
+}, 5000);
+
+// Also log whenever a new connection is created or destroyed
+pool.on("connect", () => {
+  console.log(`[DB POOL] New connection. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`);
+});
+pool.on("acquire", () => {
+  if (pool.waitingCount > 0) {
+    console.log(`[DB POOL] Connection acquired (${pool.waitingCount} still waiting). Total: ${pool.totalCount}, Idle: ${pool.idleCount}`);
+  }
+});

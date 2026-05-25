@@ -13,9 +13,20 @@ const httpServer = createServer(app);
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
+    _hitServerAt?: number;
   }
 }
 
+// ── FIRST MIDDLEWARE: timestamp monitor ─────────────────────────────────
+// Logs when a request FIRST hits the Node process. If this timestamp
+// is delayed relative to when the client sent the request, the problem
+// is infra/proxy/serverless-cold-start, NOT application code.
+app.use((req, _res, next) => {
+  req._hitServerAt = Date.now();
+  next();
+});
+
+// ── Body Parsing ─────────────────────────────────────────────────────────
 app.use(
   express.json({
     verify: (req, _res, buf) => {
@@ -26,6 +37,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// ── CORS ─────────────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   const allowedOrigins = [process.env.CLIENT_ORIGIN, "https://25thchapter.com"];
   const origin = req.headers.origin || "";
@@ -48,9 +60,28 @@ app.use((req, res, next) => {
   }
 });
 
+// ── Request Logger ───────────────────────────────────────────────────────
 app.use(createRequestLogger());
 
 (async () => {
+  // ── Health check / keep-alive endpoint ─────────────────────────────
+  // Responds immediately (no DB) so external cron/pinger can keep the
+  // Fly.io machine warm without stressing the DB pool.
+  app.get("/health", (_req, res) => {
+    res.json({ ok: true, ts: Date.now() });
+  });
+
+  // ── Pool diagnostics endpoint (admin only) ─────────────────────────
+  app.get("/health/db", async (_req, res) => {
+    const { pool } = await import("./db");
+    const poolStatus = {
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount,
+    };
+    res.json({ ok: true, pool: poolStatus, ts: Date.now() });
+  });
+
   await registerRoutes(httpServer, app);
   registerAdminRoutes(app);
   startRecurringScheduler();

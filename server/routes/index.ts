@@ -27,6 +27,11 @@ type ChannelId = string;
 export const NARRATIVE_TURN_MS = 40_000;
 export const VOTING_PHASE_MS = 40_000;
 export const POST_VOTE_READING_MS = 40_000;
+export const PHASE_INITIAL_MS: Record<string, number> = {
+  reading: NARRATIVE_TURN_MS,
+  voting: VOTING_PHASE_MS,
+  resolution: 60_000,
+};
 
 // Session timing constants (milliseconds)
 export const LOBBY_DELAY_MS = 3 * 60 * 1000; // 3 minutes before start time
@@ -34,6 +39,41 @@ export const START_BEFORE_MS = LOBBY_DELAY_MS; // Alias for clarity
 
 function getRandomTurns() {
   return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
+}
+
+/**
+ * Computes the wall-clock time when the next decision/voting phase will end.
+ * - In voting phase: decision ends at the same time as the current phase.
+ * - In reading phase: decision ends at phaseEndsAt + remainingTurns * NARRATIVE_TURN_MS.
+ *   If turnsToNextChoice is 0, the next tick will enter voting, so decision
+ *   ends at the current phaseEndsAt + VOTING_PHASE_MS.
+ */
+export function computeDecisionEndsAt(state: {
+  currentPhase: string;
+  phaseEndsAt: number;
+  turnsToNextChoice: number;
+}): number {
+  if (state.currentPhase === "voting") {
+    return state.phaseEndsAt;
+  }
+  if (state.currentPhase === "resolution") {
+    return state.phaseEndsAt;
+  }
+  // reading phase
+  const turns = Math.max(0, state.turnsToNextChoice);
+  // The phaseEndsAt is when the current reading block ends.
+  // After that, if turns > 0, each remaining turn adds NARRATIVE_TURN_MS.
+  // After turns reach 0, voting adds VOTING_PHASE_MS.
+  if (turns === 0) {
+    return state.phaseEndsAt + VOTING_PHASE_MS;
+  }
+  // turns remaining: each turn = NARRATIVE_TURN_MS, then VOTING_PHASE_MS at the end
+  return state.phaseEndsAt + turns * NARRATIVE_TURN_MS + VOTING_PHASE_MS;
+}
+
+/** Clears the in-memory channel cache. Used by tests to reset state between cases. */
+export function clearChannelCache(): void {
+  channelCache.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -425,13 +465,17 @@ export async function registerRoutes(
   // GET /api/sessions/history
   // Supports fetching a specific completed session, or defaults to the most recent completed.
   app.get("/api/sessions/history", async (req, res) => {
+    const t0 = Date.now();
     const { channelId, sessionId } = req.query;
+
+    const t1 = Date.now();
 
     if (!channelId) {
       return res.status(400).json({ error: "channelId is required" });
     }
 
     try {
+      const t2 = Date.now();
       let queryConditions = and(
         eq(sessions.channelId, String(channelId)),
         eq(sessions.status, "completed"),
@@ -445,6 +489,8 @@ export async function registerRoutes(
         );
       }
 
+      const tBeforeDb = Date.now();
+
       const [sessionResult] = await db
         .select()
         .from(sessions)
@@ -452,11 +498,26 @@ export async function registerRoutes(
         .orderBy(desc(sessions.scheduledEnd)) // Always get the most recent if no ID provided
         .limit(1);
 
+      const t3 = Date.now();
+
       if (!sessionResult) {
         return res.status(404).json({ error: "No completed sessions found." });
       }
 
       res.json(sessionResult);
+
+      const t4 = Date.now();
+
+      // Log timing breakdown to isolate where the 6.7s goes
+      logger.info("TIMING /api/sessions/history", "routes", {
+        parse: t2 - t1,            // query param parsing
+        queryBuild: tBeforeDb - t2, // query condition building
+        db: t3 - tBeforeDb,        // actual DB query time
+        serialize_send: t4 - t3,    // response serialization + send
+        total: t4 - t0,            // total handler wall time
+        channelId: String(channelId),
+        sessionId: sessionId ? Number(sessionId) : null,
+      });
     } catch (error) {
       logger.error(
         "Failed to fetch session history",
@@ -763,6 +824,7 @@ export async function registerRoutes(
       timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
       initialTimeToNextDecision: dbState.initialTimeToDecision,
       turnsToNextChoice: dbState.turnsToNextChoice,
+      phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
     });
   });
 
@@ -904,26 +966,27 @@ export async function registerRoutes(
             ws.send(
               JSON.stringify({
                 type: "SYNC_STATE",
-                payload: {
-                  ...block,
-                  createdAt:
-                    block.createdAt?.toISOString() ?? new Date().toISOString(),
-                  phase: dbState.currentPhase,
-                  timeRemaining: Math.max(
-                    0,
-                    dbState.phaseEndsAt.getTime() - connectNow,
-                  ),
-                  timeToNextDecision: Math.max(
-                    0,
-                    dbState.decisionEndsAt.getTime() - connectNow,
-                  ),
-                  initialTimeToNextDecision: dbState.initialTimeToDecision,
-                  turnsToNextChoice: dbState.turnsToNextChoice,
-                },
-              }),
-            );
-          }
-          ws.send(
+                  payload: {
+                    ...block,
+                    createdAt:
+                      block.createdAt?.toISOString() ?? new Date().toISOString(),
+                    phase: dbState.currentPhase,
+                    timeRemaining: Math.max(
+                      0,
+                      dbState.phaseEndsAt.getTime() - connectNow,
+                    ),
+                    timeToNextDecision: Math.max(
+                      0,
+                      dbState.decisionEndsAt.getTime() - connectNow,
+                    ),
+                    initialTimeToNextDecision: dbState.initialTimeToDecision,
+                    turnsToNextChoice: dbState.turnsToNextChoice,
+                    phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
+                  },
+                }),
+              );
+            }
+            ws.send(
             JSON.stringify({
               type: "SESSION_STATUS",
               payload: { status: activeSession.status, session: activeSession },
@@ -1249,6 +1312,7 @@ export async function handleGameLoopTick(
                 timeToNextDecision: 0,
                 initialTimeToNextDecision: 0,
                 turnsToNextChoice: 0,
+                phaseInitialMs: 60_000,
               },
             });
           } finally {
@@ -1411,6 +1475,7 @@ export async function handleGameLoopTick(
                     ),
                     initialTimeToNextDecision: dbState.initialTimeToDecision,
                     turnsToNextChoice: newTurns,
+                    phaseInitialMs: NARRATIVE_TURN_MS,
                   },
                 });
               } else {
@@ -1457,6 +1522,7 @@ export async function handleGameLoopTick(
                       timeToNextDecision: VOTING_PHASE_MS,
                       initialTimeToNextDecision: VOTING_PHASE_MS,
                       turnsToNextChoice: 0,
+                      phaseInitialMs: VOTING_PHASE_MS,
                     },
                   });
                 }
@@ -1469,6 +1535,29 @@ export async function handleGameLoopTick(
               const countA = votes.filter((v) => v.choice === "A").length;
               const countB = votes.filter((v) => v.choice === "B").length;
               const winner: "A" | "B" = countA >= countB ? "A" : "B";
+
+              // Create lore entry for the vote outcome
+              if (currentBlock && activeSession) {
+                const optA = currentBlock.optionA as { label?: string; description?: string } | null;
+                const optB = currentBlock.optionB as { label?: string; description?: string } | null;
+                const winnerLabel = winner === "A"
+                  ? (optA?.label || "Choice A")
+                  : (optB?.label || "Choice B");
+                const loserLabel = winner === "A"
+                  ? (optB?.label || "Choice B")
+                  : (optA?.label || "Choice A");
+                const loreContent = `Vote outcome for block "${currentBlock.title || "untitled"}": "${winnerLabel}" won (A: ${countA}, B: ${countB}) over "${loserLabel}".`;
+                try {
+                  await storage.createLore({
+                    channelId,
+                    content: loreContent,
+                    isActive: true,
+                  });
+                  logger.info(`Created lore entry for vote outcome on block ${currentBlock.id}`, "gameloop");
+                } catch (loreErr) {
+                  logger.error("Failed to create lore for vote outcome", "gameloop", loreErr instanceof Error ? loreErr : new Error(String(loreErr)));
+                }
+              }
 
               let nextData: {
                 title: string;
@@ -1612,6 +1701,7 @@ export async function handleGameLoopTick(
                     newDecisionEndsAt.getTime() - now,
                   ),
                   turnsToNextChoice: newTurns,
+                  phaseInitialMs: POST_VOTE_READING_MS,
                 },
               });
             }
@@ -1642,6 +1732,7 @@ export async function handleGameLoopTick(
                 ),
                 initialTimeToNextDecision: dbState.initialTimeToDecision,
                 turnsToNextChoice: dbState.turnsToNextChoice,
+                phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
               },
             });
           }

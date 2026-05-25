@@ -108,7 +108,7 @@ export const logger = {
 
 // Express middleware for request logging
 export function createRequestLogger() {
-  return (req: { method: string; path: string; ip?: string }, res: {
+  return (req: { method: string; path: string; ip?: string; _hitServerAt?: number }, res: {
     statusCode: number;
     on: (event: string, handler: () => void) => void;
   }, next: () => void) => {
@@ -116,13 +116,19 @@ export function createRequestLogger() {
 
     res.on("finish", () => {
       const duration = Date.now() - start;
-      const context = {
+      const context: Record<string, unknown> = {
         method: req.method,
         path: req.path,
         statusCode: res.statusCode,
         durationMs: duration,
         ip: req.ip,
       };
+
+      // If the HIT SERVER middleware was installed before us, report
+      // how long the request waited before any middleware ran.
+      if (req._hitServerAt) {
+        context.preHandlerMs = start - req._hitServerAt;
+      }
 
       if (res.statusCode >= 500) {
         logger.error("Request failed", "express", undefined, context);
