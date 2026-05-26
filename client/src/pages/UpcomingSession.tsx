@@ -7,17 +7,8 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import {
-  Calendar,
-  Bell,
-  Loader2,
-  BookOpen,
-  Mail,
-  Clock,
-  ChevronDown,
-} from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
@@ -50,7 +41,6 @@ import {
 import Timer from "@/components/TImer";
 import { useSessionReplay } from "@shared/hooks/use-session-replay";
 import { Replay } from "@shared/components/Replay";
-import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -379,25 +369,10 @@ export default function UpcomingSession() {
     isLoading: isLiveSessionLoading,
     wsConnected,
     isSessionLive,
+    activeChannel,
   } = useLiveState(channelId);
   const [_, setLocation] = useLocation();
   const [openFaq, setOpenFaq] = useState<string | null>(null);
-
-  // Fetch channel data for coverImage
-  const { data: channel } = useQuery({
-    queryKey: [api.channels.list.path, channelId],
-    queryFn: async () => {
-      const res = await fetch(api.channels.list.path);
-      if (!res.ok) throw new Error("Failed to fetch channels");
-      const channels = (await res.json()) as Array<{
-        channelId: string;
-        coverImage?: string | null;
-      }>;
-      return channels.find((c) => c.channelId === channelId) ?? null;
-    },
-    staleTime: 60_000,
-  });
-  const coverImageUrl = channel?.coverImage ?? null;
 
   const {
     session: previousSession,
@@ -514,6 +489,8 @@ export default function UpcomingSession() {
       : null;
 
   const isLoading = isLiveSessionLoading || isReplayLoading;
+
+  const coverImageUrl = activeChannel?.coverImage ?? null;
 
   const randomIndexBlockWithImage = useMemo(() => {
     const validIndexes = (previousBlocks ?? [])

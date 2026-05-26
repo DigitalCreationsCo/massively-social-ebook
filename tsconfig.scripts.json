@@ -1,0 +1,14 @@
+{
+  "include": ["client/src/**/*", "shared/**/*", "server/**/*"],
+  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
+  "compilerOptions": {
+    "module": "CommonJS",
+    "paths": {
+      "@/*": ["./client/src/*"],
+      "@shared/*": ["./shared/*"],
+      "@assets/*": ["./attached_assets/*"],
+      "narrative-engine": ["./packages/narrative-engine"],
+      "narrative-engine-lab": ["./packages/narrative-engine-lab"],
+    },
+  },
+}

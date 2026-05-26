@@ -72,8 +72,7 @@ export function useLiveState(channelId: string) {
   const [localTimeToDecision, setLocalTimeToDecision] = useState(0);
   const [localInitialTimeToDecision, setLocalInitialTimeToDecision] =
     useState(0);
-  const [localInitialTimeRemaining, setLocalInitialTimeRemaining] =
-    useState(0);
+  const [localInitialTimeRemaining, setLocalInitialTimeRemaining] = useState(0);
   const [localTurnsToNextChoice, setLocalTurnsToNextChoice] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | "loading">(
     "scheduled",
@@ -140,6 +139,9 @@ export function useLiveState(channelId: string) {
       return res.json() as Promise<StoryState>;
     },
     retry: false,
+    // WebSocket SESSION_STATUS handler calls invalidateQueries on this key
+    // whenever the session goes active, so we never need a background refetch.
+    staleTime: Infinity,
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
@@ -151,6 +153,9 @@ export function useLiveState(channelId: string) {
       if (!res.ok) throw new Error("Failed to fetch chat history");
       return res.json() as Promise<ChatMessage[]>;
     },
+    // WebSocket CHAT_MESSAGE handler calls setQueryData on this key for every
+    // incoming message, so background refetches would just duplicate work.
+    staleTime: Infinity,
   });
 
   // Sync local timers with server state
@@ -183,15 +188,15 @@ export function useLiveState(channelId: string) {
   ]);
 
   // Simulate viewer count fluctuations
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setViewerCount((prev) => {
-        const change = Math.floor(Math.random() * 21) - 10;
-        return Math.max(100, prev + change);
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     setViewerCount((prev) => {
+  //       const change = Math.floor(Math.random() * 21) - 10;
+  //       return Math.max(100, prev + change);
+  //     });
+  //   }, 5000);
+  //   return () => clearInterval(interval);
+  // }, []);
 
   // WebSocket Connection
   useEffect(() => {

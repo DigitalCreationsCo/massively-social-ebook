@@ -22,7 +22,7 @@ export const pool = new Pool({
       ? { rejectUnauthorized: false }
       : undefined,
 
-  query_timeout: 15000,
+  query_timeout: 70000,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
   max: 10,
@@ -54,8 +54,8 @@ setInterval(() => {
     if (!poolStarvationWarned) {
       console.warn(
         `[DB POOL] Connection starvation detected: ${waiting} request(s) queued. ` +
-        `Total: ${pool.totalCount}, Idle: ${pool.idleCount}. ` +
-        `Consider increasing pool.max or reducing concurrent DB work.`,
+          `Total: ${pool.totalCount}, Idle: ${pool.idleCount}. ` +
+          `Consider increasing pool.max or reducing concurrent DB work.`,
       );
       poolStarvationWarned = true;
     }
@@ -66,10 +66,14 @@ setInterval(() => {
 
 // Also log whenever a new connection is created or destroyed
 pool.on("connect", () => {
-  console.log(`[DB POOL] New connection. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`);
+  console.log(
+    `[DB POOL] New connection. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`,
+  );
 });
 pool.on("acquire", () => {
   if (pool.waitingCount > 0) {
-    console.log(`[DB POOL] Connection acquired (${pool.waitingCount} still waiting). Total: ${pool.totalCount}, Idle: ${pool.idleCount}`);
+    console.log(
+      `[DB POOL] Connection acquired (${pool.waitingCount} still waiting). Total: ${pool.totalCount}, Idle: ${pool.idleCount}`,
+    );
   }
 });

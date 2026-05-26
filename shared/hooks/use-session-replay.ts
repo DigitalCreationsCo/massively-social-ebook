@@ -19,77 +19,88 @@ export interface UseSessionReplayReturn {
   error: Error | null;
 }
 
+interface SessionReplayData {
+  session: Session | null;
+  blocks: BlockWithChats[];
+}
+
+async function fetchSessionReplay(
+  channelId: string,
+  requestedSessionId: number | undefined,
+  notableOnly: boolean,
+): Promise<SessionReplayData> {
+  const sessionUrl = new URL("/api/sessions/history", window.location.origin);
+  sessionUrl.searchParams.append("channelId", channelId);
+  if (requestedSessionId)
+    sessionUrl.searchParams.append("sessionId", requestedSessionId.toString());
+
+  // When we already know the session ID we can fire both requests in parallel.
+  if (requestedSessionId) {
+    const blocksUrl = new URL("/api/blocks/history", window.location.origin);
+    blocksUrl.searchParams.append("sessionId", requestedSessionId.toString());
+    if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
+
+    const [sessionRes, blocksRes] = await Promise.all([
+      fetch(sessionUrl.toString()),
+      fetch(blocksUrl.toString()),
+    ]);
+
+    if (sessionRes.status === 404) return { session: null, blocks: [] };
+    if (!sessionRes.ok) throw new Error("Failed to fetch session history");
+    if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");
+
+    const [session, blocks] = await Promise.all([
+      sessionRes.json() as Promise<Session>,
+      blocksRes.json() as Promise<BlockWithChats[]>,
+    ]);
+
+    return { session, blocks };
+  }
+
+  // No session ID yet — fetch session first, then blocks.
+  const sessionRes = await fetch(sessionUrl.toString());
+  if (sessionRes.status === 404) return { session: null, blocks: [] };
+  if (!sessionRes.ok) throw new Error("Failed to fetch session history");
+
+  const session = (await sessionRes.json()) as Session;
+
+  const blocksUrl = new URL("/api/blocks/history", window.location.origin);
+  blocksUrl.searchParams.append("sessionId", session.id.toString());
+  if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
+
+  const blocksRes = await fetch(blocksUrl.toString());
+  if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");
+
+  const blocks = (await blocksRes.json()) as BlockWithChats[];
+  return { session, blocks };
+}
+
 export function useSessionReplay({
   channelId,
   requestedSessionId,
   notableOnly = false,
 }: UseSessionReplayHookProps): UseSessionReplayReturn {
-  const {
-    data: session,
-    isLoading: isSessionLoading,
-    error: sessionError,
-  } = useQuery({
-    queryKey: ["session", "history", channelId, requestedSessionId],
-    queryFn: async (): Promise<Session | null> => {
-      const url = new URL("/api/sessions/history", window.location.origin);
-      url.searchParams.append("channelId", channelId);
-      if (requestedSessionId)
-        url.searchParams.append("sessionId", requestedSessionId.toString());
-
-      const res = await fetch(url.toString());
-      // 404 means no completed sessions exist — not a real error.
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error("Failed to fetch session history");
-      return res.json();
-    },
+  const { data, isLoading, error } = useQuery({
+    // Include notableOnly in the key so toggling it triggers a fresh fetch.
+    queryKey: ["session-replay", channelId, requestedSessionId, notableOnly],
+    queryFn: () =>
+      fetchSessionReplay(channelId, requestedSessionId, notableOnly),
     enabled: !!channelId,
     staleTime: Infinity,
   });
 
-  const sessionId = session?.id;
-
-  const {
-    data: blocks,
-    isLoading: isBlocksLoading,
-    error: blocksError,
-  } = useQuery({
-    queryKey: ["blocks", "history", sessionId, notableOnly],
-    queryFn: async (): Promise<BlockWithChats[]> => {
-      if (!sessionId) throw new Error("No session ID — cannot fetch blocks");
-
-      const url = new URL("/api/blocks/history", window.location.origin);
-      url.searchParams.append("sessionId", sessionId.toString());
-      if (notableOnly) url.searchParams.append("notableOnly", "true");
-
-      const res = await fetch(url.toString());
-      if (!res.ok) throw new Error("Failed to fetch historical blocks");
-      return res.json();
-    },
-    enabled: !!sessionId,
-    staleTime: Infinity,
-  });
-
-  // Log errors — this hook's consumer currently ignores `error`.
-  if (sessionError) {
+  if (error) {
     console.error(
-      "[useSessionReplay] Failed to fetch session history for channel",
+      "[useSessionReplay] Failed to fetch session replay for channel",
       channelId,
-      sessionError,
-    );
-  }
-  if (blocksError) {
-    console.error(
-      "[useSessionReplay] Failed to fetch historical blocks for session",
-      sessionId,
-      blocksError,
+      error,
     );
   }
 
   return {
-    // Normalise null from the 404 case into undefined for the consumer.
-    session: session ?? undefined,
-    blocks,
-    isLoading: isSessionLoading || isBlocksLoading,
-    error: sessionError || blocksError,
+    session: data?.session ?? undefined,
+    blocks: data?.blocks,
+    isLoading,
+    error,
   };
 }

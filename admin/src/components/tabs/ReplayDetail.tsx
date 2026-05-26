@@ -1,14 +1,17 @@
-import { useSessionReplay } from '@shared/hooks/use-session-replay';
-import { Replay } from '@shared/components/Replay';
-import { useAdminToken } from '../../hooks/useAdminToken';
-import { adminFetch } from '../../api/client';
+import { useSessionReplay } from "@shared/hooks/use-session-replay";
+import { Replay } from "@shared/components/Replay";
+import { useAdminToken } from "../../hooks/useAdminToken";
+import { adminFetch } from "../../api/client";
 
 interface ReplayDetailProps {
   sessionId: number;
   channelId: string;
 }
 
-export default function ReplayDetail({ sessionId, channelId }: ReplayDetailProps) {
+export default function ReplayDetail({
+  sessionId,
+  channelId,
+}: ReplayDetailProps) {
   const { token } = useAdminToken();
   const { session, blocks, isLoading, error } = useSessionReplay({
     channelId,
@@ -33,11 +36,14 @@ export default function ReplayDetail({ sessionId, channelId }: ReplayDetailProps
               const res = await adminFetch<{ message: string; status: string }>(
                 `/replays/${sessionId}/render`,
                 token,
-                { method: 'POST' }
+                { method: "POST" },
               );
               alert(res.message);
             } catch (err) {
-              alert('Failed to start rendering: ' + (err instanceof Error ? err.message : String(err)));
+              alert(
+                "Failed to start rendering: " +
+                  (err instanceof Error ? err.message : String(err)),
+              );
             }
           }}
           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"

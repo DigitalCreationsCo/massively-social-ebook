@@ -7,10 +7,10 @@
     "runtimeExecutable": "./node_modules/.bin/tsx",
     "args": ["watch", "-r", "dotenv/config", "server/index.ts"],
     "env": {
-      "NODE_ENV": "development"
+      "NODE_ENV": "development",
     },
     "sourceMaps": true,
-    "skipFiles": ["<node_internals>/**"]
+    "skipFiles": ["<node_internals>/**"],
   },
   {
     "label": "Debug TSX Server (breakpoints)",
@@ -20,9 +20,23 @@
     "runtimeExecutable": "./node_modules/.bin/tsx",
     "args": ["-r", "dotenv/config", "server/index.ts"],
     "env": {
-      "NODE_ENV": "development"
+      "NODE_ENV": "development",
     },
     "sourceMaps": true,
-    "skipFiles": ["<node_internals>/**"]
-  }
+    "skipFiles": ["<node_internals>/**"],
+  },
+  {
+    "label": "Debug Current File (Javascript)",
+    "type": "pwa-node",
+    "adapter": "JavaScript",
+    "request": "launch",
+    "runtimeExecutable": "node",
+    "runtimeArgs": ["--import", "tsx"],
+    "program": "$ZED_FILE",
+    "skipFiles": ["<node_internals>/**"],
+    "use_new_terminal": true,
+    "envFile": "${workspaceFolder}/.env.local",
+    "cwd": "/Users/vibrantceo/Projects/massively-social-ebook",
+    "sourceMaps": true,
+  },
 ]
