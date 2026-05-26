@@ -7,10 +7,11 @@ import LoreTab from './components/tabs/LoreTab';
 import UsersTab from './components/tabs/UsersTab';
 import ChatTab from './components/tabs/ChatTab';
 import DebugTab from './components/tabs/DebugTab';
+import ReplaysTab from './components/tabs/ReplaysTab';
 import { useAdminToken } from './hooks/useAdminToken';
 import BlocksTab from './components/tabs/BlocksTab';
 
-type Tab = 'sessions' | 'schedules' | 'channels' | 'lore' | 'blocks' | 'users' | 'chat' | 'debug';
+type Tab = 'sessions' | 'schedules' | 'channels' | 'lore' | 'blocks' | 'users' | 'chat' | 'debug' | 'replays';
 
 const TABS: { id: Tab; label: string; }[] = [
   { id: 'sessions', label: 'Sessions' },
@@ -21,6 +22,7 @@ const TABS: { id: Tab; label: string; }[] = [
   { id: 'users', label: 'Users' },
   { id: 'chat', label: 'Chat' },
   { id: 'debug', label: 'Debug' },
+  { id: 'replays', label: 'Replays' },
 ];
 
 export default function App() {
@@ -72,6 +74,7 @@ export default function App() {
       { activeTab === 'users' && <UsersTab /> }
       { activeTab === 'chat' && <ChatTab /> }
       { activeTab === 'debug' && <DebugTab /> }
+      { activeTab === 'replays' && <ReplaysTab /> }
     </Layout>
   );
 }

@@ -1,0 +1,28 @@
+[
+  {
+    "label": "Debug TSX Server (watch)",
+    "adapter": "JavaScript",
+    "type": "node",
+    "request": "launch",
+    "runtimeExecutable": "./node_modules/.bin/tsx",
+    "args": ["watch", "-r", "dotenv/config", "server/index.ts"],
+    "env": {
+      "NODE_ENV": "development"
+    },
+    "sourceMaps": true,
+    "skipFiles": ["<node_internals>/**"]
+  },
+  {
+    "label": "Debug TSX Server (breakpoints)",
+    "adapter": "JavaScript",
+    "type": "node",
+    "request": "launch",
+    "runtimeExecutable": "./node_modules/.bin/tsx",
+    "args": ["-r", "dotenv/config", "server/index.ts"],
+    "env": {
+      "NODE_ENV": "development"
+    },
+    "sourceMaps": true,
+    "skipFiles": ["<node_internals>/**"]
+  }
+]

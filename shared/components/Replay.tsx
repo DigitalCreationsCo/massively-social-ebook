@@ -9,7 +9,7 @@ import {
 } from "remotion";
 import type { PlayerRef } from "@remotion/player";
 import { Player } from "@remotion/player";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ReplayProps {
   blocks: BlockWithChats[];
@@ -19,8 +19,6 @@ interface ReplayProps {
 
 function ChatBubble({
   msg,
-  index,
-  blockIndex,
   frame,
 }: {
   msg: ChatMessage;
@@ -97,10 +95,9 @@ function StoryScene({
 
       {/* text */}
       <div
-        className="border"
         style={{
           position: "absolute",
-          bottom: 0,
+          bottom: 40,
           left: 80,
           right: 80,
           color: "white",
@@ -109,9 +106,7 @@ function StoryScene({
         {/* <h1 style={ { fontSize: 72, fontWeight: 700 } }>
                     { story.title }
                 </h1> */}
-        {story.content && (
-          <p style={{ fontSize: 48, opacity: 0.85 }}>{story.content}</p>
-        )}
+        {story.content && <p className="text-[100px]">{story.content}</p>}
       </div>
 
       {/* chat overlay */}
@@ -138,7 +133,7 @@ function StoryScene({
   );
 }
 
-export const Replay = ({ blocks, session, onPlay }: ReplayProps) => {
+export const Replay = ({ blocks, onPlay }: ReplayProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const playerRef = useRef<PlayerRef>(null);

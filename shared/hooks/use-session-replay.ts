@@ -43,6 +43,7 @@ export function useSessionReplay({
       return res.json();
     },
     enabled: !!channelId,
+    staleTime: Infinity,
   });
 
   const sessionId = session?.id;
@@ -65,6 +66,7 @@ export function useSessionReplay({
       return res.json();
     },
     enabled: !!sessionId,
+    staleTime: Infinity,
   });
 
   // Log errors — this hook's consumer currently ignores `error`.

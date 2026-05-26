@@ -1,6 +1,7 @@
-import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Timer, Zap } from "lucide-react";
+import { Timer } from "lucide-react";
 import type { VoteOption, VoteResults } from "@/hooks/use-live-state";
 
 interface DecisionPhaseProps {
@@ -8,6 +9,7 @@ interface DecisionPhaseProps {
   timeRemaining: number;
   timeToDecision: number;
   initialTimeToDecision: number;
+  initialTimeRemaining: number;
   turnsToNextChoice: number;
   hasVoted: boolean;
   onVote: (choice: "A" | "B") => void;
@@ -29,18 +31,38 @@ export function DecisionPhase({
   voteResults,
   selectedChoice,
   initialTimeToDecision,
+  initialTimeRemaining,
 }: DecisionPhaseProps) {
-  // Progress bar represents time to next decision, not next storyblock
-  // Robust fallback: if initialTimeToDecision is 0, use timeToDecision to avoid 100% stuck state
-  const maxDecisionTime =
-    phase === "voting"
-      ? 40
-      : Math.max(initialTimeToDecision, timeToDecision, 1);
-  // Calculate progress as emptying (100% -> 0%) as requested by user
+  // Track previous phase for interruption animation on voting transition
+  const [prevPhase, setPrevPhase] = useState(phase);
+  const [showInterruption, setShowInterruption] = useState(false);
+
+  useEffect(() => {
+    if (prevPhase === "reading" && phase === "voting") {
+      setShowInterruption(true);
+      const timer = setTimeout(() => setShowInterruption(false), 1200);
+      return () => clearTimeout(timer);
+    }
+    setPrevPhase(phase);
+  }, [phase, prevPhase]);
+
+  // Phase progress bar: reading uses current block timer, voting uses decision timer
+  const maxTime = phase === "reading"
+    ? Math.max(initialTimeRemaining, 1)
+    : Math.max(initialTimeToDecision, 1);
+  const current = phase === "reading"
+    ? timeRemaining
+    : timeToDecision;
+  // Empty from 100% → 0%
   const progressPercent = Math.min(
     100,
-    Math.max(0, (timeToDecision / maxDecisionTime) * 100),
+    Math.max(0, (current / maxTime) * 100),
   );
+
+  // Voting phase also shows a prominent secondary countdown timer
+  const votingTimerPercent = phase === "voting"
+    ? Math.min(100, Math.max(0, (timeRemaining / Math.max(initialTimeRemaining, 1)) * 100))
+    : 0;
 
   // Calculate vote percentages
   const totalVotes = voteResults.A + voteResults.B;
@@ -60,13 +82,35 @@ export function DecisionPhase({
   const isDecisionAvailable = turnsToNextChoice === 0 && phase === "voting";
 
   return (
-    <div className="border w-full flex flex-col justify-end min-h-0">
-      <div className="flex flex-col items-center justify-center py-2 px-4 md:px-8 mb-3 gap-1">
+    <div className="border w-full flex flex-col justify-end min-h-0 relative">
+      {/* Interruption flash on voting transition */}
+      <AnimatePresence>
+        {showInterruption && (
+          <motion.div
+            key="interruption-flash"
+            initial={{ opacity: 0.6 }}
+            animate={{ opacity: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.2, ease: "easeOut" }}
+            className="absolute inset-0 z-50 pointer-events-none"
+            style={{
+              background:
+                "radial-gradient(ellipse at center, hsla(var(--primary), 0.25) 0%, transparent 70%)",
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <div className="flex flex-col items-center justify-center py-2 px-4 md:px-8 mb-3 gap-1 relative z-10">
         <div className="flex items-center gap-3 text-xs md:text-sm font-medium tracking-wider uppercase text-white/60">
           <div className="flex items-center gap-2">
             {isDecisionAvailable && (
-              <motion.div className="flex items-center gap-2">
-                You Decide:
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-2"
+              >
+                You Decide
               </motion.div>
             )}
             {phase === "resolution" && (
@@ -95,7 +139,7 @@ export function DecisionPhase({
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="px-4 pb-4 md:px-8"
+          className="px-4 pb-4 md:px-8 relative z-10"
         >
           {!hasVoted ? (
             <motion.div
@@ -162,8 +206,8 @@ export function DecisionPhase({
         </motion.div>
       )}
 
-      {/* Progress Bar */}
-      <div className="w-full h-1.5 bg-white/10 overflow-hidden">
+      {/* Progress Bar — shows phase-level timer */}
+      <div className="w-full h-1.5 bg-white/10 overflow-hidden relative z-10">
         {phase !== "resolution" && (
           <motion.div
             role="progressbar"
@@ -180,6 +224,22 @@ export function DecisionPhase({
           />
         )}
       </div>
+
+      {/* Voting phase: prominent negative countdown timer */}
+      {phase === "voting" && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full h-1 bg-primary/20 overflow-hidden relative z-10"
+        >
+          <motion.div
+            className="h-full bg-primary"
+            initial={{ width: `${votingTimerPercent}%` }}
+            animate={{ width: `${votingTimerPercent}%` }}
+            transition={{ ease: "linear", duration: 1 }}
+          />
+        </motion.div>
+      )}
     </div>
   );
 }

@@ -55,6 +55,7 @@ import {
   or,
   gte,
   inArray,
+  SQL,
 } from "drizzle-orm";
 import {
   replayCache,
@@ -245,16 +246,34 @@ export class DatabaseStorage implements IStorage {
     sessionId: number,
     notableOnly: boolean,
   ): Promise<BlockWithChats[]> {
-    const cacheKey = buildReplayCacheKey(sessionId, notableOnly);
+    // const cacheKey = buildReplayCacheKey(sessionId, notableOnly);
+    // const cached = replayCache.get(cacheKey);
 
-    const cached = replayCache.get(cacheKey);
+    // if (cached) {
+    //   return cached.data;
+    // }
 
-    if (cached) {
-      return cached.data;
+    // 1. Fetch blocks using the stable composite index scan
+    let queryConditions: Partial<Record<keyof typeof blocks, any>> = {
+      sessionId: Number(sessionId),
+    };
+
+    if (notableOnly === true) {
+      queryConditions = { ...queryConditions, isNotable: true };
     }
 
     const replayBlocks = await db
-      .select()
+      .select({
+        id: blocks.id,
+        sessionId: blocks.sessionId,
+        title: blocks.title,
+        content: blocks.content,
+        imageUrl: blocks.imageUrl,
+        optionA: blocks.optionA,
+        optionB: blocks.optionB,
+        isNotable: blocks.isNotable,
+        createdAt: blocks.createdAt,
+      })
       .from(blocks)
       .where(
         notableOnly
@@ -262,52 +281,21 @@ export class DatabaseStorage implements IStorage {
           : eq(blocks.sessionId, sessionId),
       )
       .orderBy(asc(blocks.createdAt))
-      .limit(100);
+      .limit(12);
 
-    const blockIds = replayBlocks.map((b) => b.id);
-
-    const chats = blockIds.length
-      ? await db
-          .select({
-            id: chat.id,
-            blockId: chat.blockId,
-            username: chat.username,
-            text: chat.text,
-            createdAt: chat.createdAt,
-            sessionId: chat.sessionId,
-            channelId: chat.channelId,
-          })
-          .from(chat)
-          .where(inArray(chat.blockId, blockIds))
-          .orderBy(asc(chat.blockId), asc(chat.createdAt))
-      : [];
-
-    const chatsByBlock = new Map<number, ChatMessage[]>();
-
-    for (const msg of chats) {
-      if (!msg.blockId) continue;
-
-      let arr = chatsByBlock.get(msg.blockId);
-
-      if (!arr) {
-        arr = [];
-        chatsByBlock.set(msg.blockId, arr);
-      }
-
-      if (arr.length < 10) {
-        arr.push(msg as ChatMessage);
-      }
+    if (replayBlocks.length === 0) {
+      return [];
     }
 
     const result: BlockWithChats[] = replayBlocks.map((block) => ({
       ...block,
-      chats: chatsByBlock.get(block.id) ?? [],
+      chats: [],
     }));
 
-    replayCache.set(cacheKey, {
-      data: result,
-      createdAt: Date.now(),
-    });
+    // replayCache.set(cacheKey, {
+    //   data: result,
+    //   createdAt: Date.now(),
+    // });
 
     return result;
   }

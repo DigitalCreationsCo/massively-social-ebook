@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug TSX Server (watch)",
+      "runtimeExecutable": "./node_modules/.bin/tsx",
+      "args": ["watch", "-r", "dotenv/config", "server/index.ts"],
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug TSX Server (breakpoints)",
+      "runtimeExecutable": "./node_modules/.bin/tsx",
+      "args": ["-r", "dotenv/config", "server/index.ts"],
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

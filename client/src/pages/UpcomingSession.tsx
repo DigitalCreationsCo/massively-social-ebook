@@ -48,8 +48,8 @@ import {
   useTransform,
 } from "framer-motion";
 import Timer from "@/components/TImer";
-import { useSessionReplay } from "@/hooks/use-session-replay";
-import { Replay } from "@/components/Replay";
+import { useSessionReplay } from "@shared/hooks/use-session-replay";
+import { Replay } from "@shared/components/Replay";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -219,7 +219,7 @@ function ReserveSeatButton({
       <DialogTrigger asChild>
         <Button
           className={cn(
-            "w-full bg-primary hover:bg-primary/90 text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]",
+            "w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]",
             className,
           )}
         >

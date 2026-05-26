@@ -1,7 +1,7 @@
 // client/hooks/useHistoricalReplay.test.tsx
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useSessionReplay } from "../use-session-replay";
+import { useSessionReplay } from "@shared/hooks/use-session-replay";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Global fetch mock

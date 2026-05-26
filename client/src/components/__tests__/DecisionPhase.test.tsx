@@ -12,6 +12,7 @@ describe('DecisionPhase', () => {
         timeRemaining={ 30 }
         timeToDecision={ 200 }
         initialTimeToDecision={ 240 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 3 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -29,6 +30,7 @@ describe('DecisionPhase', () => {
         timeRemaining={ 15 }
         timeToDecision={ 15 }
         initialTimeToDecision={ 15 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -49,6 +51,7 @@ describe('DecisionPhase', () => {
         timeRemaining={ 15 }
         timeToDecision={ 95 }
         initialTimeToDecision={ 120 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 1 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -62,13 +65,14 @@ describe('DecisionPhase', () => {
     expect(screen.queryByText('Path B')).not.toBeInTheDocument();
   });
 
-  it.skip('renders "Next choice in X:XX" using timeToDecision', () => {
+  it('renders "Next choice in X:XX" using timeToDecision', () => {
     render(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 45 }
         timeToDecision={ 165 }
         initialTimeToDecision={ 200 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 1 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -80,13 +84,14 @@ describe('DecisionPhase', () => {
     expect(screen.getByText('Next choice in 2:45')).toBeInTheDocument();
   });
 
-  it('displays "Decision" during voting phase with turnsToNextChoice 0', () => {
+  it('displays "You Decide" during voting phase with turnsToNextChoice 0', () => {
     render(
       <DecisionPhase
         phase="voting"
         timeRemaining={ 30 }
         timeToDecision={ 30 }
         initialTimeToDecision={ 40 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -94,16 +99,17 @@ describe('DecisionPhase', () => {
       />
     );
 
-    expect(screen.getByText('Decision')).toBeInTheDocument();
+    expect(screen.getByText('You Decide')).toBeInTheDocument();
   });
 
-  it('displays "Session Ending" during resolution phase', () => {
+  it('displays "Conclusion" during resolution phase', () => {
     render(
       <DecisionPhase
         phase="resolution"
         timeRemaining={ 40 }
         timeToDecision={ 40 }
         initialTimeToDecision={ 0 }
+        initialTimeRemaining={ 60 }
         turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -111,19 +117,20 @@ describe('DecisionPhase', () => {
       />
     );
 
-    expect(screen.getByText('Session Ending')).toBeInTheDocument();
+    expect(screen.getByText('Conclusion')).toBeInTheDocument();
     expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
 
-  it.skip('progress bar uses timeToDecision, not timeRemaining', () => {
+  it('next choice timer uses timeToDecision, not timeRemaining', () => {
     // timeRemaining = 70 (storyblock timer), timeToDecision = 230 (decision timer)
-    // These should be distinct values to verify the progress bar uses the right one
-    const { container } = render(
+    // These should be distinct values to verify the timer uses the right one
+    render(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 70 }
         timeToDecision={ 230 }
         initialTimeToDecision={ 300 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 2 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -142,6 +149,7 @@ describe('DecisionPhase', () => {
         timeRemaining={ 30 }
         timeToDecision={ 30 }
         initialTimeToDecision={ 40 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 0 }
         hasVoted={ false }
         onVote={ mockOnVote }
@@ -152,16 +160,18 @@ describe('DecisionPhase', () => {
     expect(screen.queryByText(/Next choice in/)).not.toBeInTheDocument();
   });
 
-  it('progress bar empties from 100% to 0% as timeToDecision decreases', () => {
-    // Start of cycle: timeToDecision = initialTimeToDecision = 100
+  it('progress bar empties from 100% to 0% as timeRemaining decreases in reading phase', () => {
+    // Reading phase progress bar uses timeRemaining / initialTimeRemaining
+    // Start: timeRemaining = initialTimeRemaining = 100
     // progress = (100 / 100 * 100) = 100%
     const { rerender } = render(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 100 }
-        timeToDecision={ 100 }
-        initialTimeToDecision={ 100 }
-        turnsToNextChoice={ 1 }
+        timeToDecision={ 200 }
+        initialTimeToDecision={ 200 }
+        initialTimeRemaining={ 100 }
+        turnsToNextChoice={ 2 }
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
@@ -171,15 +181,16 @@ describe('DecisionPhase', () => {
     let bar = screen.getByRole('progressbar');
     expect(bar).toHaveAttribute('aria-valuenow', '100');
 
-    // Halfway: timeToDecision = 50
+    // Halfway: timeRemaining = 50
     // progress = (50 / 100 * 100) = 50%
     rerender(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 50 }
-        timeToDecision={ 50 }
-        initialTimeToDecision={ 100 }
-        turnsToNextChoice={ 1 }
+        timeToDecision={ 150 }
+        initialTimeToDecision={ 200 }
+        initialTimeRemaining={ 100 }
+        turnsToNextChoice={ 2 }
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
@@ -187,15 +198,16 @@ describe('DecisionPhase', () => {
     );
     expect(bar).toHaveAttribute('aria-valuenow', '50');
 
-    // End: timeToDecision = 0
+    // End: timeRemaining = 0
     // progress = (0 / 100 * 100) = 0%
     rerender(
       <DecisionPhase
         phase="reading"
         timeRemaining={ 0 }
-        timeToDecision={ 0 }
-        initialTimeToDecision={ 100 }
-        turnsToNextChoice={ 1 }
+        timeToDecision={ 100 }
+        initialTimeToDecision={ 200 }
+        initialTimeRemaining={ 100 }
+        turnsToNextChoice={ 2 }
         hasVoted={ false }
         onVote={ mockOnVote }
         voteResults={ mockVoteResults }
@@ -211,6 +223,7 @@ describe('DecisionPhase', () => {
         timeRemaining={ 30 }
         timeToDecision={ 30 }
         initialTimeToDecision={ 40 }
+        initialTimeRemaining={ 40 }
         turnsToNextChoice={ 0 }
         hasVoted={ true }
         onVote={ mockOnVote }
@@ -229,5 +242,24 @@ describe('DecisionPhase', () => {
     expect(screen.getByText('Path A')).toBeInTheDocument();
     // 10 / 15 = 67%
     expect(screen.getByText('67%')).toBeInTheDocument();
+  });
+
+  it('shows voting phase secondary countdown bar', () => {
+    render(
+      <DecisionPhase
+        phase="voting"
+        timeRemaining={ 20 }
+        timeToDecision={ 20 }
+        initialTimeToDecision={ 40 }
+        initialTimeRemaining={ 40 }
+        turnsToNextChoice={ 0 }
+        hasVoted={ false }
+        onVote={ mockOnVote }
+        voteResults={ mockVoteResults }
+      />
+    );
+
+    // Should show "You Decide" label
+    expect(screen.getByText('You Decide')).toBeInTheDocument();
   });
 });

@@ -46,7 +46,7 @@ export class CalendarService {
         // Link-first: The links are in the HTML. Attachment is the fallback.
         await sendEmail(
             userEmail,
-            `Reminder: ${session.title}`,
+            `Calendar Invite: ${session.title}`,
             `Join the session: ${urlAppBase}`,
             contentHtmlString,
             [{

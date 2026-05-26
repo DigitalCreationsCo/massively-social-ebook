@@ -8,6 +8,8 @@ import {
     deriveTitleFromConfig,
     type TitleConfig,
 } from '@shared/title';
+import { render } from '@react-email/render';
+import TemplateWeeklyBriefingEmail from '../emails/TemplateWeeklyBriefing';
 
 /**
  * Cursor key for tracking the last-processed timestamp in the notification loop.
@@ -938,9 +940,22 @@ export async function dispatchWeeklyBriefing(): Promise<void> {
     const subject = "Your Weekly 25th Chapter Schedule";
     const body = `Hello reader,\n\nHere is your story schedule for the upcoming week:\n\n${scheduleList}\n\nJoin the global circle for your daily 25.\n\n- The 25th Chapter Team`;
 
+    // Render HTML template for the weekly briefing
+    const htmlBody = await render(
+        TemplateWeeklyBriefingEmail({
+            sessions: upcoming.map(s => ({
+                id: s.id,
+                title: s.title,
+                description: s.description || "",
+                formattedDate: formatInTZ(s.scheduledStart, s.timezone, "EEEE, MMMM do 'at' h:mm a"),
+            })),
+            urlAppBase: process.env.APP_URL || 'https://25thchapter.com',
+        })
+    );
+
     for (const user of users) {
         if (user.email) {
-            await sendEmail(user.email, subject, body);
+            await sendEmail(user.email, subject, body, htmlBody);
         }
     }
 }

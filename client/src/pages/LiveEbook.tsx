@@ -32,6 +32,7 @@ export default function LiveEbook() {
     localTimeRemaining,
     localTimeToDecision,
     localInitialTimeToDecision,
+    localInitialTimeRemaining,
     localTurnsToNextChoice,
     chatHistory,
     hasVotedCurrent,
@@ -222,6 +223,7 @@ export default function LiveEbook() {
             timeRemaining={localTimeRemaining}
             timeToDecision={localTimeToDecision}
             initialTimeToDecision={localInitialTimeToDecision}
+            initialTimeRemaining={localInitialTimeRemaining}
             turnsToNextChoice={localTurnsToNextChoice}
             hasVoted={hasVotedCurrent}
             onVote={submitVote}
