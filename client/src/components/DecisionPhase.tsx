@@ -47,22 +47,25 @@ export function DecisionPhase({
   }, [phase, prevPhase]);
 
   // Phase progress bar: reading uses current block timer, voting uses decision timer
-  const maxTime = phase === "reading"
-    ? Math.max(initialTimeRemaining, 1)
-    : Math.max(initialTimeToDecision, 1);
-  const current = phase === "reading"
-    ? timeRemaining
-    : timeToDecision;
+  const maxTime =
+    phase === "reading"
+      ? Math.max(initialTimeRemaining, 1)
+      : Math.max(initialTimeToDecision, 1);
+  const current = phase === "reading" ? timeRemaining : timeToDecision;
   // Empty from 100% → 0%
-  const progressPercent = Math.min(
-    100,
-    Math.max(0, (current / maxTime) * 100),
-  );
+  const progressPercent = Math.min(100, Math.max(0, (current / maxTime) * 100));
 
   // Voting phase also shows a prominent secondary countdown timer
-  const votingTimerPercent = phase === "voting"
-    ? Math.min(100, Math.max(0, (timeRemaining / Math.max(initialTimeRemaining, 1)) * 100))
-    : 0;
+  const votingTimerPercent =
+    phase === "voting"
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            (timeRemaining / Math.max(initialTimeRemaining, 1)) * 100,
+          ),
+        )
+      : 0;
 
   // Calculate vote percentages
   const totalVotes = voteResults.A + voteResults.B;
@@ -82,7 +85,7 @@ export function DecisionPhase({
   const isDecisionAvailable = turnsToNextChoice === 0 && phase === "voting";
 
   return (
-    <div className="border w-full flex flex-col justify-end min-h-0 relative">
+    <div className="w-full flex flex-col justify-end min-h-0 relative">
       {/* Interruption flash on voting transition */}
       <AnimatePresence>
         {showInterruption && (
@@ -119,16 +122,17 @@ export function DecisionPhase({
                 animate={{ opacity: 1 }}
                 className="flex items-center gap-2 text-primary font-bold tracking-[0.2em]"
               >
-                Conclusion
+                The Story Is Closing
               </motion.div>
             )}
           </div>
         </div>
         {!isDecisionAvailable &&
           phase !== "resolution" &&
+          totalSecondsToChoice < 30 &&
           totalSecondsToChoice > 0 && (
             <motion.div className="flex items-center gap-2 text-xs font-mono text-primary/80 tracking-widest uppercase">
-              <Timer className="w-4 h-4 text-white/40" />
+              <Timer className="w-4 h-4 text-white/50" />
               Next choice in {timeStr}
             </motion.div>
           )}

@@ -106,7 +106,7 @@ function StoryScene({
         {/* <h1 style={ { fontSize: 72, fontWeight: 700 } }>
                     { story.title }
                 </h1> */}
-        {story.content && <p className="text-[100px]">{story.content}</p>}
+        {story.content && <p style={{ fontSize: "3rem" }}>{story.content}</p>}
       </div>
 
       {/* chat overlay */}
@@ -182,7 +182,7 @@ export const Replay = ({ blocks, onPlay }: ReplayProps) => {
         )
       : MIN_BLOCK_FRAMES;
 
-  const totalFrames = perBlockFrames * blocks.length;
+  const totalFrames = perBlockFrames * blocks.length || 1;
 
   const Component = () => (
     <AbsoluteFill>

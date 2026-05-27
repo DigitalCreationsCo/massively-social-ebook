@@ -144,7 +144,7 @@ export function LiveChat({
         {isEffectivelyOpen ? (
           // Open state: label
           <>
-            <span className="flex-1 text-[11px] font-medium tracking-[0.12em] uppercase text-white/40">
+            <span className="flex-1 text-[11px] font-medium tracking-[0.12em] uppercase text-white/50">
               Live Chat
               {isClosable && (
                 <span className="text-white/20 font-normal normal-case tracking-normal">
@@ -228,7 +228,7 @@ export function LiveChat({
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="text-center text-white/25 text-sm py-8 font-serif italic"
+                    className="text-center text-white/50 text-sm py-8"
                   >
                     Be the first to speak.
                   </motion.p>
@@ -282,10 +282,7 @@ export function LiveChat({
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Say something…"
-              className={cn(
-                "flex-1",
-                "text-white placeholder:text-white/25 h-12",
-              )}
+              className={cn("flex-1", "h-12")}
               maxLength={200}
               autoComplete="off"
               autoCorrect="off"
