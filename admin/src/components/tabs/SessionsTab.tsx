@@ -112,6 +112,7 @@ export default function SessionsTab() {
     timezone: 'UTC',
     channelId: '',
     scheduleId: null as number | null,
+    status: '',
   })
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [createForm, setCreateForm] = useState({
@@ -255,6 +256,7 @@ export default function SessionsTab() {
       timezone: tz,
       channelId: session.channelId,
       scheduleId: session.scheduleId,
+      status: session.status,
     })
   }
 
@@ -288,6 +290,7 @@ export default function SessionsTab() {
         scheduledEnd: editForm.scheduledEnd,
         timezone: editForm.timezone,
         scheduleId: editForm.scheduleId,
+        status: editForm.status,
       }),
     })
     setEditingId(null)
@@ -642,9 +645,16 @@ export default function SessionsTab() {
                           </select>
                         </td>
                         <td className="py-2 px-2">
-                          <span className={`px-2 py-0.5 rounded text-xs ${statusColor(session.status)}`}>
-                            {session.status}
-                          </span>
+                          <select
+                            value={editForm.status}
+                            onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full bg-white"
+                          >
+                            <option value="scheduled">Scheduled</option>
+                            <option value="active">Active</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
                         </td>
                         <td className="py-2 px-2 text-xs">
                           {session.scheduleId ? (

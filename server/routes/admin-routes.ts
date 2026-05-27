@@ -92,6 +92,7 @@ export function registerAdminRoutes(app: Express): void {
       const scheduledEnd = toString(req.body.scheduledEnd);
       const timezone = toString(req.body.timezone);
       const scheduleId = req.body.scheduleId as number | null | undefined;
+      const status = req.body.status as string | undefined;
 
       // Get current session to know the timezone for conversion
       const currentSession = await storage.getSessionById(id);
@@ -104,6 +105,7 @@ export function registerAdminRoutes(app: Express): void {
         ...(scheduledEnd && { scheduledEnd: parseDateTimeLocal(scheduledEnd, tz) }),
         ...(timezone && { timezone }),
         ...(scheduleId !== undefined && { scheduleId }),
+        ...(status && { status }),
       });
       res.json(session);
     } catch (err) {
