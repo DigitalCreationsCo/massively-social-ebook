@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { ChevronDown } from "lucide-react";
 import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
+import { useCountdown } from "@shared/hooks/use-countdown";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
@@ -254,7 +255,6 @@ function ReserveSeatButton({
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="bg-white/5 border-white/10 focus:border-primary/50 h-14"
                   />
                 </div>
                 <DialogFooter>
@@ -385,37 +385,8 @@ export default function UpcomingSession() {
 
   const replayRef = useRef<HTMLDivElement>(null);
 
-  const [timeLeft, setTimeLeft] = useState("");
-  const [timerHelpText, setTimerHelpText] = useState("Starts In");
-
-  useEffect(() => {
-    if (!nextSession?.scheduledStart) return;
-
-    const target = new Date(nextSession.scheduledStart).getTime();
-
-    const updateTimer = () => {
-      const now = new Date().getTime();
-      const diff = target - now;
-
-      if (diff <= 0) {
-        setTimerHelpText("");
-        setTimeLeft("Starting...");
-        return;
-      }
-
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      setTimeLeft(
-        `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-      );
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [nextSession?.scheduledStart]);
+  const { timeLeft, isStarting } = useCountdown(nextSession?.scheduledStart);
+  const timerHelpText = isStarting ? "" : "Starts In";
 
   // Redirect when the session is in its live window (including status still 'scheduled').
   useEffect(() => {
@@ -599,7 +570,18 @@ export default function UpcomingSession() {
                         {nextSession.description}
                       </p>
                     </div>
-                    <Timer timeLeft={timeLeft} timerHelpText={timerHelpText} />
+                    <div>
+                      {isStarting ? (
+                        <span className="text-5xl font-serif font-semibold text-primary/50 animate-blink">
+                          {timeLeft}
+                        </span>
+                      ) : (
+                        <Timer
+                          timeLeft={timeLeft}
+                          timerHelpText={timerHelpText}
+                        />
+                      )}
+                    </div>
                   </>
                 )}
 

@@ -2,6 +2,7 @@ import { trackEvent } from "@/lib/analytics";
 import { useState, useEffect } from "react";
 import { useLiveState } from "@/hooks/use-live-state";
 import { useLocation } from "wouter";
+import { useCountdown } from "@shared/hooks/use-countdown";
 import { Storyblock } from "@/components/Storyblock";
 import { DecisionPhase } from "@/components/DecisionPhase";
 import { LiveChat } from "@/components/LiveChat";
@@ -28,6 +29,7 @@ export default function LiveEbook() {
     isLoading,
     wsConnected,
     username,
+    activeSession,
     currentBlock,
     localTimeRemaining,
     localTimeToDecision,
@@ -48,6 +50,9 @@ export default function LiveEbook() {
   } = useLiveState(channelId);
 
   const [_, setLocation] = useLocation();
+
+  // ── Lobby countdown ─────────────────────────────────────────────────────
+  const { timeLeft } = useCountdown(activeSession?.scheduledStart);
 
   // ── Keyboard height tracking ────────────────────────────────────────────
   // visualViewport fires "resize" on every frame the keyboard animates.
@@ -95,6 +100,7 @@ export default function LiveEbook() {
   }
 
   const isGathering = macroPhase === "gathering";
+  const isReading = macroPhase === "reading";
   const isAfterparty = macroPhase === "afterparty";
   const chatForceOpen = isGathering || isAfterparty;
   const isChatEffectivelyOpen = chatOpen || chatForceOpen;
@@ -178,14 +184,20 @@ export default function LiveEbook() {
               animate={{ opacity: 1 }}
               className="space-y-6 max-w-md"
             >
-              <h1 className="font-serif font-semibold text-3xl md:text-4xl text-white/90 tracking-widest">
+              <h1 className="font-serif font-semibold text-3xl md:text-4xl text-white/90 tracking-tight">
                 The Lobby
               </h1>
-              <p className="text-white/60 font-sans text-sm">
+              <p className="text-white/50 font-sans text-sm">
                 You're joining readers from around the world.
                 <br />
-                Introduce yourself in the chat below. The story begins shortly.
+                You can introduce yourself in the chat. The story begins
+                shortly.
               </p>
+              {timeLeft && timeLeft !== "Starting..." && (
+                <p className="text-xs text-white/25 font-mono tabular-nums tracking-wider">
+                  Starting in {timeLeft}
+                </p>
+              )}
               <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto" />
             </motion.div>
           </div>
@@ -217,7 +229,7 @@ export default function LiveEbook() {
         }}
       >
         {/* Decision phase — always rendered first (top of bottom zone) */}
-        {!isGathering && (
+        {isReading && (
           <DecisionPhase
             phase={currentBlock?.phase}
             timeRemaining={localTimeRemaining}
