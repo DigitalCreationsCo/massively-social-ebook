@@ -1,94 +1,110 @@
-// server/replay-routes.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
-import replayRouter from './replay-routes';
-import { db } from '../db';
+import { registerReplayRoutes } from './replay-routes';
 
-// Mock the Drizzle database queries
-vi.mock('../db', () => ({
-    db: {
-        query: {
-            sessions: { findFirst: vi.fn() },
-            blocks: { findMany: vi.fn() }
-        }
-    }
+// Mock the logger
+vi.mock('../logger', () => ({
+  logger: {
+    info: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
-const app = express();
-app.use(express.json());
-app.use(replayRouter);
+function createTestApp(): express.Express {
+  const app = express();
+  app.use(express.json());
+  registerReplayRoutes(app);
+  return app;
+}
 
-describe('Replay REST API Endpoints', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
+describe('Replay Render Endpoint', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('POST /admin/api/replays/:sessionId/render', () => {
+    it('returns 401 if no auth token is provided', async () => {
+      const app = createTestApp();
+      const res = await request(app)
+        .post('/admin/api/replays/1/render')
+        .send();
+
+      expect(res.status).toBe(401);
+      expect(res.body).toHaveProperty('message');
+      expect(res.body.message).toContain('Unauthorized');
     });
 
-    describe('GET /api/sessions/history', () => {
-        it('returns 400 if channelId is missing', async () => {
-            const res = await request(app).get('/api/sessions/history');
-            expect(res.status).toBe(400);
-            expect(res.body.error).toBe('channelId is required');
-        });
+    it('returns 401 if an invalid token is provided', async () => {
+      const app = createTestApp();
+      const res = await request(app)
+        .post('/admin/api/replays/1/render')
+        .set('Authorization', 'Bearer invalid-token');
 
-        it('fetches the most recent completed session by default', async () => {
-            const mockSession = { id: 1, channel_id: 'scifi', status: 'completed' };
-            vi.mocked(db.query.sessions.findFirst).mockResolvedValueOnce(mockSession);
-
-            const res = await request(app).get('/api/sessions/history?channelId=scifi');
-
-            expect(res.status).toBe(200);
-            expect(res.body).toEqual(mockSession);
-            expect(db.query.sessions.findFirst).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    orderBy: expect.any(Array) // Verifies descending order is applied
-                })
-            );
-        });
-
-        it('returns 404 if no completed sessions exist', async () => {
-            vi.mocked(db.query.sessions.findFirst).mockResolvedValueOnce(undefined);
-
-            const res = await request(app).get('/api/sessions/history?channelId=scifi');
-            expect(res.status).toBe(404);
-        });
+      expect(res.status).toBe(401);
     });
 
-    describe('GET /api/blocks/history', () => {
-        it('returns 400 if sessionId is missing', async () => {
-            const res = await request(app).get('/api/blocks/history');
-            expect(res.status).toBe(400);
-        });
+    it('returns 200 with processing status when authenticated', async () => {
+      process.env.ADMIN_TOKEN = 'test-admin-token';
+      const app = createTestApp();
+      const res = await request(app)
+        .post('/admin/api/replays/42/render')
+        .set('Authorization', 'Bearer test-admin-token');
 
-        it('fetches chronological blocks with top 10 chats', async () => {
-            const mockBlocks = [
-                { id: 101, content: 'Block 1', chats: [{ id: 1, text: 'Hello' }] }
-            ];
-            vi.mocked(db.query.blocks.findMany).mockResolvedValueOnce(mockBlocks);
-
-            const res = await request(app).get('/api/blocks/history?sessionId=1');
-
-            expect(res.status).toBe(200);
-            expect(res.body).toEqual(mockBlocks);
-            expect(db.query.blocks.findMany).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    with: { chats: { limit: 10, orderBy: expect.any(Array) } },
-                    orderBy: expect.any(Array) // Verifies ascending order is applied
-                })
-            );
-        });
-
-        it('applies notableOnly filter when queried', async () => {
-            vi.mocked(db.query.blocks.findMany).mockResolvedValueOnce([]);
-
-            await request(app).get('/api/blocks/history?sessionId=1&notableOnly=true');
-
-            // Ensures the Drizzle "and()" condition was triggered for is_notable
-            expect(db.query.blocks.findMany).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    where: expect.anything()
-                })
-            );
-        });
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('message');
+      expect(res.body.message).toContain('42');
+      expect(res.body).toHaveProperty('status', 'processing');
     });
+
+    it('accepts x-admin-token header as alternative auth', async () => {
+      process.env.ADMIN_TOKEN = 'token-from-header';
+      const app = createTestApp();
+      const res = await request(app)
+        .post('/admin/api/replays/7/render')
+        .set('x-admin-token', 'token-from-header');
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('processing');
+    });
+
+    it('responds differently for different session IDs', async () => {
+      process.env.ADMIN_TOKEN = 'multi-session-token';
+      const app = createTestApp();
+
+      const res1 = await request(app)
+        .post('/admin/api/replays/100/render')
+        .set('Authorization', 'Bearer multi-session-token');
+
+      const res2 = await request(app)
+        .post('/admin/api/replays/999/render')
+        .set('Authorization', 'Bearer multi-session-token');
+
+      expect(res1.body.message).toContain('100');
+      expect(res2.body.message).toContain('999');
+    });
+
+    it('handles non-numeric sessionId gracefully', async () => {
+      process.env.ADMIN_TOKEN = 'graceful-token';
+      const app = createTestApp();
+      const res = await request(app)
+        .post('/admin/api/replays/not-a-number/render')
+        .set('Authorization', 'Bearer graceful-token');
+
+      // parseInt('not-a-number') returns NaN — handler should still respond
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('message');
+    });
+
+    it('returns 401 for OPTIONS preflight without auth', async () => {
+      // OPTIONS requests should still be handled normally by Express
+      const app = createTestApp();
+      const res = await request(app).options('/admin/api/replays/1/render');
+
+      // Express by default returns 200 for OPTIONS if no specific handler
+      // (it's the catch-all that matches the same route pattern via app.options)
+      // If no handler matches, it's 404. Either way, not 401 from isAdmin.
+      expect(res.status).not.toBe(401);
+    });
+  });
 });

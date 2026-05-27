@@ -21,18 +21,28 @@ export async function adminFetch<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    let errorMessage;
+    let errorMessage: string;
     try {
       const errorJson = JSON.parse(errorText);
-      errorMessage = errorJson.message;
+      errorMessage = typeof errorJson?.message === 'string' ? errorJson.message : (errorText || `HTTP ${response.status}`);
     } catch {
-      errorMessage = errorText || 'Request failed';
+      errorMessage = errorText || `HTTP ${response.status}`;
     }
-    throw new Error(errorMessage || `HTTP ${response.status}`);
+    throw new Error(errorMessage);
   }
 
   if (response.status === 204) {
     return undefined as T
+  }
+
+  // Guard against non-JSON responses (e.g. HTML from a missing route caught by a catch-all handler)
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const text = await response.text();
+    throw new Error(
+      `Expected JSON response from ${endpoint} but got ${contentType}. ` +
+      `Status: ${response.status}. Body: ${text.substring(0, 200)}`
+    );
   }
 
   return response.json()

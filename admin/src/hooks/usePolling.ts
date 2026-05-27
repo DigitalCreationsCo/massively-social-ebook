@@ -9,7 +9,7 @@ export function usePolling<T>(
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const intervalRef = useRef<number>()
+  const intervalRef = useRef<ReturnType<typeof setInterval>>()
 
   const refresh = useCallback(async () => {
     try {
@@ -18,7 +18,10 @@ export function usePolling<T>(
       setData(result)
       setLastUpdated(new Date())
     } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'))
+      const error = err instanceof Error ? err : new Error('Unknown error in usePolling');
+      // Log for debugging — do not silently swallow
+      console.error('[usePolling] Fetch failed:', error);
+      setError(error);
     } finally {
       setLoading(false)
     }
@@ -26,6 +29,7 @@ export function usePolling<T>(
 
   useEffect(() => {
     refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, ...deps])
 
   useEffect(() => {
@@ -34,7 +38,8 @@ export function usePolling<T>(
     }
 
     if (interval > 0) {
-      intervalRef.current = window.setInterval(refresh, interval)
+      // Use global setInterval (works in both browser and Node environments)
+      intervalRef.current = setInterval(refresh, interval)
     }
 
     return () => {

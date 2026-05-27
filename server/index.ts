@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerAdminRoutes } from "./routes/admin-routes";
+import { registerReplayRoutes } from "./routes/replay-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./sessions/scheduler";
@@ -84,6 +85,7 @@ app.use(createRequestLogger());
 
   await registerRoutes(httpServer, app);
   registerAdminRoutes(app);
+  registerReplayRoutes(app);
   startRecurringScheduler();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

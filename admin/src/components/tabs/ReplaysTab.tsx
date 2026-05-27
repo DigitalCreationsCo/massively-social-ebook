@@ -19,7 +19,11 @@ export default function ReplaysTab() {
   const fetchChannels = useCallback(async () => {
     return adminFetch<Channel[]>("/channels", token);
   }, [token]);
-  const { data: channels } = usePolling(fetchChannels, 60000, [token]);
+  const {
+    data: channels,
+    error: channelsError,
+    loading: channelsLoading,
+  } = usePolling(fetchChannels, 60000, [token]);
 
   // Fetch completed sessions for the channel
   const fetchSessions = useCallback(async () => {
@@ -32,10 +36,11 @@ export default function ReplaysTab() {
     return sessions.filter((s) => s.status === "completed");
   }, [token, channelFilter]);
 
-  const { data: sessions, loading } = usePolling(fetchSessions, 30000, [
-    token,
-    channelFilter,
-  ]);
+  const {
+    data: sessions,
+    loading: sessionsLoading,
+    error: sessionsError,
+  } = usePolling(fetchSessions, 30000, [token, channelFilter]);
 
   return (
     <div className="p-4 flex h-full gap-4">
@@ -57,7 +62,17 @@ export default function ReplaysTab() {
           ))}
         </select>
 
-        {loading && <p>Loading...</p>}
+        {channelsError && (
+          <p className="text-red-500 text-sm mb-2">
+            Failed to load channels: {channelsError.message}
+          </p>
+        )}
+        {sessionsError && (
+          <p className="text-red-500 text-sm mb-2">
+            Failed to load sessions: {sessionsError.message}
+          </p>
+        )}
+        {sessionsLoading && <p className="text-gray-500 text-sm mb-2">Loading sessions...</p>}
         <div className="space-y-2">
           {(sessions || []).map((session) => (
             <button
