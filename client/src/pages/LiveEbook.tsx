@@ -194,7 +194,7 @@ export default function LiveEbook() {
                 shortly.
               </p>
               {timeLeft && timeLeft !== "Starting..." && (
-                <p className="text-xs text-white/25 font-mono tabular-nums tracking-wider">
+                <p className="text-xs text-white font-mono tabular-nums tracking-wider">
                   Starting in {timeLeft}
                 </p>
               )}

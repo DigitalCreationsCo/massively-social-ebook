@@ -648,6 +648,11 @@ export class DatabaseStorage implements IStorage {
    */
   async getExpiredActiveSessions(now: Date): Promise<Session[]> {
     try {
+      // Give sessions a 5-minute grace period beyond scheduledEnd so the game
+      // loop's afterparty phase (3 min of open chat) can complete naturally
+      // without the scheduler interrupting it.
+      const gracePeriod = 5 * 60 * 1000;
+      const graceTime = new Date(now.getTime() - gracePeriod);
       return await db
         .select()
         .from(sessions)
@@ -655,8 +660,8 @@ export class DatabaseStorage implements IStorage {
           and(
             // Only mark ACTIVE sessions as completed (not scheduled ones that never ran)
             eq(sessions.status, "active"),
-            // Only sessions where the end time has passed
-            lt(sessions.scheduledEnd, now),
+            // Only sessions where the end time + grace period has passed
+            lt(sessions.scheduledEnd, graceTime),
           ),
         )
         .execute();

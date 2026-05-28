@@ -147,6 +147,45 @@ describe('useLiveState session lifecycle', () => {
         expect(result.current.macroPhase).toBe('reading');
     });
 
+    it('sets macroPhase to afterparty when server sends phase: afterparty', () => {
+        // Mock useQuery to return a currentBlock with afterparty phase (as sent by the server)
+        (ReactQuery.useQuery as any).mockImplementation((options: any) => {
+            if (options.queryKey.includes('/api/blocks/current')) {
+                return { data: { id: 1, content: 'Test', phase: 'afterparty' }, isLoading: false };
+            }
+            if (options.queryKey.includes('/api/sessions/next')) {
+                return { data: null, isLoading: false };
+            }
+            if (options.queryKey.includes('/api/chat')) {
+                return { data: [], isLoading: false };
+            }
+            return { data: null, isLoading: false };
+        });
+
+        const now = Date.now();
+        const { result } = renderHook(() => useLiveState('scifi'));
+
+        // Send completed status (not active) so the hook keeps the session
+        // reference instead of nullifying it — then the macroPhase effect
+        // sees currentBlock.phase === "afterparty" from the useQuery mock.
+        act(() => {
+            wsInstance.onmessage({
+                data: JSON.stringify({
+                    type: 'SESSION_STATUS',
+                    payload: {
+                        status: 'completed',
+                        session: {
+                            scheduledStart: new Date(now - 30 * 60 * 1000).toISOString(),
+                            scheduledEnd: new Date(now - 10 * 60 * 1000).toISOString(),
+                        },
+                    },
+                }),
+            });
+        });
+
+        expect(result.current.macroPhase).toBe('afterparty');
+    });
+
     it('updates sessionStatus when SESSION_STATUS message received', () => {
         const now = Date.now();
         const { result } = renderHook(() => useLiveState('scifi'));

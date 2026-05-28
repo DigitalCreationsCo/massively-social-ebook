@@ -309,7 +309,7 @@ describe('useLiveState', () => {
         await act(async () => { vi.advanceTimersByTime(1100); });
         expect(result.current.macroPhase).toBe('reading');
         
-        // Afterparty
+        // Afterparty (via resolution phase — existing behavior)
         (ReactQuery.useQuery as any).mockImplementation((options: any) => {
             if (options.queryKey.includes('/api/blocks/current')) {
                 return { data: { id: 1, content: 'Test', phase: 'resolution' }, isLoading: false };
@@ -325,5 +325,24 @@ describe('useLiveState', () => {
         });
         await act(async () => { vi.advanceTimersByTime(1100); });
         expect(r2.current.macroPhase).toBe('afterparty');
+
+        // Afterparty (via direct server phase — new behavior)
+        (ReactQuery.useQuery as any).mockImplementation((options: any) => {
+            if (options.queryKey.includes('/api/blocks/current')) {
+                return { data: { id: 1, content: 'Test', phase: 'afterparty' }, isLoading: false };
+            }
+            if (options.queryKey.includes('/api/sessions/next')) {
+                return { data: null, isLoading: false };
+            }
+            return { data: [], isLoading: false };
+        });
+        const { result: r3 } = renderHook(() => useLiveState('scifi'));
+        act(() => {
+            wsInstance.onmessage({
+                data: JSON.stringify({ type: 'SESSION_STATUS', payload: { status: 'completed', session: { scheduledStart: new Date(now - 30 * 60 * 1000).toISOString(), scheduledEnd: new Date(now - 1 * 60 * 1000).toISOString() } } })
+            });
+        });
+        await act(async () => { vi.advanceTimersByTime(1100); });
+        expect(r3.current.macroPhase).toBe('afterparty');
     });
 });

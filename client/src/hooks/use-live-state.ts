@@ -282,6 +282,16 @@ export function useLiveState(channelId: string) {
 
             if (message.type === "SYNC_STATE") {
               const payload = message.payload as StoryState;
+
+              // Update the cached block data so the UI shows the correct
+              // story content, phase, voting options, etc.  The REST query
+              // has staleTime: Infinity so it never refetches — the WS is
+              // the sole update path after initial page load.
+              queryClient.setQueryData<StoryState>(
+                [api.blocks.current.path, channelId],
+                payload,
+              );
+
               setLocalTurnsToNextChoice(payload.turnsToNextChoice);
               if (payload.timeRemaining !== undefined) {
                 setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
@@ -389,6 +399,10 @@ export function useLiveState(channelId: string) {
   }, [queryClient, channelId]);
 
   // Refine the Macro Phase calculation to be more robust
+  //
+  // The server now explicitly tracks afterparty as a phase (broadcast via
+  // SYNC_STATE), so we check currentBlock.phase first.  The lobby/gathering
+  // window is still computed client-side from scheduledStart timestamps.
   useEffect(() => {
     if (!activeSession) {
       setMacroPhase("waiting");
@@ -400,7 +414,12 @@ export function useLiveState(channelId: string) {
       const start = new Date(activeSession.scheduledStart).getTime();
       const end = new Date(activeSession.scheduledEnd).getTime();
 
-      if (now > end || currentBlock?.phase === "resolution") {
+      // Server tells us when we're in afterparty — this is authoritative
+      // and covers the ~3-minute window after resolution ends.
+      if (currentBlock?.phase === "afterparty") {
+        setMacroPhase("afterparty");
+      } else if (now > end || currentBlock?.phase === "resolution") {
+        // Resolution phase = reading concluding, chat opens up
         setMacroPhase("afterparty");
       } else if (now < start - START_BEFORE_MS) {
         setMacroPhase("waiting");

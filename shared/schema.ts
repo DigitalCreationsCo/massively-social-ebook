@@ -115,7 +115,7 @@ export const insertScheduleSchema = createInsertSchema(schedules, {
 export type Schedule = typeof schedules.$inferSelect;
 export type InsertSchedule = z.infer<typeof insertScheduleSchema>;
 
-export type Phase = "reading" | "voting" | "resolution";
+export type Phase = "reading" | "voting" | "resolution" | "afterparty";
 export type MacroPhase = "waiting" | "gathering" | "reading" | "afterparty";
 export type SessionStatus = "scheduled" | "active" | "completed" | "cancelled";
 

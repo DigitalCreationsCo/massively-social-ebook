@@ -28,15 +28,18 @@ type ChannelId = string;
 export const NARRATIVE_TURN_MS = 40_000;
 export const VOTING_PHASE_MS = 40_000;
 export const POST_VOTE_READING_MS = 40_000;
+
+// Session timing constants (milliseconds)
+export const LOBBY_DELAY_MS = 3 * 60 * 1000; // 3 minutes before start time (lobby/gathering)
+export const START_BEFORE_MS = LOBBY_DELAY_MS; // Alias for clarity
+export const AFTERPARTY_MS = 3 * 60 * 1000; // 3 minutes afterparty after resolution ends
+
 export const PHASE_INITIAL_MS: Record<string, number> = {
   reading: NARRATIVE_TURN_MS,
   voting: VOTING_PHASE_MS,
   resolution: 60_000,
+  afterparty: AFTERPARTY_MS,
 };
-
-// Session timing constants (milliseconds)
-export const LOBBY_DELAY_MS = 3 * 60 * 1000; // 3 minutes before start time
-export const START_BEFORE_MS = LOBBY_DELAY_MS; // Alias for clarity
 
 function getRandomTurns() {
   return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
@@ -57,7 +60,7 @@ export function computeDecisionEndsAt(state: {
   if (state.currentPhase === "voting") {
     return state.phaseEndsAt;
   }
-  if (state.currentPhase === "resolution") {
+  if (state.currentPhase === "resolution" || state.currentPhase === "afterparty") {
     return state.phaseEndsAt;
   }
   // reading phase
@@ -1222,8 +1225,11 @@ export async function handleGameLoopTick(
         }
 
         // ── Session overrun: enter resolution phase ───────────────────────
+        // Skip if already in afterparty — that follows resolution and leads
+        // to session completion on its own timer.
         if (
           dbState.currentPhase !== "resolution" &&
+          dbState.currentPhase !== "afterparty" &&
           now >= activeSession.scheduledEnd.getTime()
         ) {
           const locked = await storage.tryAcquireGameLock(channelId, 90_000);
@@ -1326,7 +1332,7 @@ export async function handleGameLoopTick(
           continue;
         }
 
-        // ── Resolution ended: mark session complete ───────────────────────
+        // ── Resolution ended: enter afterparty phase ──────────────────────
         if (
           dbState.currentPhase === "resolution" &&
           now >= dbState.phaseEndsAt.getTime()
@@ -1335,7 +1341,61 @@ export async function handleGameLoopTick(
           if (!locked) continue;
           try {
             logger.info(
-              `Ending session "${activeSession.title}" for channel ${channelId} after resolution.`,
+              `Entering afterparty for session "${activeSession.title}" on channel ${channelId}.`,
+              "session",
+            );
+
+            const afterpartyEndsAt = new Date(now + AFTERPARTY_MS);
+            const currentBlock = getCachedBlock(channelId);
+
+            await storage.upsertChannelState(channelId, {
+              currentPhase: "afterparty",
+              phaseEndsAt: afterpartyEndsAt,
+              decisionEndsAt: afterpartyEndsAt,
+            });
+
+            updateChannelCache(
+              channelId,
+              {
+                ...dbState,
+                currentPhase: "afterparty",
+                phaseEndsAt: afterpartyEndsAt,
+                decisionEndsAt: afterpartyEndsAt,
+              },
+              currentBlock as CachedBlock | null,
+            );
+
+            broadcast(channelId, {
+              type: "SYNC_STATE",
+              payload: {
+                ...(currentBlock ?? {}),
+                createdAt:
+                  currentBlock?.createdAt?.toISOString() ??
+                  new Date().toISOString(),
+                phase: "afterparty",
+                timeRemaining: AFTERPARTY_MS,
+                timeToNextDecision: 0,
+                initialTimeToNextDecision: 0,
+                turnsToNextChoice: 0,
+                phaseInitialMs: AFTERPARTY_MS,
+              },
+            });
+          } finally {
+            await storage.releaseGameLock(channelId);
+          }
+          continue;
+        }
+
+        // ── Afterparty ended: mark session complete ───────────────────────
+        if (
+          dbState.currentPhase === "afterparty" &&
+          now >= dbState.phaseEndsAt.getTime()
+        ) {
+          const locked = await storage.tryAcquireGameLock(channelId, 10_000);
+          if (!locked) continue;
+          try {
+            logger.info(
+              `Ending session "${activeSession.title}" for channel ${channelId} after afterparty.`,
               "session",
             );
             await storage.updateSessionStatus(activeSession.id, "completed");
@@ -1472,7 +1532,7 @@ export async function handleGameLoopTick(
                     createdAt:
                       newBlock.createdAt?.toISOString() ??
                       new Date().toISOString(),
-                    currentPhase: "reading",
+                    phase: "reading",
                     timeRemaining: NARRATIVE_TURN_MS,
                     timeToNextDecision: Math.max(
                       0,
@@ -1720,27 +1780,50 @@ export async function handleGameLoopTick(
             await storage.releaseGameLock(channelId);
           }
         } else {
-          const cachedBlock = getCachedBlock(channelId);
-          if (cachedBlock) {
-            broadcast(channelId, {
-              type: "SYNC_STATE",
-              payload: {
-                ...cachedBlock,
-                createdAt:
-                  cachedBlock.createdAt?.toISOString() ??
-                  new Date().toISOString(),
-                phase: dbState.currentPhase,
-                timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
-                timeToNextDecision: Math.max(
-                  0,
-                  dbState.decisionEndsAt.getTime() - now,
-                ),
-                initialTimeToNextDecision: dbState.initialTimeToDecision,
-                turnsToNextChoice: dbState.turnsToNextChoice,
-                phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
-              },
-            });
+          // Heartbeat broadcast — every tick, send current state so clients
+          // keep their timers in sync.  Fetch the block from DB if the cache
+          // expired; if the block is genuinely unavailable we still broadcast
+          // timer/phase info so the UI keeps ticking.
+          let blockForHeartbeat = getCachedBlock(channelId);
+          if (!blockForHeartbeat && dbState.currentBlockId) {
+            try {
+              const fetched = await storage.getBlockById(dbState.currentBlockId);
+              if (fetched) {
+                blockForHeartbeat = fetched as CachedBlock;
+              }
+            } catch {
+              // Non-fatal — broadcast without block content below.
+            }
           }
+
+          broadcast(channelId, {
+            type: "SYNC_STATE",
+            payload: {
+              ...(blockForHeartbeat ?? {
+                id: dbState.currentBlockId ?? 0,
+                channelId,
+                sessionId: dbState.activeSessionId ?? 0,
+                title: null,
+                content: "",
+                imageUrl: null,
+                optionA: null,
+                optionB: null,
+                createdAt: new Date().toISOString(),
+              }),
+              createdAt:
+                blockForHeartbeat?.createdAt?.toISOString() ??
+                new Date().toISOString(),
+              phase: dbState.currentPhase,
+              timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
+              timeToNextDecision: Math.max(
+                0,
+                dbState.decisionEndsAt.getTime() - now,
+              ),
+              initialTimeToNextDecision: dbState.initialTimeToDecision,
+              turnsToNextChoice: dbState.turnsToNextChoice,
+              phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
+            },
+          });
         }
       } catch (err) {
         logger.error(

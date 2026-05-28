@@ -6,6 +6,7 @@ import {
   NARRATIVE_TURN_MS,
   VOTING_PHASE_MS,
   POST_VOTE_READING_MS,
+  AFTERPARTY_MS,
 } from './routes/index';
 import { storage } from './storage';
 import * as ai from './blocks/ai';
@@ -498,7 +499,7 @@ describe('handleGameLoopTick', () => {
     }));
   });
 
-  it('completes session after resolution phase ends', async () => {
+  it('transitions to afterparty phase after resolution ends', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
     mockedStorage.getChannelState.mockResolvedValue(
       mockChannelState({
@@ -509,6 +510,42 @@ describe('handleGameLoopTick', () => {
     mockedStorage.getSessionById.mockResolvedValue(
       mockSession({ scheduledEnd: new Date(BASE_NOW - 10_000) })
     );
+    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should NOT complete the session yet — instead transition to afterparty
+    expect(mockedStorage.updateSessionStatus).not.toHaveBeenCalled();
+
+    // Should set phase to afterparty with 3-minute timer
+    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
+    const lastUpsert = upsertCalls[upsertCalls.length - 1];
+    expect(lastUpsert[1].currentPhase).toBe('afterparty');
+    expect(lastUpsert[1].phaseEndsAt.getTime() - BASE_NOW).toBeCloseTo(AFTERPARTY_MS, -3); // ~3 min
+
+    // Broadcast should indicate afterparty phase
+    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+      type: 'SYNC_STATE',
+      payload: expect.objectContaining({
+        phase: 'afterparty',
+        phaseInitialMs: AFTERPARTY_MS,
+      }),
+    }));
+  });
+
+  it('completes session after afterparty phase ends', async () => {
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({
+        currentPhase: 'afterparty',
+        phaseEndsAt: new Date(BASE_NOW - 1_000), // Past end
+      })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(
+      mockSession({ scheduledEnd: new Date(BASE_NOW - 10_000) })
+    );
+    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
     mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
 
     await handleGameLoopTick(BASE_NOW, mockBroadcast);

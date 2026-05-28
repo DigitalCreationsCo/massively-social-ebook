@@ -22,7 +22,6 @@ export default function ReplaysTab() {
   const {
     data: channels,
     error: channelsError,
-    loading: channelsLoading,
   } = usePolling(fetchChannels, 60000, [token]);
 
   // Fetch completed sessions for the channel

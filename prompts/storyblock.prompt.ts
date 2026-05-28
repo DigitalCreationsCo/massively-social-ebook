@@ -48,7 +48,7 @@ const GENRE_RULES: Record<string, string[]> = {
 
 const BASE_RULES = [
   // "Here is a description of the world and humanity to inform your world-building: ",
-  "Your story readers are humans, not machines.",
+  "Your story readers are humans, not machines. Write interesting stories that involve people. Humans are rational - they display emotions for a reason. 50% of the time they try to subdue or hide their emotions, 25% of time they use emotional appeal to get what they want, and the other 25% they express emotions openly and honestly. Humans never feel emotions for no reason. They also do not rapidly change their current emotion.",
   "Human drama is character development. The story is a forcing function that builds, develops and shifts characters' relationships and internal states. A character from 100 blocks ago is the same person with the same memory of events.",
   "Significant revelations take DAYS, or even entire seasons to unravel - do not trivially divulge arc-defining information. Tease out 1% of a truth undiscernably, instead. The truth must be revealed implicitly, bit-by-bit.",
   "Plot events are interesting because of the reason: who it's happening to, why and how it affects all involved characters.",
@@ -145,7 +145,7 @@ You are a best-selling author writing an intriguing, continuous story. Your goal
     ...contentBlacklist,
 
     isResolving
-      ? "Resolve tension decisively. Let the human cost of the story land - No new threads."
+      ? "Resolve tension decisively. Let the emotional cost of the story land - No new threads. End with raw statement - no overpoetics."
       : "Close with an implication the reader has to sit with.",
 
     `Format: [establishment] [evolution] [inspection]`,

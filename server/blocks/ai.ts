@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../../prompts/storyblock.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
@@ -163,12 +164,45 @@ export async function generateStoryBlock(channelId: string, previousContext: str
  * On failure the function **throws** — the caller should handle fallback
  * (e.g., `getRandomImage()` or a static fallback URL).
  */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export async function generateStoryImage(description: string): Promise<string> {
+
+  const blocksDir = __dirname;
+
+  const baseInlineData = {
+    displayName: 'base image',
+    data: await fs.readFile(path.join(blocksDir, 'base.png'), 'base64'),
+    mimeType: "image/png"
+  };
+  const subject1InlineData = {
+    displayName: 'subject 1 image',
+    data: await fs.readFile(path.join(blocksDir, 'subject1.png'), 'base64'),
+    mimeType: "image/png"
+  };
+  const subject2InlineData = {
+    displayName: 'subject 2 image',
+    data: await fs.readFile(path.join(blocksDir, 'subject2.png'), 'base64'),
+    mimeType: "image/png"
+  };
+  const subject3InlineData = {
+    displayName: 'subject 3 image',
+    data: await fs.readFile(path.join(blocksDir, 'subject3.png'), 'base64'),
+    mimeType: "image/png"
+  };
+
   const prompt = createImageInstructions({ description });
 
   const response = await ai.models.generateContent({
     model: lmParamsGoogle.imageModel,
-    contents: prompt,
+    contents: [
+      { inlineData: baseInlineData },
+      { inlineData: subject1InlineData },
+      { inlineData: subject2InlineData },
+      { inlineData: subject3InlineData },
+      prompt
+    ],
     config: {
       responseModalities: ["image"],
       candidateCount: 1,

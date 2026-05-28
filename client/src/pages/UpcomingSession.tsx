@@ -572,7 +572,7 @@ export default function UpcomingSession() {
                     </div>
                     <div>
                       {isStarting ? (
-                        <span className="text-5xl font-serif font-semibold text-primary/50 animate-blink">
+                        <span className="text-5xl text-center mx-auto font-serif font-semibold text-primary/50 animate-blink">
                           {timeLeft}
                         </span>
                       ) : (
