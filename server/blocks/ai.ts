@@ -172,22 +172,22 @@ export async function generateStoryImage(description: string): Promise<string> {
   const blocksDir = __dirname;
 
   const baseInlineData = {
-    displayName: 'base image',
+    // displayName: 'base image',
     data: await fs.readFile(path.join(blocksDir, 'base.png'), 'base64'),
     mimeType: "image/png"
   };
   const subject1InlineData = {
-    displayName: 'subject 1 image',
+    // displayName: 'subject 1 image',
     data: await fs.readFile(path.join(blocksDir, 'subject1.png'), 'base64'),
     mimeType: "image/png"
   };
   const subject2InlineData = {
-    displayName: 'subject 2 image',
+    // displayName: 'subject 2 image',
     data: await fs.readFile(path.join(blocksDir, 'subject2.png'), 'base64'),
     mimeType: "image/png"
   };
   const subject3InlineData = {
-    displayName: 'subject 3 image',
+    // displayName: 'subject 3 image',
     data: await fs.readFile(path.join(blocksDir, 'subject3.png'), 'base64'),
     mimeType: "image/png"
   };

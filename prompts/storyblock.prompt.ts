@@ -48,7 +48,7 @@ const GENRE_RULES: Record<string, string[]> = {
 
 const BASE_RULES = [
   // "Here is a description of the world and humanity to inform your world-building: ",
-  "Your story readers are humans, not machines. Write interesting stories that involve people. Humans are rational - they display emotions for a reason. 50% of the time they try to subdue or hide their emotions, 25% of time they use emotional appeal to get what they want, and the other 25% they express emotions openly and honestly. Humans never feel emotions for no reason. They also do not rapidly change their current emotion.",
+  "Your story readers are humans, not machines. Write interesting stories that involve people. Humans are rational - they display emotions for a reason. 50% of the time they try to subdue or hide their emotions, 25% of time they use emotional appeal to get what they want, and the other 25% they express emotions openly and honestly. Humans never feel emotions for no reason. They also do not rapidly change their current emotion. All humans are autonomous and have agency over their actions.",
   "Human drama is character development. The story is a forcing function that builds, develops and shifts characters' relationships and internal states. A character from 100 blocks ago is the same person with the same memory of events.",
   "Significant revelations take DAYS, or even entire seasons to unravel - do not trivially divulge arc-defining information. Tease out 1% of a truth undiscernably, instead. The truth must be revealed implicitly, bit-by-bit.",
   "Plot events are interesting because of the reason: who it's happening to, why and how it affects all involved characters.",
@@ -64,6 +64,7 @@ const contentBlacklist = [
   "No over-explained reactions. If a gun goes off, don't write 'She realized the danger was real.'",
   // "No wisdom dispensed by side characters unprompted.",
   "No complex, run-on sentences. Not 'The icy mist swirled, obscuring the path forward, but the pulse grew stronger, beckoning her' - 'The icy mist swirled, obscuring the path forward.'.",
+  "Sometimes, less is more: Not 'The silence stretched, a fragile thread about to snap.', but 'The silence stretched.'"
 ];
 
 const authorFlair = [
@@ -71,6 +72,8 @@ const authorFlair = [
   "Show, don't tell. Don't use 'She was afraid', use 'Her hand found the wall'.",
 
   "Communicate one idea per story block. Less is more.",
+
+  "Recurring motifs can span multiple blocks for effect. Example: 'No reply. He was silent.', ..., 'The silence stretched.'",
 
   "Use literal language over abstract language. Don't use 'Her focus sharpened', use 'Her eyes narrowed on the door'.",
 
@@ -84,7 +87,7 @@ const authorFlair = [
 
   "Characters are complete and flawed. They each react uniquely. They can make mistakes. They can hesitate. They want things they won't say out loud.",
 
-  `For character introspection, complex past tense is ok: e.g. "She had seen the light go dark from the cliff road."`,
+  `For character introspection, complex past tense is ok. Example: "She had seen the light go dark from the cliff road."`,
 
   "Dialogue can be subtextual. 'Your coffee's getting cold' can be used in place of 'I love you.'",
 
@@ -92,7 +95,7 @@ const authorFlair = [
 ];
 
 const examples = [
-  `Here are some examples of blocks to guide your writing composition:`,
+  `Example blocks: `,
   `1. "Vance slammed his fist onto the manual override. The airlock sealed, trapping the breach but sealing off the engineering bay. The ship shuddered, stabilizing."`,
   `2. "Platform nine was empty except for the echo of her footsteps. The last train south sat waiting. Its windows were dark. Elena set down her suitcase and looked back at the station. She gazed at the grand arches one last time. This city had given her everything and taken it all back. Now the only direction that made sense was away."`,
   `3. "Rain hammered the cobblestones in sheets. The drops were tiny bursts of light swallowed by the gas lamps. Elena pressed herself into the doorway of a shuttered bookshop, her coat already soaked through. Somewhere ahead, past the narrow bend where the alley swallowed itself, a door had slammed."`,
@@ -133,26 +136,22 @@ export const createStoryBlockInstructions = ({
     `Produce the next moment. ${summary}
 You are a best-selling author writing an intriguing, continuous story. Your goal is to author a 1,000 block masterpiece, one block at a time. Give each block the pacing of a Tolkien sentence. Keep the reader interested to continue reading.`,
 
-    ...storyRules,
-
     loreText,
-
     previousContext,
 
+    ...storyRules,
     ...BASE_RULES,
     ...authorFlair,
-
-    ...contentBlacklist,
 
     isResolving
       ? "Resolve tension decisively. Let the emotional cost of the story land - No new threads. End with raw statement - no overpoetics."
       : "Close with an implication the reader has to sit with.",
 
     `Format: [establishment] [evolution] [inspection]`,
-
     "Max 35 words.",
-
     ...examples,
+    ...contentBlacklist,
+
   ].join("\n");
 
   return instructions;
