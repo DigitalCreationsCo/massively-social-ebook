@@ -42,4 +42,4 @@ ENV PORT=5001
 ENV NODE_ENV=production
 
 # Start the server
-CMD ["node", "dist/index.cjs"]
+CMD ["node", "dist/index.js"]
