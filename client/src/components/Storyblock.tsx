@@ -47,14 +47,14 @@ export function Storyblock({
 
   if (!block) {
     return (
-      <div className="absolute inset-0 flex items-center  bg-black">
+      <div className="absolute inset-0 mx-auto flex items-center  bg-black">
         <motion.div
           animate={{ opacity: [0.5, 1, 0.5] }}
           transition={{ duration: 2, repeat: Infinity }}
-          className="flex flex-col items-center gap-4 text-primary/60"
+          className="flex flex-col items-center gap-4"
         >
           <BookOpen className="w-12 h-12" />
-          <p className="font-serif text-lg tracking-widest">Awaiting Story</p>
+          <p className="font-serif font-semibold text-lg text-primary/60 tracking-tight">Awaiting Story</p>
         </motion.div>
       </div>
     );

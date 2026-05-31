@@ -139,9 +139,13 @@ export function useLiveState(channelId: string) {
       return res.json() as Promise<StoryState>;
     },
     retry: false,
-    // WebSocket SESSION_STATUS handler calls invalidateQueries on this key
-    // whenever the session goes active, so we never need a background refetch.
     staleTime: Infinity,
+    // Poll every 30s as a safety net for missed WebSocket messages. The WS
+    // SYNC_STATE/SESSION_STATUS handlers are the primary update path; this
+    // ensures the client eventually recovers if WS messages are dropped or
+    // the connection is interrupted during a critical transition.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: chatHistory = [], isLoading: chatLoading } = useQuery({
@@ -210,7 +214,6 @@ export function useLiveState(channelId: string) {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 10;
     const BASE_RECONNECT_DELAY = 1000;
     const MAX_RECONNECT_DELAY = 30000;
 
@@ -225,12 +228,6 @@ export function useLiveState(channelId: string) {
 
     const scheduleReconnect = () => {
       if (cancelled) return;
-      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error(
-          "[LiveState] Max reconnection attempts reached. Giving up.",
-        );
-        return;
-      }
       reconnectAttempts++;
       const delay = Math.min(
         BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1),
@@ -238,7 +235,7 @@ export function useLiveState(channelId: string) {
       );
       const jitter = Math.random() * 1000;
       console.log(
-        `[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`,
+        `[LiveState] Reconnecting in ${Math.round(delay + jitter)}ms (attempt ${reconnectAttempts})`,
       );
       reconnectTimer = setTimeout(connect, delay + jitter);
     };

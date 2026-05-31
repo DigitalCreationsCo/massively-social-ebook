@@ -1781,9 +1781,10 @@ export async function handleGameLoopTick(
           }
         } else {
           // Heartbeat broadcast — every tick, send current state so clients
-          // keep their timers in sync.  Fetch the block from DB if the cache
-          // expired; if the block is genuinely unavailable we still broadcast
-          // timer/phase info so the UI keeps ticking.
+          // keep their timers in sync.  If the block is temporarily unavailable
+          // (cold cache + DB hiccup) we skip this tick — the next tick (1s
+          // later) will retry.  Broadcasting empty block fields would overwrite
+          // the client's valid block cache with id=0 / null content.
           let blockForHeartbeat = getCachedBlock(channelId);
           if (!blockForHeartbeat && dbState.currentBlockId) {
             try {
@@ -1792,26 +1793,20 @@ export async function handleGameLoopTick(
                 blockForHeartbeat = fetched as CachedBlock;
               }
             } catch {
-              // Non-fatal — broadcast without block content below.
+              // Non-fatal — skip broadcast this tick.
             }
+          }
+
+          if (!blockForHeartbeat) {
+            continue;
           }
 
           broadcast(channelId, {
             type: "SYNC_STATE",
             payload: {
-              ...(blockForHeartbeat ?? {
-                id: dbState.currentBlockId ?? 0,
-                channelId,
-                sessionId: dbState.activeSessionId ?? 0,
-                title: null,
-                content: "",
-                imageUrl: null,
-                optionA: null,
-                optionB: null,
-                createdAt: new Date().toISOString(),
-              }),
+              ...blockForHeartbeat,
               createdAt:
-                blockForHeartbeat?.createdAt?.toISOString() ??
+                blockForHeartbeat.createdAt?.toISOString() ??
                 new Date().toISOString(),
               phase: dbState.currentPhase,
               timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
