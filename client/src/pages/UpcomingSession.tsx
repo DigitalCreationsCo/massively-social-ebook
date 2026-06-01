@@ -319,7 +319,7 @@ function ReserveSeatButton({
                       </Label>
                     </div>
                     <a
-                      href="https://x.com/25thchptr"
+                      href="https://x.com/@try25thchapter"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
