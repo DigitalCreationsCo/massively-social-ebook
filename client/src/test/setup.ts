@@ -29,3 +29,38 @@ vi.mock('mixpanel-browser', () => ({
     },
   },
 }));
+
+// Mock AudioContext for jsdom (used by audio-manager.ts / use-tts.ts)
+if (typeof window !== 'undefined' && typeof window.AudioContext === 'undefined') {
+  class MockAudioContext {
+    state = 'running';
+    destination = {};
+
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect: vi.fn().mockReturnValue({ connect: vi.fn() }),
+        start: vi.fn(),
+        stop: vi.fn(),
+      } as unknown as AudioBufferSourceNode;
+    }
+
+    createGain() {
+      return {
+        gain: { value: 1 },
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      } as unknown as GainNode;
+    }
+
+    resume() {
+      return Promise.resolve();
+    }
+
+    close() {
+      return Promise.resolve();
+    }
+  }
+
+  window.AudioContext = MockAudioContext as unknown as typeof AudioContext;
+}

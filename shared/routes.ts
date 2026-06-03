@@ -66,6 +66,7 @@ export const api = {
         200: z.object({
           id: z.number(),
           content: z.string(),
+          dialogue: z.string().nullable(),
           imageUrl: z.string().nullable(),
           createdAt: z.string(),
           phase: z.enum(['reading', 'voting']),

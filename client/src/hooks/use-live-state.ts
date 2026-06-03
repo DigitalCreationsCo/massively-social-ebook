@@ -14,6 +14,7 @@ import type {
   ChatMessage,
 } from "@shared/schema";
 import { trackEvent, identifyUser } from "@/lib/analytics";
+import { useTts } from "./use-tts";
 
 export { ChatMessage };
 
@@ -24,6 +25,7 @@ export interface StoryState {
   channelId: string;
   title: string | null;
   content: string;
+  dialogue: string;
   imageUrl: string | null;
   optionA: VoteOption | null | undefined;
   optionB: VoteOption | null | undefined;
@@ -85,6 +87,10 @@ export function useLiveState(channelId: string) {
   const [viewerCount, setViewerCount] = useState(
     () => 1247 + Math.floor(Math.random() * 500),
   );
+
+  const tts = useTts();
+  const ambientGenerated = useRef(false);
+  const lastBlockId = useRef<number | null>(null);
 
   const { data: initialData, isLoading: sessionLoading } = useQuery({
     queryKey: [api.sessions.next.path, channelId],
@@ -568,6 +574,29 @@ export function useLiveState(channelId: string) {
     setVoteResults({ A: 0, B: 0 });
   }, [currentBlock?.id]);
 
+  // ── Auto-ambient: generate from session.description wrapped in [] ─────
+  useEffect(() => {
+    if (macroPhase === "reading" && activeSession?.description && !ambientGenerated.current) {
+      ambientGenerated.current = true;
+      tts.generateAndPlay(`[${activeSession.description}]`, "ambient");
+    }
+    if (macroPhase !== "reading") {
+      ambientGenerated.current = false;
+    }
+  }, [macroPhase, activeSession?.description]);
+
+  // ── Auto-dialogue: generate from block.dialogue || block.content ───────
+  useEffect(() => {
+    if (currentBlock?.id && currentBlock.id !== lastBlockId.current) {
+      lastBlockId.current = currentBlock.id;
+      const dialogueText = currentBlock.dialogue || currentBlock.content;
+      if (dialogueText) {
+        tts.stopDialogue();
+        tts.generateAndPlay(dialogueText, "dialogue");
+      }
+    }
+  }, [currentBlock?.id, currentBlock?.dialogue, currentBlock?.content]);
+
   return {
     isLoading: blockLoading || chatLoading || sessionLoading,
     wsConnected,
@@ -592,5 +621,10 @@ export function useLiveState(channelId: string) {
     activeChannel,
     isSessionLive,
     macroPhase,
+    ttsIsSpeaking: tts.isSpeaking,
+    ttsIsPending: tts.isPending,
+    ttsError: tts.error,
+    ttsToggle: tts.toggle,
+    ttsStopDialogue: tts.stopDialogue,
   };
 }

@@ -1678,24 +1678,11 @@ export async function handleGameLoopTick(
                 }
               } catch (err) {
                 logger.error(
-                  "Failed to adopt next block",
+                  "Failed to adopt next block, will retry on next tick",
                   "gameloop",
                   err instanceof Error ? err : new Error(String(err)),
                 );
-                nextData = {
-                  title: "Temporal Distortion",
-                  content:
-                    "A temporal distortion disrupts the timeline. We must re-establish connection.",
-                  imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-                  optionA: {
-                    label: "Reconnect",
-                    description: "Attempt to reconnect to the timeline.",
-                  },
-                  optionB: {
-                    label: "Wait",
-                    description: "Wait for the distortion to pass.",
-                  },
-                };
+                throw err;
               }
 
               const newBlock = await storage.createBlock({

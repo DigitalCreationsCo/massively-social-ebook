@@ -13,7 +13,7 @@ import {
   unique,
   customType,
 } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { TitleConfig } from "./title";
 import { sql } from "drizzle-orm";
@@ -308,6 +308,7 @@ export const pendingBlocks = pgTable(
     choice: text("choice").notNull(), // 'A' | 'B'
     title: text("title").notNull(),
     content: text("content").notNull(),
+    dialogue: text("dialogue"),
     imageUrl: text("image_url").notNull(),
     optionA: jsonb("option_a"),
     optionB: jsonb("option_b"),
@@ -342,6 +343,7 @@ export const blocks = pgTable(
       .references(() => sessions.id, { onDelete: "cascade" }),
     title: text("title"),
     content: text("content").notNull(),
+    dialogue: text("dialogue"),
     imageUrl: text("image_url"),
     optionA: jsonb("option_a"),
     optionB: jsonb("option_b"),
@@ -380,7 +382,8 @@ export const insertBlockSchema = createInsertSchema(blocks).omit({
   createdAt: true,
   embedding: true,
 });
-export type Block = typeof blocks.$inferSelect;
+export const Block = createSelectSchema(blocks);
+export type Block = z.infer<typeof Block>;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
 
 // Lore table

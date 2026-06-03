@@ -83,6 +83,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     properties: {
       title: { type: Type.STRING, description: "A short, engaging title for this block." },
       content: { type: Type.STRING, description: "The story content, max 3 sentences." },
+      dialogue: { type: Type.STRING, description: "Any spoken dialogue in the story content." },
       optionA: {
         type: Type.OBJECT,
         properties: {

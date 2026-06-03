@@ -1,6 +1,7 @@
 import { trackEvent } from "@/lib/analytics";
 import { useState, useEffect } from "react";
 import { useLiveState } from "@/hooks/use-live-state";
+import { SpeakerButton } from "@/components/SpeakerButton";
 import { useLocation } from "wouter";
 import { useCountdown } from "@shared/hooks/use-countdown";
 import { Storyblock } from "@/components/Storyblock";
@@ -47,7 +48,13 @@ export default function LiveEbook() {
     macroPhase,
     reactions,
     submitReaction,
+    ttsIsSpeaking,
+    ttsIsPending,
+    ttsError,
+    ttsToggle,
   } = useLiveState(channelId);
+
+  const isReading = macroPhase === "reading";
 
   const [_, setLocation] = useLocation();
 
@@ -100,7 +107,6 @@ export default function LiveEbook() {
   }
 
   const isGathering = macroPhase === "gathering";
-  const isReading = macroPhase === "reading";
   const isAfterparty = macroPhase === "afterparty";
   const chatForceOpen = isGathering || isAfterparty;
   const isChatEffectivelyOpen = chatOpen || chatForceOpen;
@@ -160,7 +166,15 @@ export default function LiveEbook() {
             {viewerCount.toLocaleString()}
           </span>
         </div>
-        <div className="pointer-events-auto">
+        <div className="pointer-events-auto flex items-center gap-1">
+          {isReading && currentBlock?.content && (
+            <SpeakerButton
+              isSpeaking={ttsIsSpeaking}
+              isPending={ttsIsPending}
+              hasError={!!ttsError}
+              onClick={() => ttsToggle(currentBlock.dialogue || currentBlock.content)}
+            />
+          )}
           <PushToggle />
         </div>
       </header>
