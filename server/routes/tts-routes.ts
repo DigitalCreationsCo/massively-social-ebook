@@ -51,11 +51,12 @@ async function storeAudio(
   const storage = getStorageManager();
 
   if (storage) {
-    const { audioPublicUri } = await storage.uploadAudio(buffer, {
+    await storage.uploadAudio(buffer, {
       fileName: origName,
       mimeType: "audio/wav",
     });
-    return audioPublicUri;
+    // Return proxy URL instead of direct GCS URL so CORS is handled by Express.
+    return `/api/tts/audio/${origName}`;
   }
 
   fs.mkdirSync(AUDIO_DIR, { recursive: true });
@@ -239,5 +240,89 @@ export function registerTtsRoutes(app: Express) {
       logger.error("TTS error", "tts", err instanceof Error ? err : new Error(String(err)));
       res.status(500).json({ error: "TTS generation failed" });
     }
+  });
+
+  // ── Audio proxy route ─────────────────────────────────────────────────────
+  // Serves audio files from GCS (or local fallback) so CORS is handled by the
+  // Express middleware instead of requiring GCS bucket-level CORS configuration.
+  app.get("/api/tts/audio/:filename", async (req, res) => {
+    const { filename } = req.params;
+
+    // ── Path traversal guard ──────────────────────────────────────────────
+    // Reject any filename with directory components to prevent reading
+    // arbitrary files from the filesystem or GCS bucket.
+    if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+
+    // ── Derive Content-Type from extension ────────────────────────────────
+    const ext = path.extname(filename).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      ".wav": "audio/wav",
+      ".mp3": "audio/mpeg",
+      ".ogg": "audio/ogg",
+      ".flac": "audio/flac",
+      ".m4a": "audio/mp4",
+      ".aac": "audio/aac",
+      ".webm": "audio/webm",
+    };
+    const contentType = mimeMap[ext] || "application/octet-stream";
+
+    // ── Try GCS first ─────────────────────────────────────────────────────
+    const storage = getStorageManager();
+    if (storage) {
+      try {
+        const gcsPath = `audio/${filename}`;
+        const exists = await storage.fileExists(gcsPath);
+        if (exists) {
+          res.setHeader("Content-Type", contentType);
+          res.setHeader("Cache-Control", "public, max-age=31536000");
+          res.setHeader("X-Proxy-Backend", "gcs");
+
+          const stream = storage.createReadStream(gcsPath);
+
+          // Manual piping instead of stream.pipe() so we own error handling.
+          // pipe()'s internal error handler calls dest.destroy() which flushes
+          // headers and prevents us from sending a 502 JSON response.
+          stream.on("data", (chunk: Buffer) => {
+            if (!res.write(chunk) && !stream.isPaused()) {
+              stream.pause();
+              res.once("drain", () => stream.resume());
+            }
+          });
+          stream.on("end", () => {
+            res.end();
+          });
+          stream.on("error", (streamErr) => {
+            logger.error(
+              "GCS stream error",
+              "tts",
+              streamErr instanceof Error ? streamErr : new Error(String(streamErr)),
+            );
+            // Only send error if headers haven't been sent yet
+            if (!res.headersSent) {
+              res.status(502).json({ error: "Failed to stream audio" });
+            }
+          });
+          return;
+        }
+      } catch (err) {
+        logger.warn(
+          "GCS lookup failed, falling back to local",
+          "tts",
+          err instanceof Error ? err : new Error(String(err)),
+        );
+        // Fall through to local fallback
+      }
+    }
+
+    // ── Fallback: local directory ─────────────────────────────────────────
+    const localPath = path.resolve(AUDIO_DIR, filename);
+    if (fs.existsSync(localPath)) {
+      return res.sendFile(localPath);
+    }
+
+    // ── Not found anywhere ────────────────────────────────────────────────
+    res.status(404).json({ error: "Audio not found" });
   });
 }

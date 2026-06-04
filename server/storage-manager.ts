@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 import { Storage } from "@google-cloud/storage";
 import type { GcsObjectPathParams } from "./storage.types";
 
@@ -528,6 +528,20 @@ export class GCPStorageManager {
     const file = bucket.file(path);
     const [contents] = await file.download();
     return contents;
+  }
+
+  /**
+   * Creates a readable stream for a GCS object.
+   * Useful for streaming large files directly to HTTP responses
+   * without buffering the entire file in memory.
+   *
+   * @param gcsPath - The GCS path or URI (gs://, HTTPS, or bucket-relative).
+   * @returns A Node.js Readable stream.
+   */
+  createReadStream(gcsPath: string): Readable {
+    const relPath = this.getBucketRelativePath(gcsPath);
+    const bucket = this.storage.bucket(this.bucketName);
+    return bucket.file(relPath).createReadStream();
   }
 
   private async streamToBuffer(stream: Readable | Buffer): Promise<Buffer> {
