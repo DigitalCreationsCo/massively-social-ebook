@@ -356,6 +356,68 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // ─── Pending Blocks (Inject Next Block) ─────────────────────────────────────
+  //
+  // Creates a pre-generated story continuation for a specific block + choice.
+  // The game loop consumes this on its next tick instead of calling the AI,
+  // giving admins deterministic control over the next block's content.
+  //
+  // Body:
+  //   forBlockId  (number, required) — the block whose continuation this is
+  //   choice      ("A" | "B", required) — which choice branch
+  //   channelId   (string, required) — scoping channel
+  //   content     (string, required) — the story text (replaces AI output)
+  //   title       (string, optional) — block title
+  //   dialogue    (string, optional) — spoken dialogue
+  //   imageUrl    (string, optional) — illustration URL
+  //   optionA     (object, optional) — { label, description }
+  //   optionB     (object, optional) — { label, description }
+  //
+  app.post('/admin/api/pending-blocks', isAdmin, async (req, res) => {
+    try {
+      const { forBlockId, choice, channelId, title, content, dialogue, imageUrl, optionA, optionB } = req.body;
+
+      if (!forBlockId || !choice || !channelId || !content) {
+        return res.status(400).json({ message: "forBlockId, choice, channelId, and content are required" });
+      }
+      if (choice !== "A" && choice !== "B") {
+        return res.status(400).json({ message: "choice must be 'A' or 'B'" });
+      }
+
+      const existingBlock = await storage.getBlockById(forBlockId);
+      if (!existingBlock) {
+        return res.status(404).json({ message: `Block ${forBlockId} not found` });
+      }
+
+      // Check for a pre-existing pending block so we give a clear message
+      // instead of silently no-oping via onConflictDoNothing.
+      const alreadyPending = await storage.getPendingBlock(forBlockId, choice);
+      if (alreadyPending) {
+        return res.status(409).json({
+          message: `A pending block already exists for block ${forBlockId}, choice ${choice}. ` +
+            `Delete it first or wait for it to be consumed by the game loop.`,
+        });
+      }
+
+      const pending = await storage.savePendingBlock({
+        forBlockId,
+        choice,
+        channelId,
+        title: title ?? existingBlock.title ?? 'Untitled',
+        content,
+        dialogue: dialogue ?? null,
+        imageUrl: imageUrl ?? existingBlock.imageUrl ?? '',
+        optionA: optionA ?? null,
+        optionB: optionB ?? null,
+      });
+
+      res.status(201).json(pending);
+    } catch (err) {
+      logger.error("Failed to create pending block", "admin", err instanceof Error ? err : new Error(String(err)));
+      res.status(500).json({ message: "Failed to create pending block" });
+    }
+  });
+
   // Users CRUD
   app.get('/admin/api/users', isAdmin, async (req, res) => {
     try {

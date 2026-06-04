@@ -82,6 +82,97 @@ export default function BlocksTab() {
     isNotable: false,
   })
 
+  // ── Inject Next Block (pending-block creation) ──────────────────────────────
+  const [injectForId, setInjectForId] = useState<number | null>(null)
+  const [injectForm, setInjectForm] = useState({
+    choice: 'A' as 'A' | 'B',
+    title: '',
+    content: '',
+    dialogue: '',
+    imageUrl: '',
+    optionALabel: '',
+    optionADescription: '',
+    optionBLabel: '',
+    optionBDescription: '',
+  })
+  const [injectStatus, setInjectStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+
+  const handleInjectOpen = (block: Block) => {
+    setInjectForId(block.id)
+    setInjectForm({
+      choice: 'A',
+      title: block.title ?? '',
+      content: '',
+      dialogue: '',
+      imageUrl: block.imageUrl ?? '',
+      optionALabel: block.optionA?.label ?? '',
+      optionADescription: block.optionA?.description ?? '',
+      optionBLabel: block.optionB?.label ?? '',
+      optionBDescription: block.optionB?.description ?? '',
+    })
+    setInjectStatus('idle')
+  }
+
+  const handleInjectCancel = () => {
+    setInjectForId(null)
+    setInjectStatus('idle')
+  }
+
+  const handleInject = async () => {
+    if (!injectForId || !injectForm.content) {
+      alert('Content is required to inject a pending block.')
+      return
+    }
+
+    const block = blocks?.find(b => b.id === injectForId)
+    if (!block) {
+      alert('Block not found. Has the list changed?')
+      return
+    }
+
+    setInjectStatus('saving')
+
+    const payload: Record<string, unknown> = {
+      forBlockId: injectForId,
+      choice: injectForm.choice,
+      channelId: block.channelId,
+      content: injectForm.content,
+      title: injectForm.title || null,
+      dialogue: injectForm.dialogue || null,
+      imageUrl: injectForm.imageUrl || null,
+    }
+
+    if (injectForm.optionALabel || injectForm.optionADescription) {
+      payload.optionA = {
+        label: injectForm.optionALabel || null,
+        description: injectForm.optionADescription || null,
+      }
+    }
+
+    if (injectForm.optionBLabel || injectForm.optionBDescription) {
+      payload.optionB = {
+        label: injectForm.optionBLabel || null,
+        description: injectForm.optionBDescription || null,
+      }
+    }
+
+    try {
+      await adminFetch('/pending-blocks', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      setInjectStatus('done')
+      setTimeout(() => {
+        setInjectForId(null)
+        setInjectStatus('idle')
+      }, 1500)
+      refresh()
+    } catch (err) {
+      setInjectStatus('error')
+      alert(`Failed to inject pending block: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
   const fetchChannels = useCallback(async () => {
     return adminFetch<Channel[]>('/channels', token)
   }, [token])
@@ -614,6 +705,144 @@ export default function BlocksTab() {
                     <div className="text-xs text-gray-400 mt-1">
                       {formatDate(block.createdAt)}
                     </div>
+
+                    {injectForId === block.id && (
+                      <div className="mt-3 pt-3 border-t border-purple-200">
+                        <div className="text-xs font-medium text-purple-700 mb-2">
+                          Queue Next Block — replaces AI content for the next narrative turn or vote outcome
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Choice *</label>
+                            <div className="flex gap-4">
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="radio"
+                                  name={`inject-choice-${block.id}`}
+                                  checked={injectForm.choice === 'A'}
+                                  onChange={() => setInjectForm({ ...injectForm, choice: 'A' })}
+                                />
+                                A — Narrative turn
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="radio"
+                                  name={`inject-choice-${block.id}`}
+                                  checked={injectForm.choice === 'B'}
+                                  onChange={() => setInjectForm({ ...injectForm, choice: 'B' })}
+                                />
+                                B — Vote outcome
+                              </label>
+                            </div>
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Content *</label>
+                            <textarea
+                              value={injectForm.content}
+                              onChange={(e) => setInjectForm({ ...injectForm, content: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full h-20 text-sm"
+                              placeholder="The story text that replaces what the AI would generate..."
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Dialogue</label>
+                            <textarea
+                              value={injectForm.dialogue}
+                              onChange={(e) => setInjectForm({ ...injectForm, dialogue: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full h-12 text-sm"
+                              placeholder="Spoken dialogue (optional)..."
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Title</label>
+                            <input
+                              type="text"
+                              value={injectForm.title}
+                              onChange={(e) => setInjectForm({ ...injectForm, title: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="Optional title..."
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Image URL</label>
+                            <input
+                              type="text"
+                              value={injectForm.imageUrl}
+                              onChange={(e) => setInjectForm({ ...injectForm, imageUrl: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="https://..."
+                            />
+                          </div>
+
+                          <div className="col-span-2 font-medium text-xs text-gray-500 mt-1">Options</div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Option A Label</label>
+                            <input
+                              type="text"
+                              value={injectForm.optionALabel}
+                              onChange={(e) => setInjectForm({ ...injectForm, optionALabel: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="e.g. 'Fight'"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Option A Description</label>
+                            <input
+                              type="text"
+                              value={injectForm.optionADescription}
+                              onChange={(e) => setInjectForm({ ...injectForm, optionADescription: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="Brief description..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Option B Label</label>
+                            <input
+                              type="text"
+                              value={injectForm.optionBLabel}
+                              onChange={(e) => setInjectForm({ ...injectForm, optionBLabel: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="e.g. 'Flee'"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Option B Description</label>
+                            <input
+                              type="text"
+                              value={injectForm.optionBDescription}
+                              onChange={(e) => setInjectForm({ ...injectForm, optionBDescription: e.target.value })}
+                              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+                              placeholder="Brief description..."
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 mt-3">
+                          <button
+                            onClick={handleInject}
+                            disabled={injectStatus === 'saving'}
+                            className="text-xs font-medium text-purple-700 hover:underline disabled:text-gray-400"
+                          >
+                            {injectStatus === 'saving'
+                              ? 'Injecting...'
+                              : injectStatus === 'done'
+                                ? '✓ Injected!'
+                                : 'Inject →'}
+                          </button>
+                          <button
+                            onClick={handleInjectCancel}
+                            className="text-xs text-gray-500 hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex gap-2 ml-4">
@@ -623,6 +852,13 @@ export default function BlocksTab() {
                       title={block.isNotable ? 'Unmark as notable' : 'Mark as notable'}
                     >
                       {block.isNotable ? '★' : '☆'}
+                    </button>
+                    <button
+                      onClick={() => handleInjectOpen(block)}
+                      className="text-xs text-purple-600 hover:underline"
+                      title="Queue this block's next continuation (bypasses AI)"
+                    >
+                      Queue Next
                     </button>
                     <button
                       onClick={() => handleEdit(block)}

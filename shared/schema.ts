@@ -347,6 +347,7 @@ export const blocks = pgTable(
     imageUrl: text("image_url"),
     optionA: jsonb("option_a"),
     optionB: jsonb("option_b"),
+    ttsEnabled: boolean("tts_enabled").default(true).notNull(),
     isNotable: boolean("is_notable").default(false).notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
     searchVector: tsvector("search_vector").generatedAlwaysAs(

@@ -47,6 +47,7 @@ if (process.env.NODE_ENV === "development" && !(global as any)["__NARRATIVE_LAB_
 export interface StoryBlockResult {
   title: string;
   content: string;
+  dialogue?: string;
   optionA?: { label: string; description: string; };
   optionB?: { label: string; description: string; };
   newNotableEvent?: string;

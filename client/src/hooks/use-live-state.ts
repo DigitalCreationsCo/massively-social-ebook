@@ -21,11 +21,11 @@ export { ChatMessage };
 const START_BEFORE_MS = 3 * 60 * 1000;
 
 export interface StoryState {
-  id: number;
   channelId: string;
   title: string | null;
   content: string;
   dialogue: string;
+  ttsEnabled: boolean;
   imageUrl: string | null;
   optionA: VoteOption | null | undefined;
   optionB: VoteOption | null | undefined;
@@ -586,16 +586,19 @@ export function useLiveState(channelId: string) {
   }, [macroPhase, activeSession?.description]);
 
   // ── Auto-dialogue: generate from block.dialogue || block.content ───────
+  // Skips TTS for fallback blocks (ttsEnabled === false) to avoid wasting
+  // HF API credits on system-generated placeholder text like "Temporal
+  // Distortion" or "System Reboot".
   useEffect(() => {
     if (currentBlock?.id && currentBlock.id !== lastBlockId.current) {
       lastBlockId.current = currentBlock.id;
       const dialogueText = currentBlock.dialogue || currentBlock.content;
-      if (dialogueText) {
+      if (dialogueText && currentBlock.ttsEnabled !== false) {
         tts.stopDialogue();
         tts.generateAndPlay(dialogueText, "dialogue");
       }
     }
-  }, [currentBlock?.id, currentBlock?.dialogue, currentBlock?.content]);
+  }, [currentBlock?.id, currentBlock?.dialogue, currentBlock?.content, currentBlock?.ttsEnabled]);
 
   return {
     isLoading: blockLoading || chatLoading || sessionLoading,

@@ -208,15 +208,15 @@ export class SessionScheduler {
                 const session = await storage.createSessionWithScheduleUpdate({
                     channelId: schedule.channelId,
                     scheduleId: schedule.id,
-                    title,
-                    description: channel?.description || "Upcoming Session",
+                    title: title,
+                    description: channel?.description ?? "Upcoming Session",
                     scheduledStart: start,
                     scheduledEnd: end,
                     timezone: schedule.timezone,
                     sessionNumber: nextSessionNumber,
-                    seasonNumber,
-                    episodeNumber,
-                    subtitle: config?.subtitle,
+                    seasonNumber: seasonNumber,
+                    episodeNumber: episodeNumber,
+                    subtitle: config?.subtitle ?? null,
                 }, schedule.id);
 
                 const nextRun = computeNextRunAt(schedule);
@@ -298,15 +298,15 @@ export class SessionScheduler {
                     await storage.createSessionWithScheduleUpdate({
                         channelId: schedule.channelId,
                         scheduleId: schedule.id,
-                        title,
-                        description: channelData?.description || 'Upcoming session',
+                        title: title,
+                        description: channelData?.description ?? 'Upcoming session',
                         scheduledStart: exactScheduledStartTimestamp,
                         scheduledEnd: exactScheduledEndTimestamp,
                         timezone: schedule.timezone,
                         sessionNumber: nextSessionNumber,
-                        seasonNumber,
-                        episodeNumber,
-                        subtitle: config?.subtitle,
+                        seasonNumber: seasonNumber,
+                        episodeNumber: episodeNumber,
+                        subtitle: config?.subtitle ?? null,
                     }, schedule.id);
 
                     await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));

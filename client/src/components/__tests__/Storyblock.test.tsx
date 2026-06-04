@@ -8,6 +8,8 @@ describe('Storyblock', () => {
         channelId: 'scifi',
         title: 'Test Story',
         content: 'Once upon a time...',
+        dialogue: '',
+        ttsEnabled: true,
         phase: 'reading' as const,
         imageUrl: 'https://example.com/image.jpg',
         timeRemaining: 30,

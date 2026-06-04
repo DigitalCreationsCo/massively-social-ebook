@@ -67,6 +67,7 @@ export const api = {
           id: z.number(),
           content: z.string(),
           dialogue: z.string().nullable(),
+          ttsEnabled: z.boolean(),
           imageUrl: z.string().nullable(),
           createdAt: z.string(),
           phase: z.enum(['reading', 'voting']),

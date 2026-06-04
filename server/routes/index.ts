@@ -319,6 +319,7 @@ async function startSessionForChannelId(
         content:
           "The story system encountered an anomaly and is attempting to reboot.",
         imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+        ttsEnabled: false,
         optionA: { label: "Reboot", description: "Attempt a system reboot." },
         optionB: {
           label: "Wait",
@@ -1435,6 +1436,7 @@ export async function handleGameLoopTick(
                   title: string;
                   content: string;
                   imageUrl: string;
+                  dialogue?: string | null;
                   optionA?: unknown;
                   optionB?: unknown;
                 };
@@ -1450,6 +1452,7 @@ export async function handleGameLoopTick(
                     title: pending.title,
                     content: pending.content,
                     imageUrl: pending.imageUrl,
+                    dialogue: pending.dialogue,
                     optionA: pending.optionA,
                     optionB: pending.optionB,
                   };
@@ -1628,6 +1631,8 @@ export async function handleGameLoopTick(
                 title: string;
                 content: string;
                 imageUrl: string;
+                dialogue?: string | null;
+                ttsEnabled?: boolean;
                 optionA?: unknown;
                 optionB?: unknown;
               };
@@ -1642,6 +1647,7 @@ export async function handleGameLoopTick(
                     title: pending.title,
                     content: pending.content,
                     imageUrl: pending.imageUrl,
+                    dialogue: pending.dialogue,
                     optionA: pending.optionA,
                     optionB: pending.optionB,
                   };
@@ -1678,11 +1684,25 @@ export async function handleGameLoopTick(
                 }
               } catch (err) {
                 logger.error(
-                  "Failed to adopt next block, will retry on next tick",
+                  "Failed to adopt next block, advancing with fallback",
                   "gameloop",
                   err instanceof Error ? err : new Error(String(err)),
                 );
-                throw err;
+                nextData = {
+                  title: "Temporal Distortion",
+                  content:
+                    "A temporal distortion disrupts the timeline. We must re-establish connection.",
+                  imageUrl: "/images/img_1771936309521_ieycq2.jpg",
+                  ttsEnabled: false,
+                  optionA: {
+                    label: "Reconnect",
+                    description: "Attempt to reconnect to the timeline.",
+                  },
+                  optionB: {
+                    label: "Wait",
+                    description: "Wait for the distortion to pass.",
+                  },
+                };
               }
 
               const newBlock = await storage.createBlock({
