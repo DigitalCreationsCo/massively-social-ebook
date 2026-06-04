@@ -1,0 +1,1 @@
+export const createDecisionInstructions = () => `Based on current story state, generate 2 choices. Make choices meaningful and consequential. `;

@@ -54,8 +54,6 @@ export default function LiveEbook() {
     ttsToggle,
   } = useLiveState(channelId);
 
-  const isReading = macroPhase === "reading";
-
   const [_, setLocation] = useLocation();
 
   // ── Lobby countdown ─────────────────────────────────────────────────────
@@ -167,7 +165,7 @@ export default function LiveEbook() {
           </span>
         </div>
         <div className="pointer-events-auto flex items-center gap-1">
-          {isReading && currentBlock?.content && (
+          { currentBlock?.content && (
             <SpeakerButton
               isSpeaking={ttsIsSpeaking}
               isPending={ttsIsPending}
@@ -243,7 +241,7 @@ export default function LiveEbook() {
         }}
       >
         {/* Decision phase — always rendered first (top of bottom zone) */}
-        {isReading && (
+        { (
           <DecisionPhase
             phase={currentBlock?.phase}
             timeRemaining={localTimeRemaining}

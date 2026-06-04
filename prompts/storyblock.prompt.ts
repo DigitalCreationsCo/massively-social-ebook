@@ -25,14 +25,13 @@ const GENRE_RULES: Record<string, string[]> = {
     "Use horror elements tactically - not every block needs a horror element. Time between horror elements should be used to build atmosphere and tension, and allow characters to react to what's happening.",
     "This is a story about something wrong that can't be ignored — and what it costs people to face it. Fear builds through atmosphere, not mechanics. What the reader imagines is usually scarier than what you describe directly.",
     "Start with the familiar, then make one detail wrong. A normal setting that's slightly off is more unsettling than an overtly monstrous one.",
-    "Characters don't make stupid decisions — they make understandable ones under stress, and that's how they end up somewhere terrible.",
     "Avoid: graphic detail that replaces tension, characters who exist only to be in danger.",
   ],
   drama: [
     "The narrative them is human relationships and their complexities.",
     "Focus on the dynamics between characters. What do they want from each other? What are they afraid of? How do their past experiences shape their present interactions?",
     "This is a story about people who are struggling to understand each other — or themselves — and mostly failing. No explosions, no chase scenes. The entire story runs on human stakes, which makes it as high-pressure as any other genre.",
-    "Conflict lives in the space between people. A silence over dinner, a question no one answers, a decision made years ago that everyone is still dealing with.",
+    // "Conflict lives in the space between people. A silence over dinner, a question no one answers, a decision made years ago that everyone is still dealing with.",
     "The turning points are small: a word chosen poorly, a moment of honesty that comes too late, a door left open that should have been closed.",
     "Characters are trying to connect — and either don't know how, or know how and are afraid, or once knew how and can't find their way back.",
     "Avoid: big emotional outbursts in place of actual depth, conflict that escalates without cause, realizations that resolve everything too neatly.",
@@ -50,10 +49,17 @@ const BASE_RULES = [
   // "Here is a description of the world and humanity to inform your world-building: ",
   "Your story readers are humans, not machines. Write interesting stories that involve people. Humans are rational - they display emotions for a reason. 50% of the time they try to subdue or hide their emotions, 25% of time they use emotional appeal to get what they want, and the other 25% they express emotions openly and honestly. Humans never feel emotions for no reason. They also do not rapidly change their current emotion. All humans are autonomous and have agency over their actions.",
   "Human drama is character development. The story is a forcing function that builds, develops and shifts characters' relationships and internal states. A character from 100 blocks ago is the same person with the same memory of events.",
+  "Characters don't make stupid decisions — they make understandable ones given the current circumstances.",
   "Significant revelations take DAYS, or even entire seasons to unravel - do not trivially divulge arc-defining information. Tease out 1% of a truth undiscernably, instead. The truth must be revealed implicitly, bit-by-bit.",
   "Plot events are interesting because of the reason: who it's happening to, why and how it affects all involved characters.",
   "Relationships between characters have nuance and can shift: complex emotions are in the latent space like loyalty, love, betrayal, resentment, need, and can occasionally surface when the the preceding elements bring it out.",
   "A story with no personal stakes sucks. Develop characters' internal desires over time. Develop narrative consequences and developments that last moving forward. The slate can never be wiped clean, but it can be washed over time.",
+  // LONGITUDINAL AWARENESS
+  "Be mindful of the long-term longitudinal composition.",
+  "Each scene builds narrative debt that must be paid later.",
+  "Plant seeds for future developments through small details.",
+  "Characters remember and reference past events naturally.",
+  "World changes accumulate and compound."
 ];
 
 const contentBlacklist = [
@@ -69,6 +75,8 @@ const contentBlacklist = [
 
 const authorFlair = [
   "Author Flair:",
+  "Poetic but accessible language",
+  "Deep, sensory description (sights, sounds, smells, textures)",
   "Show, don't tell. Don't use 'She was afraid', use 'Her hand found the wall'.",
 
   "Communicate one idea per story block. Less is more.",

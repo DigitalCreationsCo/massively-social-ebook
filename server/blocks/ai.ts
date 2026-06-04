@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { createStoryBlockInstructions } from "../../prompts/storyblock.prompt";
+import { createDecisionInstructions } from "../../prompts/decision.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
 import { NarrativeEngine, configureLabEngine } from "narrative-engine";
 import { RagProvider } from './rag';
@@ -10,7 +11,7 @@ import { RagProvider } from './rag';
 export const ai = new GoogleGenAI({});
 
 const lmParamsGoogle = {
-  model: 'gemini-2.5-flash-lite',
+  model: 'gemini-3.1-flash-lite',
   imageModel: 'gemini-2.5-flash-image',
 };
 
@@ -157,7 +158,10 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 
   const response = await ai.models.generateContent({
     model: lmParamsGoogle.model,
-    contents: prompt,
+    contents: [
+      prompt,
+      createDecisionInstructions()
+    ],
     config: {
       responseMimeType: "application/json",
       responseSchema: responseSchema,
