@@ -14,29 +14,46 @@ function createAudioManager() {
   const channels = new Map<number, AudioChannel>();
   let nextId = 0;
 
+  /**
+   * Returns the AudioContext, creating it if needed.
+   * Does NOT attempt resume — use ensureResumed() before play().
+   */
   function getContext(): AudioContext {
     if (!ctx) {
       ctx = new AudioContext();
     }
-    // Best-effort resume for mobile browsers that start suspended.
-    // If the browser requires a user gesture, this silently fails and
-    // the audio will play once the user interacts with the page again.
-    if (ctx.state === "suspended") {
-      ctx.resume().catch(() => {});
-    }
     return ctx;
   }
 
+  /**
+   * Ensures the AudioContext is in a "running" state.
+   * Browsers start contexts as "suspended" (autoplay policy).
+   * A user gesture (click/tap) is required for the first resume.
+   * Returns false if the context could not be resumed.
+   */
   async function ensureResumed(): Promise<boolean> {
     const c = getContext();
-    if (c.state === "suspended") {
+    const state = c.state;
+    if (state === "running") return true;
+
+    if (state === "suspended") {
       try {
         await c.resume();
-      } catch {
-        console.warn("[AudioManager] Could not resume AudioContext");
+        console.log("[AudioManager] AudioContext resumed successfully");
+        return true;
+      } catch (err) {
+        console.warn(
+          "[AudioManager] Could not resume AudioContext (state=suspended) — " +
+            "browser requires a user gesture (click/tap) before audio can play.",
+          err,
+        );
         return false;
       }
     }
+
+    // "closed" state — need to create a new context
+    console.warn("[AudioManager] AudioContext is in '" + state + "' state, creating a new one");
+    ctx = new AudioContext();
     return true;
   }
 
@@ -66,7 +83,19 @@ function createAudioManager() {
     return false;
   }
 
-  function play(buffer: AudioBuffer, type: TrackType) {
+  async function play(buffer: AudioBuffer, type: TrackType): Promise<boolean> {
+    // Ensure AudioContext is running before attempting playback.
+    // Browsers block audio until a user gesture; this returns false
+    // if the context could not be resumed (e.g. no user gesture yet).
+    const resumed = await ensureResumed();
+    if (!resumed) {
+      console.warn(
+        "[AudioManager] Cannot play — AudioContext could not be resumed. " +
+          "A user interaction (click/tap) is required first.",
+      );
+      return false;
+    }
+
     if (type === "dialogue") {
       const dCount = getDialogueCount();
       if (dCount >= MAX_DIALOGUE) {
@@ -106,6 +135,7 @@ function createAudioManager() {
 
     source.start();
     channels.set(id, channel);
+    return true;
   }
 
   function stopDialogue() {

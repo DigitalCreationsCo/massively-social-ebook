@@ -54,8 +54,17 @@ export function useTts() {
       }
 
       setIsPending(false);
+
+      const played = await audioManager.play(buffer, type);
+      if (!played) {
+        setError(
+          "Audio playback blocked — tap the speaker button to enable audio",
+        );
+        generatingRef.current = false;
+        return;
+      }
+
       setIsSpeaking(true);
-      audioManager.play(buffer, type);
       generatingRef.current = false;
     },
     [],

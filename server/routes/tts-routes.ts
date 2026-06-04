@@ -218,9 +218,14 @@ export function registerTtsRoutes(app: Express) {
 
       const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
 
-      // 4. Store in GCS (or local fallback)
-      const origName = audio.orig_name || `tts-${event_id}.wav`;
-      const permanentUrl = await storeAudio(audioBuffer, origName);
+      // 4. Store in GCS (or local fallback).
+      // Use event_id for uniqueness — Gradio's orig_name is always "audio.wav"
+      // and would overwrite every file on every call.
+      const ext = audio.orig_name?.includes(".")
+        ? audio.orig_name.split(".").pop()
+        : "wav";
+      const uniqueName = `tts-${event_id}.${ext}`;
+      const permanentUrl = await storeAudio(audioBuffer, uniqueName);
 
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
       logger.info("TTS generated", "tts", {

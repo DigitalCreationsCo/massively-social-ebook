@@ -6,7 +6,7 @@ export interface AudioAnalysis {
   reason?: string;
 }
 
-const MIN_DURATION_MS = 800;
+const MIN_DURATION_MS = 300;
 const MAX_DURATION_MS = 120_000;
 const RMS_FLOOR = 0.005;
 const CLIP_SAMPLE = 0.995;
@@ -66,7 +66,11 @@ export async function fetchAndDecode(
 
     const analysis = analyzeBuffer(audioBuffer);
     if (!analysis.valid) {
-      console.warn(`[AudioAnalyzer] Discarded bad audio: ${analysis.reason}`);
+      console.warn(
+        `[AudioAnalyzer] Discarded bad audio: ${analysis.reason} ` +
+          `(duration=${analysis.durationMs.toFixed(0)}ms, ` +
+          `rms=${analysis.rms.toFixed(4)}, peak=${analysis.peak.toFixed(4)})`,
+      );
       return null;
     }
 
