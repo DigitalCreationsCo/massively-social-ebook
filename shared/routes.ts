@@ -15,6 +15,7 @@ export const sessionResponseSchema = z.object({
   scheduledEnd: z.string(),
   timezone: z.string(),
   status: z.enum(['scheduled', 'active', 'completed', 'cancelled']),
+  backingTrackUrl: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 

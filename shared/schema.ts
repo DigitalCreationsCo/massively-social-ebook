@@ -167,6 +167,9 @@ export const sessions = pgTable(
     // e.g. "The Confession", "Into the Fog", "Last Call"
     subtitle: text("subtitle"),
 
+    // Generated ambient/backing audio for the session
+    backingTrackUrl: text("backing_track_url"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
   (table) => {
@@ -348,6 +351,7 @@ export const blocks = pgTable(
     optionA: jsonb("option_a"),
     optionB: jsonb("option_b"),
     ttsEnabled: boolean("tts_enabled").default(true).notNull(),
+    audioUrl: text("audio_url"),
     isNotable: boolean("is_notable").default(false).notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
     searchVector: tsvector("search_vector").generatedAlwaysAs(

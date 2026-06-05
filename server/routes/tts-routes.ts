@@ -3,6 +3,7 @@ import path from "node:path";
 import express, { type Express } from "express";
 import { GCPStorageManager } from "../storage-manager";
 import { logger } from "../logger";
+import { storage } from "../storage";
 
 interface GradioFile {
   path: string;
@@ -136,9 +137,47 @@ export function registerTtsRoutes(app: Express) {
   const hfToken = process.env.HF_TOKEN;
 
   app.post("/api/tts/generate", requireTtsAuth, async (req, res) => {
-    const { text } = req.body;
+    const { text, blockId: rawBlockId, sessionId: rawSessionId } = req.body as Record<string, unknown>;
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "text is required" });
+    }
+
+    // ── Input validation: only accept positive integers for entity IDs ─────
+    const blockId = typeof rawBlockId === "number" && Number.isInteger(rawBlockId) && rawBlockId > 0
+      ? rawBlockId
+      : undefined;
+    const sessionId = typeof rawSessionId === "number" && Number.isInteger(rawSessionId) && rawSessionId > 0
+      ? rawSessionId
+      : undefined;
+
+    // ── Cache check: block already has audio → return it ──────────────────
+    if (blockId) {
+      try {
+        const block = await storage.getBlockById(blockId);
+        if (block?.audioUrl) {
+          logger.info("TTS cache hit (block)", "tts", { blockId, audioUrl: block.audioUrl });
+          return res.json({ audioUrl: block.audioUrl, cached: true });
+        }
+      } catch (err) {
+        logger.warn("TTS block lookup failed, proceeding with generation", "tts",
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    }
+
+    // ── Cache check: session already has backing track → return it ────────
+    if (sessionId) {
+      try {
+        const session = await storage.getSessionById(sessionId);
+        if (session?.backingTrackUrl) {
+          logger.info("TTS cache hit (session)", "tts", { sessionId, audioUrl: session.backingTrackUrl });
+          return res.json({ audioUrl: session.backingTrackUrl, cached: true });
+        }
+      } catch (err) {
+        logger.warn("TTS session lookup failed, proceeding with generation", "tts",
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
     }
 
     if (!hfApiUrl) {
@@ -234,6 +273,29 @@ export function registerTtsRoutes(app: Express) {
         elapsed: elapsed + "s",
         size: audioBuffer.length,
       });
+
+      // ── Persist: save URL to block or session record ─────────────────────────
+      if (blockId) {
+        try {
+          await storage.updateBlock(blockId, { audioUrl: permanentUrl });
+          logger.info("TTS URL saved to block", "tts", { blockId, audioUrl: permanentUrl });
+        } catch (err) {
+          logger.warn("Failed to save TTS URL to block", "tts",
+            err instanceof Error ? err : new Error(String(err)),
+          );
+        }
+      }
+
+      if (sessionId) {
+        try {
+          await storage.updateSession(sessionId, { backingTrackUrl: permanentUrl });
+          logger.info("TTS URL saved to session backing track", "tts", { sessionId });
+        } catch (err) {
+          logger.warn("Failed to save TTS URL to session", "tts",
+            err instanceof Error ? err : new Error(String(err)),
+          );
+        }
+      }
 
       res.json({ audioUrl: permanentUrl });
     } catch (err) {

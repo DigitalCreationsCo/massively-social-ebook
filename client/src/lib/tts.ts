@@ -1,13 +1,22 @@
 interface TtsResponse {
   audioUrl: string;
+  cached?: boolean;
 }
 
-export async function textToSpeech(text: string): Promise<string | null> {
+export type TtsOptions = {
+  blockId?: number;
+  sessionId?: number;
+};
+
+export async function textToSpeech(
+  text: string,
+  options?: TtsOptions,
+): Promise<string | null> {
   try {
     const res = await fetch("/api/tts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...options }),
     });
     if (!res.ok) {
       console.error(`[TTS] Failed: ${res.status} ${res.statusText}`);

@@ -597,6 +597,7 @@ export function useLiveState(channelId: string) {
         const success = await tts.generateAndPlay(
           `[${activeSession.description}]`,
           "ambient",
+          { sessionId: activeSession.id },
         );
         if (cancelled) return;
         if (success) {
@@ -625,7 +626,7 @@ export function useLiveState(channelId: string) {
         ambientRetryTimer.current = null;
       }
     };
-  }, [macroPhase, activeSession?.description, ambientRetryTick]);
+  }, [macroPhase, activeSession?.description, ambientRetryTick, activeSession?.id]);
 
   // ── Auto-dialogue: generate from block.dialogue || block.content ───────
   // Skips TTS for fallback blocks (ttsEnabled === false) to avoid wasting
@@ -637,7 +638,9 @@ export function useLiveState(channelId: string) {
       const dialogueText = currentBlock.dialogue || currentBlock.content;
       if (dialogueText && currentBlock.ttsEnabled !== false) {
         tts.stopDialogue();
-        tts.generateAndPlay(dialogueText, "dialogue");
+        tts.generateAndPlay(dialogueText, "dialogue", {
+          blockId: currentBlock.id,
+        });
       }
     }
   }, [currentBlock?.id, currentBlock?.dialogue, currentBlock?.content, currentBlock?.ttsEnabled]);

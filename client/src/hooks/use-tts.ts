@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { textToSpeech } from "@/lib/tts";
+import { textToSpeech, type TtsOptions } from "@/lib/tts";
 import { audioManager } from "@/lib/audio-manager";
 import { fetchAndDecode } from "@/lib/audio-analyzer";
 
@@ -17,14 +17,18 @@ export function useTts() {
   }, []);
 
   const generateAndPlay = useCallback(
-    async (text: string, type: "ambient" | "dialogue"): Promise<boolean> => {
+    async (
+      text: string,
+      type: "ambient" | "dialogue",
+      options?: TtsOptions,
+    ): Promise<boolean> => {
       if (!text || generatingRef.current) return false;
 
       generatingRef.current = true;
       setIsPending(true);
       setError(null);
 
-      const audioUrl = await textToSpeech(text);
+      const audioUrl = await textToSpeech(text, options);
 
       if (!isMounted.current) {
         generatingRef.current = false;
@@ -87,7 +91,8 @@ export function useTts() {
   }, []);
 
   const speak = useCallback(
-    (text: string) => generateAndPlay(text, "dialogue"),
+    (text: string, options?: TtsOptions) =>
+      generateAndPlay(text, "dialogue", options),
     [generateAndPlay],
   );
 

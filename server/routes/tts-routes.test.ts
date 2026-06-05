@@ -39,6 +39,15 @@ vi.mock("../logger", () => ({
   },
 }));
 
+vi.mock("../storage", () => ({
+  storage: {
+    getBlockById: vi.fn(),
+    getSessionById: vi.fn(),
+    updateBlock: vi.fn(),
+    updateSession: vi.fn(),
+  },
+}));
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const AUDIO_DIR = path.resolve(process.cwd(), "server/public/audio");
