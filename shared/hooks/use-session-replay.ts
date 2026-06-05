@@ -1,10 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Session, Block, ChatMessage } from "@shared/schema";
 
+export interface TailFocusOptions {
+  /** Max blocks to return (default: 12, matches server LIMIT) */
+  numBlocks?: number;
+  /** Percentage into the blocks to start (0-100, default: 50 = middle) */
+  startPercent?: number;
+  /**
+   * If true (default): take from `startPercent`-mark to the end.
+   * If false: take `numBlocks` from the beginning.
+   */
+  fromEnd?: boolean;
+}
+
 interface UseSessionReplayHookProps {
   channelId: string;
   requestedSessionId?: number;
   notableOnly?: boolean;
+  /** Optionally narrow which blocks are shown (tail-focus, count cap). */
+  tailFocus?: TailFocusOptions;
 }
 
 /** A history block returned with embedded chat messages (top 10). */
@@ -24,10 +38,37 @@ interface SessionReplayData {
   blocks: BlockWithChats[];
 }
 
+/**
+ * Slice `blocks` to focus on the tail end of a session's history.
+ * When `fromEnd` (default): start at the `startPercent` mark (e.g. 50% = middle)
+ * and take up to `numBlocks`.
+ * When `!fromEnd`: take up to `numBlocks` from the beginning.
+ */
+function applyTailFocus(
+  blocks: BlockWithChats[],
+  options?: TailFocusOptions,
+): BlockWithChats[] {
+  if (!options || blocks.length === 0) return blocks;
+
+  const { numBlocks = 12, startPercent = 50, fromEnd = true } = options;
+
+  if (fromEnd) {
+    const startIndex = Math.min(
+      Math.floor(blocks.length * (startPercent / 100)),
+      Math.max(0, blocks.length - 1),
+    );
+    return blocks.slice(startIndex).slice(0, numBlocks);
+  }
+
+  // fromStart mode: take from the beginning
+  return blocks.slice(0, numBlocks);
+}
+
 async function fetchSessionReplay(
   channelId: string,
   requestedSessionId: number | undefined,
   notableOnly: boolean,
+  tailFocus?: TailFocusOptions,
 ): Promise<SessionReplayData> {
   const sessionUrl = new URL("/api/sessions/history", window.location.origin);
   sessionUrl.searchParams.append("channelId", channelId);
@@ -54,7 +95,7 @@ async function fetchSessionReplay(
       blocksRes.json() as Promise<BlockWithChats[]>,
     ]);
 
-    return { session, blocks };
+    return { session, blocks: applyTailFocus(blocks, tailFocus) };
   }
 
   // No session ID yet — fetch session first, then blocks.
@@ -72,19 +113,26 @@ async function fetchSessionReplay(
   if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");
 
   const blocks = (await blocksRes.json()) as BlockWithChats[];
-  return { session, blocks };
+  return { session, blocks: applyTailFocus(blocks, tailFocus) };
 }
 
 export function useSessionReplay({
   channelId,
   requestedSessionId,
   notableOnly = false,
+  tailFocus,
 }: UseSessionReplayHookProps): UseSessionReplayReturn {
   const { data, isLoading, error } = useQuery({
-    // Include notableOnly in the key so toggling it triggers a fresh fetch.
-    queryKey: ["session-replay", channelId, requestedSessionId, notableOnly],
+    // Include tailFocus in the key so changing options triggers a fresh fetch.
+    queryKey: [
+      "session-replay",
+      channelId,
+      requestedSessionId,
+      notableOnly,
+      tailFocus,
+    ],
     queryFn: () =>
-      fetchSessionReplay(channelId, requestedSessionId, notableOnly),
+      fetchSessionReplay(channelId, requestedSessionId, notableOnly, tailFocus),
     enabled: !!channelId,
     staleTime: Infinity,
   });

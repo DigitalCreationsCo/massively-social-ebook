@@ -378,7 +378,7 @@ export default function UpcomingSession() {
     session: previousSession,
     blocks: previousBlocks,
     isLoading: isReplayLoading,
-  } = useSessionReplay({ channelId, notableOnly: true });
+  } = useSessionReplay({ channelId, notableOnly: true, tailFocus: {} });
 
   const previousSessionExists =
     previousSession && previousBlocks && previousBlocks.length > 0;

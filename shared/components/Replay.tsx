@@ -9,12 +9,105 @@ import {
 } from "remotion";
 import type { PlayerRef } from "@remotion/player";
 import { Player } from "@remotion/player";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 interface ReplayProps {
   blocks: BlockWithChats[];
   session?: Session;
   onPlay?: () => void;
+}
+
+const FPS = 30;
+const SPLASH_FRAMES = 4 * FPS; // 4 seconds
+const FINAL_BLOCK_BONUS_FRAMES = 1 * FPS; // +1s extra for the last block
+const FADE_OUT_FRAMES = 10; // abrupt fade-to-black at the very end
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+/** Deterministic pseudo-random in [0, 1) from an integer seed. */
+function hash(seed: number): number {
+  // Simple LCG
+  return ((seed * 1103515245 + 12345) >>> 0) / 0x100000000;
+}
+
+/** Per-block display duration in frames (3.5–5 s). Notable blocks skew longer. The final block gets a bonus for suspense. */
+function getBlockDuration(
+  index: number,
+  isNotable: boolean,
+  isLast: boolean,
+): number {
+  const minSec = 3.5;
+  const maxSec = 5.0;
+
+  const jitter = hash(index * 7919); // deterministic 0..1
+
+  const base = isNotable ? 4.0 + jitter * 1.0 : 3.5 + jitter * 1.5;
+
+  const clamped = Math.max(minSec, Math.min(maxSec, base));
+  let frames = Math.round(clamped * FPS);
+  if (isLast) frames += FINAL_BLOCK_BONUS_FRAMES;
+  return frames;
+}
+
+/**
+ * Subtle hand-camera offset for a given block+frame combo.
+ * Only the background image moves — text and overlays stay stable.
+ */
+function handcamOffset(
+  blockIndex: number,
+  frame: number,
+): { x: number; y: number; rotate: number; breathe: number } {
+  const s1 = blockIndex * 100 + frame;
+  return {
+    x: Math.sin(s1 * 0.07 + hash(blockIndex) * 10) * 0.6,
+    y: Math.cos(s1 * 0.05 + hash(blockIndex + 100) * 10) * 0.3,
+    rotate: Math.sin(s1 * 0.03 + hash(blockIndex + 200) * 10) * 0.08,
+    breathe: 1 + Math.sin(s1 * 0.02 + hash(blockIndex + 300) * 10) * 0.0006,
+  };
+}
+
+// ── Scenes ─────────────────────────────────────────────────────────────
+
+function SplashScene() {
+  const frame = useCurrentFrame();
+
+  const opacity = interpolate(frame, [0, 30], [0, 1], {
+    extrapolateRight: "clamp",
+  });
+  const scale = interpolate(frame, [0, 30], [1.08, 1], {
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: "black",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        style={{
+          opacity,
+          transform: `scale(${scale})`,
+          color: "white",
+          fontSize: 72,
+          fontWeight: 700,
+          fontFamily: '"Playfair Display", serif',
+          letterSpacing: "0.05em",
+        }}
+      >
+        Previously...
+      </div>
+    </AbsoluteFill>
+  );
 }
 
 function ChatBubble({
@@ -65,27 +158,48 @@ function ChatBubble({
 function StoryScene({
   story,
   blockIndex,
+  durationInFrames,
+  isLastBlock,
 }: {
   story: BlockWithChats;
   blockIndex: number;
+  durationInFrames: number;
+  isLastBlock: boolean;
 }) {
   const frame = useCurrentFrame();
+  const { x, y, rotate, breathe } = handcamOffset(blockIndex, frame);
 
-  const scale = interpolate(frame, [0, 180], [1, 1.1]);
+  // Fade from black at the start of each block
+  const fadeIn = interpolate(frame, [0, 15], [1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  // Abrupt fade to black at the very end of the final block
+  const endFadeOut =
+    isLastBlock && durationInFrames > FADE_OUT_FRAMES
+      ? interpolate(
+          frame,
+          [durationInFrames - FADE_OUT_FRAMES, durationInFrames],
+          [0, 1],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+        )
+      : 0;
 
   return (
     <AbsoluteFill>
+      {/* ── Background image with subtle handcam movement ── */}
       <Img
         src={story.imageUrl || ""}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          transform: `scale(${scale})`,
+          transform: `translate(${x}px, ${y}px) scale(${breathe}) rotate(${rotate}deg)`,
         }}
       />
 
-      {/* overlay */}
+      {/* ── Gradient overlay (stable) ── */}
       <AbsoluteFill
         style={{
           background:
@@ -93,7 +207,7 @@ function StoryScene({
         }}
       />
 
-      {/* text */}
+      {/* ── Content text (stable) — uses Inter sans font ── */}
       <div
         style={{
           position: "absolute",
@@ -103,13 +217,20 @@ function StoryScene({
           color: "white",
         }}
       >
-        {/* <h1 style={ { fontSize: 72, fontWeight: 700 } }>
-                    { story.title }
-                </h1> */}
-        {story.content && <p style={{ fontSize: "3rem" }}>{story.content}</p>}
+        {story.content && (
+          <p
+            style={{
+              fontSize: "3rem",
+              margin: 0,
+              fontFamily: '"Inter", sans-serif',
+            }}
+          >
+            {story.content}
+          </p>
+        )}
       </div>
 
-      {/* chat overlay */}
+      {/* ── Chat bubbles (stable) ── */}
       <div
         style={{
           position: "absolute",
@@ -129,28 +250,102 @@ function StoryScene({
           />
         ))}
       </div>
+
+      {/* ── Fade-from-black overlay (block start) ── */}
+      {fadeIn > 0 && (
+        <AbsoluteFill
+          style={{
+            backgroundColor: `rgba(0,0,0,${fadeIn})`,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
+      {/* ── Abrupt fade-to-black overlay (final block end) ── */}
+      {isLastBlock && endFadeOut > 0 && (
+        <AbsoluteFill
+          style={{
+            backgroundColor: `rgba(0,0,0,${endFadeOut})`,
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </AbsoluteFill>
   );
 }
 
+/** Brief full-black scene for the abrupt fade-out tail. */
+function FinalFadeScene() {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [0, FADE_OUT_FRAMES], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <AbsoluteFill style={{ backgroundColor: `rgba(0,0,0,${opacity})` }} />
+  );
+}
+
+// ── Player wrapper ─────────────────────────────────────────────────────
+
 export const Replay = ({ blocks, onPlay }: ReplayProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-
   const playerRef = useRef<PlayerRef>(null);
+  const onPlayRef = useRef(onPlay);
+  onPlayRef.current = onPlay; // always fresh, no re-render cascade
 
   const [isIntersecting, setIsIntersecting] = useState(false);
+
+  // ── Preload block images before the Player renders ──
+  const [imagesReady, setImagesReady] = useState(false);
+  useEffect(() => {
+    const urls = blocks
+      .map((b) => b.imageUrl)
+      .filter((url): url is string => !!url);
+
+    if (urls.length === 0) {
+      setImagesReady(true);
+      return;
+    }
+
+    let loaded = 0;
+    let cancelled = false;
+
+    const onLoad = () => {
+      loaded++;
+      if (!cancelled && loaded >= urls.length) {
+        setImagesReady(true);
+      }
+    };
+
+    for (const url of urls) {
+      const img = new Image();
+      img.onload = onLoad;
+      img.onerror = onLoad; // don't block on failed images
+      img.src = url;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [blocks]);
+
+  // Use the observer entry directly (not stale state) and read onPlay via ref
+  // so the callback never needs to be recreated.
   const callback: IntersectionObserverCallback = useCallback(
     (newData) => {
-      setIsIntersecting(newData[0].isIntersecting);
-      if (isIntersecting) {
+      const intersecting = newData[0].isIntersecting;
+      setIsIntersecting(intersecting);
+      if (intersecting) {
         playerRef.current?.play();
-        onPlay?.();
+        onPlayRef.current?.();
       } else {
         playerRef.current?.pause();
       }
     },
-    [isIntersecting],
+    [], // stable — never recreated
   );
+
   useEffect(() => {
     const { current } = containerRef;
     if (!current) {
@@ -166,37 +361,73 @@ export const Replay = ({ blocks, onPlay }: ReplayProps) => {
     return () => observer.unobserve(current);
   }, [callback]);
 
-  const FPS = 30;
-  const MIN_BLOCK_FRAMES = 2 * FPS; // 60 frames  (2s)
-  const MAX_BLOCK_FRAMES = 5 * FPS; // 150 frames (5s)
-  const TARGET_TOTAL_FRAMES = 17.5 * FPS; // aim for ~17.5s midpoint
-
-  const perBlockFrames =
-    blocks.length > 0
-      ? Math.min(
-          MAX_BLOCK_FRAMES,
-          Math.max(
-            MIN_BLOCK_FRAMES,
-            Math.round(TARGET_TOTAL_FRAMES / blocks.length),
-          ),
-        )
-      : MIN_BLOCK_FRAMES;
-
-  const totalFrames = perBlockFrames * blocks.length || 1;
-
-  const Component = () => (
-    <AbsoluteFill>
-      {blocks.map((block, blockIndex) => (
-        <Sequence
-          key={blockIndex}
-          from={blockIndex * perBlockFrames}
-          durationInFrames={perBlockFrames}
-        >
-          <StoryScene story={block} blockIndex={blockIndex} />
-        </Sequence>
-      ))}
-    </AbsoluteFill>
+  // ── Compute per-block durations (deterministic) ──
+  const blockDurations = useMemo(
+    () =>
+      blocks.map((block, i) =>
+        getBlockDuration(i, block.isNotable ?? false, i === blocks.length - 1),
+      ),
+    [blocks],
   );
+
+  // Total frames = splash + all blocks + fade-out tail
+  const totalFrames =
+    blockDurations.reduce((sum, d) => sum + d, 0) + SPLASH_FRAMES +
+      FADE_OUT_FRAMES || 1;
+
+  // Cumulative start positions for each block (after splash)
+  const cumulativeStarts = useMemo(() => {
+    let running = SPLASH_FRAMES;
+    return blockDurations.map((d) => {
+      const start = running;
+      running += d;
+      return start;
+    });
+  }, [blockDurations]);
+
+  // Frame at which the fade-out tail begins
+  const fadeOutStart = totalFrames - FADE_OUT_FRAMES;
+
+  const Component = useCallback(
+    () => (
+      <AbsoluteFill>
+        {/* Splash screen first */}
+        <Sequence from={0} durationInFrames={SPLASH_FRAMES}>
+          <SplashScene />
+        </Sequence>
+
+        {/* Then each story block with its own variable duration */}
+        {blocks.map((block, blockIndex) => (
+          <Sequence
+            key={blockIndex}
+            from={cumulativeStarts[blockIndex]}
+            durationInFrames={blockDurations[blockIndex]}
+          >
+            <StoryScene
+              story={block}
+              blockIndex={blockIndex}
+              durationInFrames={blockDurations[blockIndex]}
+              isLastBlock={blockIndex === blocks.length - 1}
+            />
+          </Sequence>
+        ))}
+
+        {/* Abrupt fade-to-black tail after the final block */}
+        <Sequence from={fadeOutStart} durationInFrames={FADE_OUT_FRAMES}>
+          <FinalFadeScene />
+        </Sequence>
+      </AbsoluteFill>
+    ),
+    [blocks, blockDurations, cumulativeStarts, fadeOutStart],
+  );
+
+  // Nothing meaningful to show — bail
+  if (totalFrames <= SPLASH_FRAMES + FADE_OUT_FRAMES) return null;
+
+  // Hold on a black frame until images are preloaded
+  if (!imagesReady) {
+    return <div ref={containerRef} className="w-full h-full bg-black" />;
+  }
 
   return (
     <div ref={containerRef} className="w-full h-full">
@@ -209,7 +440,7 @@ export const Replay = ({ blocks, onPlay }: ReplayProps) => {
         clickToPlay={true}
         spaceKeyToPlayOrPause={false}
         durationInFrames={totalFrames}
-        fps={30}
+        fps={FPS}
         style={{
           width: "100%",
           height: "100%",
