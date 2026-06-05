@@ -87,12 +87,12 @@ export function Storyblock({
           <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black" />
 
           {/* Narrative Text Content */}
-          <div className="absolute inset-0 flex flex-col justify-center p-6 md:p-12 pb-12 overflow-y-auto no-scrollbar">
+          <div className="absolute inset-0 flex flex-col justify-center p-6 md:p-12 overflow-y-auto no-scrollbar">
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.5, duration: 1 }}
-              className="max-w-3xl mx-auto w-full "
+              className="max-w-3xl mx-auto w-full"
               // onClick={() => {
               //   onReaction?.(block.id, "❤️");
               //   trackEvent("Story Paragraph Clicked", {

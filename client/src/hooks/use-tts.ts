@@ -17,8 +17,8 @@ export function useTts() {
   }, []);
 
   const generateAndPlay = useCallback(
-    async (text: string, type: "ambient" | "dialogue"): Promise<void> => {
-      if (!text || generatingRef.current) return;
+    async (text: string, type: "ambient" | "dialogue"): Promise<boolean> => {
+      if (!text || generatingRef.current) return false;
 
       generatingRef.current = true;
       setIsPending(true);
@@ -28,14 +28,14 @@ export function useTts() {
 
       if (!isMounted.current) {
         generatingRef.current = false;
-        return;
+        return false;
       }
 
       if (!audioUrl) {
         setIsPending(false);
         setError("Failed to generate speech");
         generatingRef.current = false;
-        return;
+        return false;
       }
 
       const ctx = audioManager.getContext();
@@ -43,14 +43,14 @@ export function useTts() {
 
       if (!isMounted.current) {
         generatingRef.current = false;
-        return;
+        return false;
       }
 
       if (!buffer) {
         setIsPending(false);
         setError("Generated audio failed validation");
         generatingRef.current = false;
-        return;
+        return false;
       }
 
       setIsPending(false);
@@ -61,11 +61,12 @@ export function useTts() {
           "Audio playback blocked — tap the speaker button to enable audio",
         );
         generatingRef.current = false;
-        return;
+        return false;
       }
 
       setIsSpeaking(true);
       generatingRef.current = false;
+      return true;
     },
     [],
   );

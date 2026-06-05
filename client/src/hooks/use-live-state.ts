@@ -90,6 +90,9 @@ export function useLiveState(channelId: string) {
 
   const tts = useTts();
   const ambientGenerated = useRef(false);
+  const ambientRetryCount = useRef(0);
+  const ambientRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [ambientRetryTick, setAmbientRetryTick] = useState(0);
   const lastBlockId = useRef<number | null>(null);
 
   const { data: initialData, isLoading: sessionLoading } = useQuery({
@@ -575,15 +578,54 @@ export function useLiveState(channelId: string) {
   }, [currentBlock?.id]);
 
   // ── Auto-ambient: generate from session.description wrapped in [] ─────
+  // Ambient loops continuously throughout the session (gathering + reading).
+  // Retries with exponential backoff if TTS generation or playback fails.
   useEffect(() => {
-    if (macroPhase === "reading" && activeSession?.description && !ambientGenerated.current) {
-      ambientGenerated.current = true;
-      tts.generateAndPlay(`[${activeSession.description}]`, "ambient");
-    }
-    if (macroPhase !== "reading") {
+    let cancelled = false;
+
+    const isValidPhase =
+      macroPhase === "reading" || macroPhase === "gathering";
+
+    if (!isValidPhase || !activeSession?.description) {
       ambientGenerated.current = false;
+      ambientRetryCount.current = 0;
+      return;
     }
-  }, [macroPhase, activeSession?.description]);
+
+    if (!ambientGenerated.current && !ambientRetryTimer.current) {
+      (async () => {
+        const success = await tts.generateAndPlay(
+          `[${activeSession.description}]`,
+          "ambient",
+        );
+        if (cancelled) return;
+        if (success) {
+          ambientGenerated.current = true;
+          ambientRetryCount.current = 0;
+        } else {
+          ambientRetryCount.current += 1;
+          if (ambientRetryCount.current <= 5) {
+            const delay = Math.min(
+              1000 * 2 ** (ambientRetryCount.current - 1),
+              30000,
+            );
+            ambientRetryTimer.current = setTimeout(() => {
+              ambientRetryTimer.current = null;
+              if (!cancelled) setAmbientRetryTick((t) => t + 1);
+            }, delay);
+          }
+        }
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+      if (ambientRetryTimer.current) {
+        clearTimeout(ambientRetryTimer.current);
+        ambientRetryTimer.current = null;
+      }
+    };
+  }, [macroPhase, activeSession?.description, ambientRetryTick]);
 
   // ── Auto-dialogue: generate from block.dialogue || block.content ───────
   // Skips TTS for fallback blocks (ttsEnabled === false) to avoid wasting

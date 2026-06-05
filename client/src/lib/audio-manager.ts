@@ -119,6 +119,8 @@ function createAudioManager() {
     const c = getContext();
     const source = c.createBufferSource();
     source.buffer = buffer;
+    // Ambient tracks loop continuously (~20-30s generated audio repeated)
+    source.loop = type === "ambient";
 
     const gain = c.createGain();
     gain.gain.value = type === "ambient" ? 0.3 : 1.0;

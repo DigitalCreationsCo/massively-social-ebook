@@ -234,7 +234,7 @@ export default function LiveEbook() {
         aria-label="Controls"
         className="absolute inset-x-0 flex flex-col overflow-hidden bg-black"
         style={{
-          top: STORY_ZONE_HEIGHT,
+          top: "50dvh",
           bottom: keyboardHeight,
           // Match the OS keyboard animation duration (iOS ~250ms, Android ~220ms)
           transition: "bottom 0.22s ease",
