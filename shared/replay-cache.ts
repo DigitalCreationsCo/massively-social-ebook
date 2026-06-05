@@ -24,6 +24,10 @@ export const replayCache = new LRUCache<string, ReplayCacheEntry>({
   },
 });
 
-export function buildReplayCacheKey(sessionId: number, notableOnly: boolean) {
-  return `replay:${sessionId}:${notableOnly}`;
+export function buildReplayCacheKey(
+  sessionId: number,
+  notableOnly: boolean,
+  limit: number = 12,
+) {
+  return `replay:${sessionId}:${notableOnly}:${limit}`;
 }

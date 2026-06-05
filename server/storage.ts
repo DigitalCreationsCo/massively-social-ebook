@@ -245,8 +245,12 @@ export class DatabaseStorage implements IStorage {
   async getReplayBlocks(
     sessionId: number,
     notableOnly: boolean,
+    limit: number = 12,
   ): Promise<BlockWithChats[]> {
-    // const cacheKey = buildReplayCacheKey(sessionId, notableOnly);
+    // Clamp to a safe range
+    const safeLimit = Math.max(1, Math.min(limit, 200));
+
+    // const cacheKey = buildReplayCacheKey(sessionId, notableOnly, safeLimit);
     // const cached = replayCache.get(cacheKey);
 
     // if (cached) {
@@ -281,7 +285,7 @@ export class DatabaseStorage implements IStorage {
           : eq(blocks.sessionId, sessionId),
       )
       .orderBy(asc(blocks.createdAt))
-      .limit(12);
+      .limit(safeLimit);
 
     if (replayBlocks.length === 0) {
       return [];

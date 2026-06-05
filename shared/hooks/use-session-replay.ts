@@ -80,6 +80,8 @@ async function fetchSessionReplay(
     const blocksUrl = new URL("/api/blocks/history", window.location.origin);
     blocksUrl.searchParams.append("sessionId", requestedSessionId.toString());
     if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
+    if (tailFocus?.numBlocks)
+      blocksUrl.searchParams.append("limit", String(tailFocus.numBlocks));
 
     const [sessionRes, blocksRes] = await Promise.all([
       fetch(sessionUrl.toString()),
@@ -108,6 +110,8 @@ async function fetchSessionReplay(
   const blocksUrl = new URL("/api/blocks/history", window.location.origin);
   blocksUrl.searchParams.append("sessionId", session.id.toString());
   if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
+  if (tailFocus?.numBlocks)
+    blocksUrl.searchParams.append("limit", String(tailFocus.numBlocks));
 
   const blocksRes = await fetch(blocksUrl.toString());
   if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");

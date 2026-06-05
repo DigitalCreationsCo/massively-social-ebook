@@ -842,6 +842,7 @@ export async function registerRoutes(
   app.get("/api/blocks/history", async (req, res) => {
     const sessionId = Number(req.query.sessionId);
     const notableOnly = req.query.notableOnly === "true";
+    const rawLimit = req.query.limit;
 
     if (!sessionId) {
       return res.status(400).json({
@@ -849,8 +850,25 @@ export async function registerRoutes(
       });
     }
 
+    // Parse and validate limit
+    let limit = 12; // default
+    if (rawLimit !== undefined) {
+      const parsed = Number(rawLimit);
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+        return res.status(400).json({
+          error: "limit must be a positive integer",
+        });
+      }
+      if (parsed > 200) {
+        return res.status(400).json({
+          error: "limit must not exceed 200",
+        });
+      }
+      limit = parsed;
+    }
+
     try {
-      const blocks = await storage.getReplayBlocks(sessionId, notableOnly);
+      const blocks = await storage.getReplayBlocks(sessionId, notableOnly, limit);
 
       res.json(blocks);
     } catch (error) {
