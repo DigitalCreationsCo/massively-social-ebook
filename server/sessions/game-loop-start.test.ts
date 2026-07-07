@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleGameLoopTick, START_BEFORE_MS } from '../routes';
 import { storage } from '../storage';
 
-vi.mock('./storage', () => ({
+vi.mock('../storage', () => ({
     storage: {
         getActiveChannels: vi.fn(),
         getChannelState: vi.fn(),

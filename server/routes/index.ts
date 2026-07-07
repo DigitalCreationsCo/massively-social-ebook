@@ -2,13 +2,9 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage";
-import { generateStoryBlock } from "../blocks/ai";
-import { generateAndUploadStoryImage } from "../image-uploader";
 import { api } from "@shared/routes";
 import {
-  WS_EVENTS,
   type WsMessage,
-  type Block,
   type Session,
   sessions,
   blocks,
@@ -18,152 +14,29 @@ import { trackUserEmail } from "../analytics";
 import { CalendarService } from "../calendar";
 import { isAdmin, isDevOnly } from "../middleware/auth";
 import { logger } from "../logger";
-import { formatInTZ } from "@shared/date";
-import { and, asc, desc, eq, sql, SQL } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "server/db";
+import {
+  type ChannelId,
+  type CachedBlock,
+  NARRATIVE_TURN_MS,
+  VOTING_PHASE_MS,
+  POST_VOTE_READING_MS,
+  LOBBY_DELAY_MS,
+  START_BEFORE_MS,
+  AFTERPARTY_MS,
+  PHASE_INITIAL_MS,
+  computeDecisionEndsAt,
+  clearChannelCache,
+  stateCache,
+  blockCache,
+  startSessionForChannelId,
+  handleChannelTick,
+} from "../game-loop/channel-tick";
+import { RealtimeEngine, type ActivationResult, type TickResult } from "@portalshq/runtime-core";
 
-type ChannelId = string;
-
-// Phase duration constants (milliseconds)
-export const NARRATIVE_TURN_MS = 40_000;
-export const VOTING_PHASE_MS = 40_000;
-export const POST_VOTE_READING_MS = 40_000;
-
-// Session timing constants (milliseconds)
-export const LOBBY_DELAY_MS = 3 * 60 * 1000; // 3 minutes before start time (lobby/gathering)
-export const START_BEFORE_MS = LOBBY_DELAY_MS; // Alias for clarity
-export const AFTERPARTY_MS = 3 * 60 * 1000; // 3 minutes afterparty after resolution ends
-
-export const PHASE_INITIAL_MS: Record<string, number> = {
-  reading: NARRATIVE_TURN_MS,
-  voting: VOTING_PHASE_MS,
-  resolution: 60_000,
-  afterparty: AFTERPARTY_MS,
-};
-
-function getRandomTurns() {
-  return Math.floor(Math.random() * 3) + 2; // 2, 3, or 4
-}
-
-/**
- * Computes the wall-clock time when the next decision/voting phase will end.
- * - In voting phase: decision ends at the same time as the current phase.
- * - In reading phase: decision ends at phaseEndsAt + remainingTurns * NARRATIVE_TURN_MS.
- *   If turnsToNextChoice is 0, the next tick will enter voting, so decision
- *   ends at the current phaseEndsAt + VOTING_PHASE_MS.
- */
-export function computeDecisionEndsAt(state: {
-  currentPhase: string;
-  phaseEndsAt: number;
-  turnsToNextChoice: number;
-}): number {
-  if (state.currentPhase === "voting") {
-    return state.phaseEndsAt;
-  }
-  if (state.currentPhase === "resolution" || state.currentPhase === "afterparty") {
-    return state.phaseEndsAt;
-  }
-  // reading phase
-  const turns = Math.max(0, state.turnsToNextChoice);
-  // The phaseEndsAt is when the current reading block ends.
-  // After that, if turns > 0, each remaining turn adds NARRATIVE_TURN_MS.
-  // After turns reach 0, voting adds VOTING_PHASE_MS.
-  if (turns === 0) {
-    return state.phaseEndsAt + VOTING_PHASE_MS;
-  }
-  // turns remaining: each turn = NARRATIVE_TURN_MS, then VOTING_PHASE_MS at the end
-  return state.phaseEndsAt + turns * NARRATIVE_TURN_MS + VOTING_PHASE_MS;
-}
-
-/** Clears the in-memory channel cache. Used by tests to reset state between cases. */
-export function clearChannelCache(): void {
-  channelCache.clear();
-}
-
-// ---------------------------------------------------------------------------
-// In-Memory Channel State Cache (avoids DB reads during heartbeat)
-//
-// Key insight: block content is immutable once created - only timers change.
-// We cache the full block + channel state in memory, hitting DB only on:
-//   - Phase transitions (when block changes)
-//   - Initial load / reconnect
-//   - Cache miss (multi-instance: one instance writes, others may miss)
-//
-// Cache TTL: 500ms (half tick) - stale cache just means extra DB read on next tick,
-//             not incorrect data.
-// ---------------------------------------------------------------------------
-
-interface CachedChannelState {
-  currentPhase: string;
-  phaseEndsAt: Date;
-  decisionEndsAt: Date;
-  initialTimeToDecision: number;
-  turnsToNextChoice: number;
-  currentBlockId: number | null;
-  activeSessionId: number | null;
-}
-
-// Alias for readability - cache uses 'phase' but DB returns 'currentPhase'
-const getPhase = (state: CachedChannelState): string => state.currentPhase;
-
-interface CachedBlock {
-  id: number;
-  channelId: string;
-  sessionId: number;
-  title: string;
-  content: string;
-  imageUrl: string;
-  optionA: unknown;
-  optionB: unknown;
-  createdAt: Date;
-}
-
-interface ChannelCacheEntry {
-  state: CachedChannelState;
-  block: CachedBlock | null;
-  lastUpdated: number; // timestamp for TTL checking
-}
-
-// Per-channel in-memory cache - survives across ticks, refreshed on transitions
-const channelCache = new Map<ChannelId, ChannelCacheEntry>();
-
-// Cache TTL: 500ms - effectively fresh between ticks, but safe if an instance
-// that created the cache dies (another instance will rebuild on next tick)
-const CACHE_TTL_MS = 500;
-
-function updateChannelCache(
-  channelId: ChannelId,
-  state: CachedChannelState,
-  block: CachedBlock | null,
-) {
-  channelCache.set(channelId, {
-    state,
-    block,
-    lastUpdated: Date.now(),
-  });
-}
-
-function getCachedBlock(channelId: ChannelId): CachedBlock | null {
-  const entry = channelCache.get(channelId);
-  if (!entry) return null;
-
-  if (Date.now() - entry.lastUpdated > CACHE_TTL_MS) {
-    channelCache.delete(channelId);
-    return null;
-  }
-  return entry.block;
-}
-
-function getCachedState(channelId: ChannelId): CachedChannelState | null {
-  const entry = channelCache.get(channelId);
-  if (!entry) return null;
-
-  if (Date.now() - entry.lastUpdated > CACHE_TTL_MS) {
-    channelCache.delete(channelId);
-    return null;
-  }
-  return entry.state;
-}
+// Re-export for tests
+export { NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS, LOBBY_DELAY_MS, START_BEFORE_MS, AFTERPARTY_MS, computeDecisionEndsAt, clearChannelCache } from "../game-loop/channel-tick";
 
 /**
  * Validates that the WebSocket is registered to a channel.
@@ -189,229 +62,11 @@ export function getChannelIdForWs(
 }
 
 // ---------------------------------------------------------------------------
-// Pre-generation — fire-and-forget writes to the pending_blocks table.
-//
-// The old code stashed Promises in ChannelIdState.nextBlockA/B.  Those die
-// with the process.  Now we write the result to the DB so any instance
-// (or a restarted instance) can consume it at resolution time.
-// ---------------------------------------------------------------------------
-
-function pregenerateOption(
-  channelId: ChannelId,
-  currentBlock: Block,
-  option: "A" | "B",
-): void {
-  const opt = option === "A" ? currentBlock.optionA : currentBlock.optionB;
-  const optData = opt as { label?: string; description?: string } | null;
-  const winnerText = `${optData?.label || `Choice ${option}`}: ${optData?.description || `The readers chose option ${option}`}`;
-  const previousContext = `Previous event: ${currentBlock.content}\nThe readers chose: ${winnerText}`;
-
-  (async () => {
-    try {
-      // Guard against duplicate work after a restart that resumes mid-tick.
-      const existing = await storage.getPendingBlock(currentBlock.id, option);
-      if (existing) return;
-
-      const nextContent = await generateStoryBlock(channelId, previousContext);
-      let imageUrl: string;
-      try {
-        imageUrl = await generateAndUploadStoryImage(
-          nextContent.content,
-          channelId,
-          "pending",
-        );
-      } catch (imageErr) {
-        logger.warn(
-          `Image generation failed for ${channelId} option ${option}, using fallback`,
-          "ai",
-          imageErr,
-        );
-        imageUrl =
-          (await storage.getPreviousImage(channelId)) ||
-          "/images/img_1771936309521_ieycq2.jpg";
-      }
-
-      await storage.savePendingBlock({
-        channelId,
-        forBlockId: currentBlock.id,
-        choice: option,
-        ...nextContent,
-        imageUrl,
-      });
-      logger.debug(
-        `Saved pending block for ${channelId} option ${option} (forBlock ${currentBlock.id})`,
-        "ai",
-      );
-    } catch (err) {
-      logger.error(
-        `Failed to pregenerate option ${option} for ${channelId}`,
-        "routes",
-        err instanceof Error ? err : new Error(String(err)),
-      );
-      // Non-fatal — the game loop has an inline-generation fallback when the
-      // pending row is absent at resolution time.
-    }
-  })();
-}
-
-// ---------------------------------------------------------------------------
-// Session lifecycle
-// ---------------------------------------------------------------------------
-
-async function startSessionForChannelId(
-  channelId: ChannelId,
-  session: Session,
-  broadcast: (channelId: ChannelId, message: WsMessage) => void,
-) {
-  logger.info(
-    `Starting session "${session.title}" for channel ${channelId}`,
-    "session",
-  );
-
-  // Seed or resume: get current block for active session, or last block from previous session
-  let block = await storage.getCurrentBlock(channelId);
-  let previousContext = "";
-
-  // If no current block, try to get the last block from previous sessions
-  if (!block) {
-    const lastBlock = await storage.getLastBlock(channelId);
-    if (lastBlock) {
-      // Resume from previous session - use last block as context for story continuation
-      previousContext = `The story continues from where it left off:\n${lastBlock.content}`;
-      block = lastBlock;
-    }
-  }
-
-  // If still no block, generate new one using session description
-  if (!block) {
-    const initialPrompt = session.description ?? "";
-    try {
-      const nextContent = await generateStoryBlock(
-        channelId,
-        initialPrompt,
-        false,
-        session.id,
-      );
-      let imageUrl: string;
-      try {
-        imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
-      } catch {
-        imageUrl =
-          (await storage.getRandomImage(channelId)) ||
-          "/images/img_1771936309521_ieycq2.jpg";
-      }
-      block = await storage.createBlock({
-        channelId,
-        sessionId: session.id,
-        ...nextContent,
-        imageUrl,
-      });
-    } catch (err) {
-      logger.error(
-        "Failed to generate initial block",
-        "session",
-        err instanceof Error ? err : new Error(String(err)),
-      );
-      block = await storage.createBlock({
-        channelId,
-        sessionId: session.id,
-        title: "System Reboot",
-        content:
-          "The story system encountered an anomaly and is attempting to reboot.",
-        imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-        ttsEnabled: false,
-        optionA: { label: "Reboot", description: "Attempt a system reboot." },
-        optionB: {
-          label: "Wait",
-          description: "Wait for the anomaly to clear.",
-        },
-      });
-    }
-  } else if (previousContext) {
-    // We have a block from previous session - generate next block continuing the story
-    try {
-      const nextContent = await generateStoryBlock(
-        channelId,
-        previousContext,
-        false,
-        session.id,
-      );
-      let imageUrl: string;
-      try {
-        imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
-      } catch {
-        imageUrl =
-          (await storage.getPreviousImage(channelId)) ||
-          "/images/img_1771936309521_ieycq2.jpg";
-      }
-      block = await storage.createBlock({
-        channelId,
-        sessionId: session.id,
-        ...nextContent,
-        imageUrl,
-      });
-    } catch (err) {
-      logger.error(
-        "Failed to generate continuation block",
-        "session",
-        err instanceof Error ? err : new Error(String(err)),
-      );
-      // Keep using the last block as-is
-    }
-  }
-
-  const now = Date.now();
-  const phaseEndsAt = new Date(now + LOBBY_DELAY_MS + POST_VOTE_READING_MS);
-  const turnsToNextChoice = getRandomTurns();
-  const decisionEndsAt = new Date(
-    phaseEndsAt.getTime() + turnsToNextChoice * NARRATIVE_TURN_MS,
-  );
-  const initialTimeToDecision = Math.max(
-    0,
-    decisionEndsAt.getTime() - now - LOBBY_DELAY_MS,
-  );
-
-  // Persist the initial game-loop state so restarts can resume from here.
-  await storage.upsertChannelState(channelId, {
-    currentPhase: "reading",
-    phaseEndsAt,
-    decisionEndsAt,
-    initialTimeToDecision,
-    turnsToNextChoice,
-    currentBlockId: block.id,
-    activeSessionId: session.id,
-  });
-
-  updateChannelCache(
-    channelId,
-    {
-      currentPhase: "reading",
-      phaseEndsAt,
-      decisionEndsAt,
-      initialTimeToDecision,
-      turnsToNextChoice,
-      currentBlockId: block.id,
-      activeSessionId: session.id,
-    },
-    block as CachedBlock,
-  );
-
-  // Kick off background pre-generation for both choices.
-  pregenerateOption(channelId, block, "A");
-  pregenerateOption(channelId, block, "B");
-
-  await storage.updateSessionStatus(session.id, "active");
-
-  broadcast(channelId, {
-    type: "SESSION_STATUS",
-    payload: { status: "active", session },
-  });
-}
-
+// Session lifecycle and pre-generation are now in server/game-loop/channel-tick.ts
+// (startSessionForChannelId, pregenerateOption, handleChannelTick, etc.)
 // ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
-
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
@@ -842,7 +497,6 @@ export async function registerRoutes(
   app.get("/api/blocks/history", async (req, res) => {
     const sessionId = Number(req.query.sessionId);
     const notableOnly = req.query.notableOnly === "true";
-    const rawLimit = req.query.limit;
 
     if (!sessionId) {
       return res.status(400).json({
@@ -850,25 +504,8 @@ export async function registerRoutes(
       });
     }
 
-    // Parse and validate limit
-    let limit = 12; // default
-    if (rawLimit !== undefined) {
-      const parsed = Number(rawLimit);
-      if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
-        return res.status(400).json({
-          error: "limit must be a positive integer",
-        });
-      }
-      if (parsed > 200) {
-        return res.status(400).json({
-          error: "limit must not exceed 200",
-        });
-      }
-      limit = parsed;
-    }
-
     try {
-      const blocks = await storage.getReplayBlocks(sessionId, notableOnly, limit);
+      const blocks = await storage.getReplayBlocks(sessionId, notableOnly);
 
       res.json(blocks);
     } catch (error) {
@@ -1136,33 +773,124 @@ export async function registerRoutes(
   });
 
   // ── Game Loop ────────────────────────────────────────────────────────────
-  logger.info("Starting game loop (1-second tick)", "game-loop");
-  setInterval(async () => {
+  // Replaces the old global `setInterval(1000)` that polled ALL channels
+  // every second with:
+  //   1. A RealtimeEngine that runs per-channel timers only while viewers
+  //      are connected (presence-triggered).
+  //   2. A lightweight 30-second watcher that catches channels whose
+  //      sessions are due but have zero viewers (bridging the gap between
+  //      the scheduler creating a session record and the engine activating
+  //      it when the first viewer arrives).
+  // -------------------------------------------------------------------------
+
+  const engine = new RealtimeEngine({
+    tickIntervalMs: 1000,
+    onActivate: async (cid: ChannelId): Promise<ActivationResult> => {
+      // Check if there's an active session already in progress.
+      const cachedState = stateCache.get(cid);
+      if (cachedState?.activeSessionId) {
+        return true; // start ticking immediately
+      }
+
+      // Check if there's a scheduled session due or coming soon.
+      const next = await storage.getNextSession(cid);
+      if (!next) return false; // nothing scheduled at all
+
+      const isDue =
+        Date.now() >= next.scheduledStart.getTime() - START_BEFORE_MS;
+      if (isDue) {
+        // Session is due — start it (lock via the tick's internal mechanism).
+        return true;
+      }
+
+      // Scheduled for the future — set a recheck timer.
+      return {
+        scheduleRecheckAt: next.scheduledStart.getTime() - START_BEFORE_MS,
+      };
+    },
+    onTick: async (cid: ChannelId): Promise<TickResult> => {
+      const result = await handleChannelTick(
+        cid,
+        Date.now(),
+        broadcast,
+        startSessionForChannelId,
+      );
+      return { continue: result.continue };
+    },
+    onDeactivate: async (cid: ChannelId) => {
+      logger.info(`Channel ${cid}: tick engine stopped`, "game-loop");
+    },
+    logger,
+  });
+
+  // Expose so the debug endpoint can check / control the engine.
+  (httpServer as any).__realtimeEngine = engine;
+
+  // Wire WS connections to the engine for presence tracking.
+  const originalConnectionHandler = wss.listeners("connection").pop();
+  wss.removeAllListeners("connection");
+  wss.on("connection", (ws, req) => {
+    // Call original handler first (sets up clientChannelIds, etc.).
+    if (originalConnectionHandler) {
+      originalConnectionHandler(ws, req);
+    }
+
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const channelId = url.searchParams.get("channelId");
+    if (!channelId) return;
+
+    const connectionId = crypto.randomUUID();
+    (ws as any).__connectionId = connectionId;
+
+    engine.addViewer(channelId, connectionId).catch((err) => {
+      logger.error(`Failed to add viewer for ${channelId}`, "ws", err);
+    });
+
+    // Override close to also remove viewer from engine.
+    const originalCloseHandler = ws.listeners("close").pop();
+    ws.removeListener("close", originalCloseHandler as any);
+    ws.on("close", () => {
+      if (originalCloseHandler) (originalCloseHandler as any).call(ws);
+      engine.removeViewer(channelId, connectionId);
+    });
+  });
+
+  // Lightweight 30-second watcher for channels without viewers.
+  // This catches the case where a session is due but no one has connected
+  // yet — it calls handleGameLoopTick which starts the session via the
+  // normal lock-and-start flow, and handleChannelTick will mark it as
+  // continue=true, so the next viewer that arrives will trigger onActivate
+  // and the engine will start ticking the channel.
+  const WATCHER_INTERVAL_MS = 30_000;
+  const watcherTimer = setInterval(async () => {
     try {
       await handleGameLoopTick(Date.now(), broadcast);
     } catch (err) {
       logger.error(
-        "Game loop tick failed",
+        "Game loop watcher failed",
         "game-loop",
         err instanceof Error ? err : new Error(String(err)),
       );
     }
-  }, 1000);
+  }, WATCHER_INTERVAL_MS);
+
+  // For graceful shutdown.
+  (httpServer as any).__cleanupGameLoop = () => {
+    engine.stopAll();
+    clearInterval(watcherTimer);
+  };
+
+  logger.info("Game loop: RealtimeEngine (per-channel, presence-triggered) + 30s watcher", "game-loop");
 
   return httpServer;
 }
 
 // ---------------------------------------------------------------------------
-// Game loop tick — fully DB-backed, safe to run on multiple instances.
+// handleGameLoopTick — thin wrapper for backward compatibility (tests import
+// this with the same signature) and for the 30-second background watcher.
 //
-// Each tick:
-//   1. Reads channel_states from DB for every channel.
-//   2. If a phase transition is due, acquires the advisory lock (atomic UPDATE).
-//      Only one instance will win the lock; others skip and retry next second.
-//   3. Performs the transition (AI generation, block creation, state update).
-//   4. Releases the lock in a `finally` block.
-//   5. During the heartbeat (no transition due), broadcasts current state to
-//      all locally connected WS clients for timer synchronisation.
+// Iterates all active channels and delegates per-channel state-machine logic
+// to handleChannelTick in channel-tick.ts.
 // ---------------------------------------------------------------------------
 
 export async function handleGameLoopTick(
@@ -1177,686 +905,20 @@ export async function handleGameLoopTick(
     );
 
     for (const channel of activeChannelIds) {
-      const channelId = channel.channelId;
-      try {
-        let dbState = getCachedState(channelId);
-
-        if (!dbState) {
-          dbState = await storage.getChannelState(channelId);
-          if (dbState) {
-            const block = dbState.currentBlockId
-              ? await storage.getBlockById(dbState.currentBlockId)
-              : null;
-            updateChannelCache(
-              channelId,
-              {
-                currentPhase: dbState.currentPhase,
-                phaseEndsAt: dbState.phaseEndsAt,
-                decisionEndsAt: dbState.decisionEndsAt,
-                initialTimeToDecision: dbState.initialTimeToDecision,
-                turnsToNextChoice: dbState.turnsToNextChoice,
-                currentBlockId: dbState.currentBlockId,
-                activeSessionId: dbState.activeSessionId,
-              },
-              block as CachedBlock | null,
-            );
-          }
-        }
-
-        // ── Handle Inactive / Scheduled Channels ─────────────────────
-        if (!dbState?.activeSessionId) {
-          const next = await storage.getNextSession(channelId);
-
-          if (next) {
-            const startThreshold =
-              next.scheduledStart.getTime() - START_BEFORE_MS;
-            if (now >= startThreshold) {
-              const isGameLoopLockAcquired = await storage.tryAcquireGameLock(
-                channelId,
-                30_000,
-              );
-              if (!isGameLoopLockAcquired) continue;
-
-              try {
-                await startSessionForChannelId(channelId, next, broadcast);
-              } catch (err) {
-                logger.error(`Failed to start session: ${err}`);
-              }
-            }
-          }
-
-          // ── ADD THIS LINE ──────────────────────────────────────────
-          // This prevents the code below (the Heartbeat) from running
-          // for a channel that doesn't have an active session yet.
-          continue;
-          // ───────────────────────────────────────────────────────────
-        }
-        const activeSession = await storage.getSessionById(
-          dbState.activeSessionId,
-        );
-        if (!activeSession) {
-          // Stale FK — clear it so we don't loop forever on a missing session.
-          await storage.upsertChannelState(channelId, {
-            activeSessionId: null,
-            currentBlockId: null,
-          });
-          continue;
-        }
-
-        // ── Session overrun: enter resolution phase ───────────────────────
-        // Skip if already in afterparty — that follows resolution and leads
-        // to session completion on its own timer.
-        if (
-          dbState.currentPhase !== "resolution" &&
-          dbState.currentPhase !== "afterparty" &&
-          now >= activeSession.scheduledEnd.getTime()
-        ) {
-          const locked = await storage.tryAcquireGameLock(channelId, 90_000);
-          if (!locked) continue;
-          try {
-            logger.info(
-              `Session "${activeSession.title}" reaching scheduled end. Entering resolution.`,
-              "session",
-            );
-
-            let resolutionBlockId = dbState.currentBlockId;
-            const currentBlock = dbState.currentBlockId
-              ? await storage.getBlockById(dbState.currentBlockId)
-              : null;
-
-            if (currentBlock) {
-              try {
-                const previousContext = `Previous event: ${currentBlock.content}`;
-                const nextContent = await generateStoryBlock(
-                  channelId,
-                  previousContext,
-                  true,
-                );
-                let imageUrl: string;
-                try {
-                  imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
-                } catch {
-                  imageUrl =
-                    (await storage.getPreviousImage(channelId)) ||
-                    "/images/img_1771936309521_ieycq2.jpg";
-                }
-                const resBlock = await storage.createBlock({
-                  channelId,
-                  sessionId: activeSession.id,
-                  ...nextContent,
-                  imageUrl,
-                });
-                resolutionBlockId = resBlock.id;
-                logger.info(
-                  `Resolution block generated: ${resBlock.id}`,
-                  "gameloop",
-                );
-              } catch (err) {
-                logger.error(
-                  "Failed to generate resolution block",
-                  "gameloop",
-                  err instanceof Error ? err : new Error(String(err)),
-                );
-              }
-            }
-
-            const resPhaseEndsAt = new Date(now + 60_000);
-            await storage.upsertChannelState(channelId, {
-              currentPhase: "resolution",
-              phaseEndsAt: resPhaseEndsAt,
-              decisionEndsAt: resPhaseEndsAt,
-              turnsToNextChoice: 0,
-              initialTimeToDecision: 0,
-              currentBlockId: resolutionBlockId,
-            });
-
-            if (!resolutionBlockId) {
-              break;
-            }
-            const resBlock = await storage.getBlockById(resolutionBlockId);
-            if (!resBlock) {
-              break;
-            }
-            updateChannelCache(
-              channelId,
-              {
-                currentPhase: "resolution",
-                phaseEndsAt: resPhaseEndsAt,
-                decisionEndsAt: resPhaseEndsAt,
-                initialTimeToDecision: 0,
-                turnsToNextChoice: 0,
-                currentBlockId: resolutionBlockId,
-                activeSessionId: activeSession.id,
-              },
-              resBlock as CachedBlock,
-            );
-
-            broadcast(channelId, {
-              type: "SYNC_STATE",
-              payload: {
-                ...resBlock,
-                createdAt:
-                  resBlock.createdAt?.toISOString() ?? new Date().toISOString(),
-                phase: "resolution",
-                timeRemaining: 60_000,
-                timeToNextDecision: 0,
-                initialTimeToNextDecision: 0,
-                turnsToNextChoice: 0,
-                phaseInitialMs: 60_000,
-              },
-            });
-          } finally {
-            await storage.releaseGameLock(channelId);
-          }
-          continue;
-        }
-
-        // ── Resolution ended: enter afterparty phase ──────────────────────
-        if (
-          dbState.currentPhase === "resolution" &&
-          now >= dbState.phaseEndsAt.getTime()
-        ) {
-          const locked = await storage.tryAcquireGameLock(channelId, 10_000);
-          if (!locked) continue;
-          try {
-            logger.info(
-              `Entering afterparty for session "${activeSession.title}" on channel ${channelId}.`,
-              "session",
-            );
-
-            const afterpartyEndsAt = new Date(now + AFTERPARTY_MS);
-            const currentBlock = getCachedBlock(channelId);
-
-            await storage.upsertChannelState(channelId, {
-              currentPhase: "afterparty",
-              phaseEndsAt: afterpartyEndsAt,
-              decisionEndsAt: afterpartyEndsAt,
-            });
-
-            updateChannelCache(
-              channelId,
-              {
-                ...dbState,
-                currentPhase: "afterparty",
-                phaseEndsAt: afterpartyEndsAt,
-                decisionEndsAt: afterpartyEndsAt,
-              },
-              currentBlock as CachedBlock | null,
-            );
-
-            broadcast(channelId, {
-              type: "SYNC_STATE",
-              payload: {
-                ...(currentBlock ?? {}),
-                createdAt:
-                  currentBlock?.createdAt?.toISOString() ??
-                  new Date().toISOString(),
-                phase: "afterparty",
-                timeRemaining: AFTERPARTY_MS,
-                timeToNextDecision: 0,
-                initialTimeToNextDecision: 0,
-                turnsToNextChoice: 0,
-                phaseInitialMs: AFTERPARTY_MS,
-              },
-            });
-          } finally {
-            await storage.releaseGameLock(channelId);
-          }
-          continue;
-        }
-
-        // ── Afterparty ended: mark session complete ───────────────────────
-        if (
-          dbState.currentPhase === "afterparty" &&
-          now >= dbState.phaseEndsAt.getTime()
-        ) {
-          const locked = await storage.tryAcquireGameLock(channelId, 10_000);
-          if (!locked) continue;
-          try {
-            logger.info(
-              `Ending session "${activeSession.title}" for channel ${channelId} after afterparty.`,
-              "session",
-            );
-            await storage.updateSessionStatus(activeSession.id, "completed");
-            await storage.upsertChannelState(channelId, {
-              activeSessionId: null,
-              currentBlockId: null,
-              currentPhase: "reading",
-            });
-
-            // Clear cache on session end
-            channelCache.delete(channelId);
-
-            broadcast(channelId, {
-              type: "SESSION_STATUS",
-              payload: { status: "completed", session: activeSession },
-            });
-          } finally {
-            await storage.releaseGameLock(channelId);
-          }
-          continue;
-        }
-
-        // ── Normal game loop ─────────────────────────────────────────────
-        if (now >= dbState.phaseEndsAt.getTime()) {
-          const locked = await storage.tryAcquireGameLock(channelId, 90_000);
-          if (!locked) continue;
-
-          try {
-            const currentBlock = dbState.currentBlockId
-              ? await storage.getBlockById(dbState.currentBlockId)
-              : null;
-
-            if (dbState.currentPhase === "reading") {
-              if (dbState.turnsToNextChoice > 0) {
-                // ── Narrative turn: advance story without a vote ──────────
-                let nextData: {
-                  title: string;
-                  content: string;
-                  imageUrl: string;
-                  dialogue?: string | null;
-                  optionA?: unknown;
-                  optionB?: unknown;
-                };
-
-                // Prefer the pre-generated pending block for choice A (used as
-                // the default narrative continuation).
-                const pending = currentBlock
-                  ? await storage.getPendingBlock(currentBlock.id, "A")
-                  : null;
-
-                if (pending) {
-                  nextData = {
-                    title: pending.title,
-                    content: pending.content,
-                    imageUrl: pending.imageUrl,
-                    dialogue: pending.dialogue,
-                    optionA: pending.optionA,
-                    optionB: pending.optionB,
-                  };
-                  await storage.deletePendingBlocksForBlock(currentBlock!.id);
-                } else {
-                  // Fallback: generate inline if pre-generation hasn't finished.
-                  const opt = currentBlock?.optionA;
-                  const optData = opt as {
-                    label?: string;
-                    description?: string;
-                  } | null;
-                  const winnerText = `${optData?.label || "Choice A"}: ${optData?.description || "The story continues..."}`;
-                  const previousContext = `${currentBlock?.title ?? ""}\n${currentBlock?.content ?? ""}${winnerText}`;
-                  const nextContent = await generateStoryBlock(
-                    channelId,
-                    previousContext,
-                  );
-                  let imageUrl: string;
-                  try {
-                    imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
-                  } catch {
-                    imageUrl =
-                      (await storage.getPreviousImage(channelId)) ||
-                      "/images/img_1771936309521_ieycq2.jpg";
-                  }
-                  nextData = { ...nextContent, imageUrl };
-                }
-
-                const newBlock = await storage.createBlock({
-                  channelId,
-                  sessionId: activeSession.id,
-                  ...nextData,
-                } as any);
-
-                const newTurns = dbState.turnsToNextChoice - 1;
-                const newPhaseEndsAt = new Date(now + NARRATIVE_TURN_MS);
-                const newDecisionEndsAt = new Date(
-                  newPhaseEndsAt.getTime() + newTurns * NARRATIVE_TURN_MS,
-                );
-
-                await storage.upsertChannelState(channelId, {
-                  currentBlockId: newBlock.id,
-                  turnsToNextChoice: newTurns,
-                  phaseEndsAt: newPhaseEndsAt,
-                  decisionEndsAt: newDecisionEndsAt,
-                });
-
-                updateChannelCache(
-                  channelId,
-                  {
-                    currentPhase: "reading",
-                    phaseEndsAt: newPhaseEndsAt,
-                    decisionEndsAt: newDecisionEndsAt,
-                    initialTimeToDecision: dbState.initialTimeToDecision,
-                    turnsToNextChoice: newTurns,
-                    currentBlockId: newBlock.id,
-                    activeSessionId: activeSession.id,
-                  },
-                  newBlock as CachedBlock,
-                );
-
-                pregenerateOption(channelId, newBlock, "A");
-                pregenerateOption(channelId, newBlock, "B");
-
-                logger.info(
-                  `Advanced story to block ${newBlock.id}`,
-                  "gameloop",
-                );
-                logger.debug(
-                  `Narrative turn. Turns remaining: ${newTurns}, ` +
-                    `Next phase ends at: ${formatInTZ(newPhaseEndsAt.getTime(), "UTC", "h:mm:ss a")} UTC, ` +
-                    `Time to decision: ${Math.round((newDecisionEndsAt.getTime() - now) / 1000)}s`,
-                  "gameloop",
-                );
-
-                broadcast(channelId, {
-                  type: "SYNC_STATE",
-                  payload: {
-                    ...newBlock,
-                    createdAt:
-                      newBlock.createdAt?.toISOString() ??
-                      new Date().toISOString(),
-                    phase: "reading",
-                    timeRemaining: NARRATIVE_TURN_MS,
-                    timeToNextDecision: Math.max(
-                      0,
-                      newDecisionEndsAt.getTime() - now,
-                    ),
-                    initialTimeToNextDecision: dbState.initialTimeToDecision,
-                    turnsToNextChoice: newTurns,
-                    phaseInitialMs: NARRATIVE_TURN_MS,
-                  },
-                });
-              } else {
-                // ── Enter voting phase ────────────────────────────────────
-                const newPhaseEndsAt = new Date(now + VOTING_PHASE_MS);
-                await storage.upsertChannelState(channelId, {
-                  currentPhase: "voting",
-                  phaseEndsAt: newPhaseEndsAt,
-                  decisionEndsAt: newPhaseEndsAt,
-                  initialTimeToDecision: VOTING_PHASE_MS,
-                });
-
-                if (currentBlock) {
-                  updateChannelCache(
-                    channelId,
-                    {
-                      currentPhase: "voting",
-                      phaseEndsAt: newPhaseEndsAt,
-                      decisionEndsAt: newPhaseEndsAt,
-                      initialTimeToDecision: VOTING_PHASE_MS,
-                      turnsToNextChoice: 0,
-                      currentBlockId: currentBlock.id,
-                      activeSessionId: activeSession.id,
-                    },
-                    currentBlock as CachedBlock,
-                  );
-                }
-
-                logger.info(
-                  `ENTERING VOTING PHASE. Ends at: ${formatInTZ(newPhaseEndsAt.getTime(), "UTC", "h:mm:ss a")} UTC`,
-                  "gameloop",
-                );
-
-                if (currentBlock) {
-                  broadcast(channelId, {
-                    type: "SYNC_STATE",
-                    payload: {
-                      ...currentBlock,
-                      createdAt:
-                        currentBlock.createdAt?.toISOString() ??
-                        new Date().toISOString(),
-                      phase: "voting",
-                      timeRemaining: VOTING_PHASE_MS,
-                      timeToNextDecision: VOTING_PHASE_MS,
-                      initialTimeToNextDecision: VOTING_PHASE_MS,
-                      turnsToNextChoice: 0,
-                      phaseInitialMs: VOTING_PHASE_MS,
-                    },
-                  });
-                }
-              }
-            } else if (dbState.currentPhase === "voting") {
-              // ── Voting phase ended: tally and advance ─────────────────
-              const votes = currentBlock
-                ? await storage.getVotesForBlock(currentBlock.id)
-                : [];
-              const countA = votes.filter((v) => v.choice === "A").length;
-              const countB = votes.filter((v) => v.choice === "B").length;
-              const winner: "A" | "B" = countA >= countB ? "A" : "B";
-
-              // Create lore entry for the vote outcome
-              if (currentBlock && activeSession) {
-                const optA = currentBlock.optionA as { label?: string; description?: string } | null;
-                const optB = currentBlock.optionB as { label?: string; description?: string } | null;
-                const winnerLabel = winner === "A"
-                  ? (optA?.label || "Choice A")
-                  : (optB?.label || "Choice B");
-                const loserLabel = winner === "A"
-                  ? (optB?.label || "Choice B")
-                  : (optA?.label || "Choice A");
-                const loreContent = `Vote outcome for block "${currentBlock.title || "untitled"}": "${winnerLabel}" won (A: ${countA}, B: ${countB}) over "${loserLabel}".`;
-                try {
-                  await storage.createLore({
-                    channelId,
-                    content: loreContent,
-                    isActive: true,
-                  });
-                  logger.info(`Created lore entry for vote outcome on block ${currentBlock.id}`, "gameloop");
-                } catch (loreErr) {
-                  logger.error("Failed to create lore for vote outcome", "gameloop", loreErr instanceof Error ? loreErr : new Error(String(loreErr)));
-                }
-              }
-
-              let nextData: {
-                title: string;
-                content: string;
-                imageUrl: string;
-                dialogue?: string | null;
-                ttsEnabled?: boolean;
-                optionA?: unknown;
-                optionB?: unknown;
-              };
-
-              try {
-                const pending = currentBlock
-                  ? await storage.getPendingBlock(currentBlock.id, winner)
-                  : null;
-
-                if (pending) {
-                  nextData = {
-                    title: pending.title,
-                    content: pending.content,
-                    imageUrl: pending.imageUrl,
-                    dialogue: pending.dialogue,
-                    optionA: pending.optionA,
-                    optionB: pending.optionB,
-                  };
-                  await storage.deletePendingBlocksForBlock(currentBlock!.id);
-                } else {
-                  // Fallback: winner's branch wasn't pre-generated in time.
-                  const opt =
-                    winner === "A"
-                      ? currentBlock?.optionA
-                      : currentBlock?.optionB;
-                  const optData = opt as {
-                    label?: string;
-                    description?: string;
-                  } | null;
-                  const winnerText = `${optData?.label || `Choice ${winner}`}: ${optData?.description || `The readers chose option ${winner}`}`;
-                  const previousContext = `Previous event: ${currentBlock?.content ?? ""}\nThe readers chose: ${winnerText}`;
-                  const nextContent = await generateStoryBlock(
-                    channelId,
-                    previousContext,
-                  );
-                  let imageUrl: string;
-                  try {
-                    imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
-                  } catch {
-                    logger.warn(
-                      `Game loop image generation failed for ${channelId}, using fallback`,
-                      "gameloop",
-                    );
-                    imageUrl =
-                      (await storage.getPreviousImage(channelId)) ||
-                      "/images/img_1771936309521_ieycq2.jpg";
-                  }
-                  nextData = { ...nextContent, imageUrl };
-                }
-              } catch (err) {
-                logger.error(
-                  "Failed to adopt next block, advancing with fallback",
-                  "gameloop",
-                  err instanceof Error ? err : new Error(String(err)),
-                );
-                nextData = {
-                  title: "Temporal Distortion",
-                  content:
-                    "A temporal distortion disrupts the timeline. We must re-establish connection.",
-                  imageUrl: "/images/img_1771936309521_ieycq2.jpg",
-                  ttsEnabled: false,
-                  optionA: {
-                    label: "Reconnect",
-                    description: "Attempt to reconnect to the timeline.",
-                  },
-                  optionB: {
-                    label: "Wait",
-                    description: "Wait for the distortion to pass.",
-                  },
-                };
-              }
-
-              const newBlock = await storage.createBlock({
-                channelId,
-                sessionId: activeSession.id,
-                ...nextData,
-              } as any);
-
-              const newTurns = getRandomTurns();
-              const newPhaseEndsAt = new Date(now + POST_VOTE_READING_MS);
-              const newDecisionEndsAt = new Date(
-                newPhaseEndsAt.getTime() + newTurns * NARRATIVE_TURN_MS,
-              );
-
-              await storage.upsertChannelState(channelId, {
-                currentPhase: "reading",
-                currentBlockId: newBlock.id,
-                turnsToNextChoice: newTurns,
-                phaseEndsAt: newPhaseEndsAt,
-                decisionEndsAt: newDecisionEndsAt,
-                initialTimeToDecision: Math.max(
-                  0,
-                  newDecisionEndsAt.getTime() - now,
-                ),
-              });
-
-              updateChannelCache(
-                channelId,
-                {
-                  currentPhase: "reading",
-                  phaseEndsAt: newPhaseEndsAt,
-                  decisionEndsAt: newDecisionEndsAt,
-                  initialTimeToDecision: Math.max(
-                    0,
-                    newDecisionEndsAt.getTime() - now,
-                  ),
-                  turnsToNextChoice: newTurns,
-                  currentBlockId: newBlock.id,
-                  activeSessionId: activeSession.id,
-                },
-                newBlock as CachedBlock,
-              );
-
-              pregenerateOption(channelId, newBlock, "A");
-              pregenerateOption(channelId, newBlock, "B");
-
-              logger.info(
-                `VOTING ENDED. Starting reading phase with ${newTurns} turns. ` +
-                  `Overall ends at: ${formatInTZ(newDecisionEndsAt.getTime(), "UTC", "h:mm:ss a")} UTC`,
-                "gameloop",
-              );
-
-              broadcast(channelId, {
-                type: "SYNC_STATE",
-                payload: {
-                  ...newBlock,
-                  createdAt:
-                    newBlock.createdAt?.toISOString() ??
-                    new Date().toISOString(),
-                  currentPhase: "reading",
-                  timeRemaining: POST_VOTE_READING_MS,
-                  timeToNextDecision: Math.max(
-                    0,
-                    newDecisionEndsAt.getTime() - now,
-                  ),
-                  initialTimeToNextDecision: Math.max(
-                    0,
-                    newDecisionEndsAt.getTime() - now,
-                  ),
-                  turnsToNextChoice: newTurns,
-                  phaseInitialMs: POST_VOTE_READING_MS,
-                },
-              });
-            }
-          } catch (err) {
-            logger.error(
-              `Game loop transition error for ${channelId}`,
-              "gameloop",
-              err instanceof Error ? err : new Error(String(err)),
-            );
-          } finally {
-            await storage.releaseGameLock(channelId);
-          }
-        } else {
-          // Heartbeat broadcast — every tick, send current state so clients
-          // keep their timers in sync.  If the block is temporarily unavailable
-          // (cold cache + DB hiccup) we skip this tick — the next tick (1s
-          // later) will retry.  Broadcasting empty block fields would overwrite
-          // the client's valid block cache with id=0 / null content.
-          let blockForHeartbeat = getCachedBlock(channelId);
-          if (!blockForHeartbeat && dbState.currentBlockId) {
-            try {
-              const fetched = await storage.getBlockById(dbState.currentBlockId);
-              if (fetched) {
-                blockForHeartbeat = fetched as CachedBlock;
-              }
-            } catch {
-              // Non-fatal — skip broadcast this tick.
-            }
-          }
-
-          if (!blockForHeartbeat) {
-            continue;
-          }
-
-          broadcast(channelId, {
-            type: "SYNC_STATE",
-            payload: {
-              ...blockForHeartbeat,
-              createdAt:
-                blockForHeartbeat.createdAt?.toISOString() ??
-                new Date().toISOString(),
-              phase: dbState.currentPhase,
-              timeRemaining: Math.max(0, dbState.phaseEndsAt.getTime() - now),
-              timeToNextDecision: Math.max(
-                0,
-                dbState.decisionEndsAt.getTime() - now,
-              ),
-              initialTimeToNextDecision: dbState.initialTimeToDecision,
-              turnsToNextChoice: dbState.turnsToNextChoice,
-              phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
-            },
-          });
-        }
-      } catch (err) {
-        logger.error(
-          `Unhandled error in game loop for channel ${channelId}`,
-          "gameloop",
-          err instanceof Error ? err : new Error(String(err)),
-        );
-      }
+      const result = await handleChannelTick(
+        channel.channelId,
+        now,
+        broadcast,
+        startSessionForChannelId,
+      );
+      // We don't act on the continue flag here — the watcher is best-effort.
+      // The RealtimeEngine handles proper lifecycle when viewers are present.
+      void result;
     }
   } catch (err) {
     logger.error(
       "Error in game loop tick",
-      "gameloop",
+      "game-loop",
       err instanceof Error ? err : new Error(String(err)),
     );
   }

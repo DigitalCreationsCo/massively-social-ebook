@@ -1,10 +1,10 @@
 {
-  "id": "e5b791b5-305d-453c-918d-7bfd887d5b16",
-  "prevIds": [
-    "516faf5c-46d1-43b0-937e-42193ab8fd0e"
-  ],
   "version": "8",
   "dialect": "postgres",
+  "id": "ba7e6ad1-1f5e-41cd-bdea-31ba858321d9",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -175,6 +175,19 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "name": "dialogue",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "blocks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
       "name": "image_url",
       "entityType": "columns",
       "schema": "public",
@@ -202,6 +215,19 @@
       "generated": null,
       "identity": null,
       "name": "option_b",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "blocks"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "name": "tts_enabled",
       "entityType": "columns",
       "schema": "public",
       "table": "blocks"
@@ -444,6 +470,19 @@
       "table": "channels"
     },
     {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cover_image",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "channels"
+    },
+    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -496,9 +535,22 @@
       "table": "chat"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "block_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "chat"
+    },
+    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
@@ -894,6 +946,19 @@
       "generated": null,
       "identity": null,
       "name": "content",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "pending_blocks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dialogue",
       "entityType": "columns",
       "schema": "public",
       "table": "pending_blocks"
@@ -1665,6 +1730,153 @@
       "nameExplicit": true,
       "columns": [
         {
+          "value": "session_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_blocks_session_created",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "blocks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "is_notable",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_blocks_session_notable_created",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "blocks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "block_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_chat_block",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "chat"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_chat_session",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "chat"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "for_block_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "choice",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_pending_lookup",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "pending_blocks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
           "value": "scheduled_end",
           "isExpression": false,
           "asc": true,
@@ -1706,6 +1918,41 @@
       "method": "btree",
       "concurrently": false,
       "name": "idx_sessions_status_start",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "sessions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "channel_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "scheduled_end",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_session_history_idx",
       "entityType": "indexes",
       "schema": "public",
       "table": "sessions"
@@ -1825,6 +2072,23 @@
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "chat_session_id_sessions_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "chat"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "block_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "blocks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "name": "chat_block_id_blocks_id_fkey",
       "entityType": "fks",
       "schema": "public",
       "table": "chat"
