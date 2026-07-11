@@ -3,10 +3,8 @@ import { useState, useEffect } from "react";
 import { useLiveState } from "@/hooks/use-live-state";
 import { SpeakerButton } from "@/components/SpeakerButton";
 import { useLocation } from "wouter";
-import { useCountdown } from "@shared/hooks/use-countdown";
 import { Storyblock } from "@/components/Storyblock";
 import { DecisionPhase } from "@/components/DecisionPhase";
-import { LiveChat } from "@/components/LiveChat";
 import { PushToggle } from "@/components/pwa/PushToggle";
 import { Loader2, WifiOff, Users } from "lucide-react";
 import { motion } from "framer-motion";
@@ -20,12 +18,6 @@ const STORY_ZONE_HEIGHT = "58dvh";
 export default function LiveEbook() {
   const channelId = DEFAULT_CHANNEL_ID;
 
-  const [chatOpen, setChatOpen] = useState(false);
-  // Tracks how many px the software keyboard is covering at the bottom of the
-  // visual viewport. Derived from window.visualViewport — the only reliable
-  // cross-platform way to get keyboard height on mobile.
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
   const {
     isLoading,
     wsConnected,
@@ -37,13 +29,10 @@ export default function LiveEbook() {
     localInitialTimeToDecision,
     localInitialTimeRemaining,
     localTurnsToNextChoice,
-    chatHistory,
     hasVotedCurrent,
-    submitChat,
     submitVote,
     voteResults,
     viewerCount,
-    mostRecentMessage,
     isSessionLive,
     macroPhase,
     reactions,
@@ -56,42 +45,12 @@ export default function LiveEbook() {
 
   const [_, setLocation] = useLocation();
 
-  // ── Lobby countdown ─────────────────────────────────────────────────────
-  const { timeLeft } = useCountdown(activeSession?.scheduledStart);
-
-  // ── Keyboard height tracking ────────────────────────────────────────────
-  // visualViewport fires "resize" on every frame the keyboard animates.
-  // We derive keyboard height as the difference between the fixed layout
-  // viewport (window.innerHeight) and the shrinking visual viewport.
-  // The `bottom` of the bottom zone is set to this value so the zone
-  // slides up in perfect sync with the keyboard — zero layout shift.
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    const update = () => {
-      setKeyboardHeight(Math.max(0, window.innerHeight - vv.height));
-    };
-
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, []);
-
   // ── Session guard ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!isLoading && wsConnected && !isSessionLive) {
       setLocation("/upcoming");
     }
   }, [isLoading, wsConnected, isSessionLive, setLocation]);
-
-  const handleToggleChat = () => {
-    setChatOpen((prev) => !prev);
-    trackEvent("Live Chat Toggled", { isOpen: !chatOpen, channel: channelId });
-  };
 
   if (isLoading) {
     return (
@@ -106,8 +65,6 @@ export default function LiveEbook() {
 
   const isGathering = macroPhase === "gathering";
   const isAfterparty = macroPhase === "afterparty";
-  const chatForceOpen = isGathering || isAfterparty;
-  const isChatEffectivelyOpen = chatOpen || chatForceOpen;
 
   return (
     <main
@@ -202,14 +159,8 @@ export default function LiveEbook() {
               <p className="text-white/50 font-sans text-sm">
                 You're joining readers from around the world.
                 <br />
-                You can introduce yourself in the chat. The story begins
-                shortly.
+                The story begins shortly.
               </p>
-              {timeLeft && timeLeft !== "Starting..." && (
-                <p className="text-xs text-white font-mono tabular-nums tracking-wider">
-                  Starting in {timeLeft}
-                </p>
-              )}
               <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto" />
             </motion.div>
           </div>
@@ -225,19 +176,13 @@ export default function LiveEbook() {
       {/* ════════════════════════════════════════════════════════════════════
           BOTTOM ZONE
           • Starts at exactly STORY_ZONE_HEIGHT — cannot overlap the story.
-          • `bottom` is driven by keyboardHeight (visualViewport API).
-            The zone slides up in sync with the keyboard animation with no
-            layout shift anywhere else on the page.
-          • Contains DecisionPhase (shrink-0) + LiveChat (fills remainder).
+          • Contains DecisionPhase only.
          ════════════════════════════════════════════════════════════════════ */}
       <section
         aria-label="Controls"
         className="absolute inset-x-0 flex flex-col overflow-hidden bg-black"
         style={{
           top: "50dvh",
-          bottom: keyboardHeight,
-          // Match the OS keyboard animation duration (iOS ~250ms, Android ~220ms)
-          transition: "bottom 0.22s ease",
         }}
       >
         {/* Decision phase — always rendered first (top of bottom zone) */}
@@ -263,20 +208,6 @@ export default function LiveEbook() {
             }
           />
         )}
-
-        {/* Chat — in-flow, expands to fill remaining space when open.
-            No position: fixed. Max height is constrained by the bottom zone,
-            which starts at STORY_ZONE_HEIGHT — physically impossible to
-            overlap the story. */}
-        <LiveChat
-          history={chatHistory}
-          mostRecentMessage={mostRecentMessage}
-          username={username}
-          onSend={submitChat}
-          keepOpen={true}
-          isOpen={isChatEffectivelyOpen}
-          onToggle={handleToggleChat}
-        />
       </section>
     </main>
   );

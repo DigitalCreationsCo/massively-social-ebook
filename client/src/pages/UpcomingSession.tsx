@@ -10,20 +10,10 @@ import {
 } from "@/components/ui/card";
 import { ChevronDown } from "lucide-react";
 import { formatInTZ, isTodayInTZ, isTomorrowInTZ } from "@shared/date";
-import { useCountdown } from "@shared/hooks/use-countdown";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { validateSchemaDates } from "@/lib/validateSchema";
 import { trackEvent } from "@/lib/analytics";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DEFAULT_CHANNEL_ID } from "@/App";
@@ -39,7 +29,6 @@ import {
   useScroll,
   useTransform,
 } from "framer-motion";
-import Timer from "@/components/TImer";
 import { useSessionReplay } from "@shared/hooks/use-session-replay";
 import { Replay } from "@shared/components/Replay";
 import { cn } from "@/lib/utils";
@@ -117,247 +106,23 @@ function CoverImage({
   );
 }
 
-function ReserveSeatButton({
-  channelId,
-  sessionId,
+function ReadEpisodeButton({
   className,
 }: {
-  channelId: string;
-  sessionId?: string;
   className?: string | string[];
 }) {
-  const { toast } = useToast();
-  const [reminding, setReminding] = useState(false);
-  const [email, setEmail] = useState("");
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [subscribeToUpdates, setSubscribeToUpdates] = useState(true);
-  const [subscribeToStories, setSubscribeToStories] = useState(true);
-  const [step, setStep] = useState<1 | 2>(1);
-
-  useEffect(() => {
-    if (!isDialogOpen) {
-      const t = setTimeout(() => setStep(1), 300);
-      return () => clearTimeout(t);
-    }
-  }, [isDialogOpen]);
-
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (step === 1) {
-      if (!email) return;
-      setStep(2);
-    } else {
-      handleReminder();
-    }
-  };
-
-  const handleReminder = async () => {
-    if (!email) return;
-    setReminding(true);
-    trackEvent("Set Reminder Clicked", { channel: channelId, sessionId });
-    try {
-      const res = await fetch(api.sessions.reminder.path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          email,
-          subscribeToUpdates,
-          subscribeToStories,
-        }),
-      });
-
-      if (!res.ok && res.status !== 404) throw new Error("Failed to subscribe");
-
-      const message = await res.json();
-      const description =
-        message.message?.split(". ")[1] ??
-        message.message?.split(". ")[0] ??
-        `You'll receive an email with the next session schedule.`;
-      const title = message.message?.split(". ")[1]
-        ? message.message?.split(". ")[0]
-        : `You're on the list.`;
-
-      trackEvent("Set Reminder Success", {
-        channel: channelId,
-        sessionId,
-        email,
-      });
-      toast({
-        title,
-        description,
-      });
-      setIsDialogOpen(false);
-      setEmail("");
-    } catch (err) {
-      trackEvent("Set Reminder Failed", {
-        channel: channelId,
-        sessionId,
-        error: String(err),
-      });
-      toast({
-        title: "Error",
-        description: "Could not subscribe. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setReminding(false);
-    }
-  };
+  const [_, setLocation] = useLocation();
 
   return (
-    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-      <DialogTrigger asChild>
-        <Button
-          className={cn(
-            "w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]",
-            className,
-          )}
-        >
-          Join Tonight's Story
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="bg-zinc-950 border-white/10 text-white shadow-2xl">
-        <form
-          onSubmit={handleFormSubmit}
-          className="py-2 overflow-visible px-1 -mx-1"
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            {step === 1 && (
-              <motion.div
-                key="step1"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-6"
-              >
-                <DialogHeader>
-                  <DialogTitle className="text-3xl font-serif font-semibold mb-4">
-                    Remind Me
-                  </DialogTitle>
-                  <DialogDescription className="text-white/60 font-sans">
-                    Enter your email address to receive an invitation to
-                    tonight's story.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-3 mt-4">
-                  <Label
-                    htmlFor="email"
-                    className="text-xs tracking-widest text-primary/60 ml-1 hidden"
-                  >
-                    Email Address
-                  </Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="youraddress@email.com"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-                <DialogFooter>
-                  <Button
-                    type="submit"
-                    className="w-full h-16 bg-primary text-primary-foreground font-serif font-semibold text-xl shadow-lg"
-                  >
-                    Continue
-                  </Button>
-                </DialogFooter>
-              </motion.div>
-            )}
-            {step === 2 && (
-              <motion.div
-                key="step2"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-6 mt-4"
-              >
-                <DialogHeader>
-                  <DialogTitle className="text-3xl font-serif font-semibold mb-4">
-                    Subscribe To New Stories
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                    <div className="flex flex-col space-y-1">
-                      <Label className="font-medium text-white">
-                        Subscribe to updates
-                      </Label>
-                      <p className="text-xs text-white/50">
-                        Monthly email about new features
-                      </p>
-                    </div>
-                    <Switch
-                      checked={subscribeToUpdates}
-                      onCheckedChange={setSubscribeToUpdates}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                    <div className="flex flex-col space-y-1">
-                      <Label className="font-medium text-white">
-                        Subscribe to new stories
-                      </Label>
-                      <p className="text-xs text-white/50">
-                        Be notified about new stories
-                      </p>
-                    </div>
-                    <Switch
-                      checked={subscribeToStories}
-                      onCheckedChange={setSubscribeToStories}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between space-x-4 rounded-xl border border-white/5 bg-black/20 p-4">
-                    <div className="flex flex-col space-y-1">
-                      <Label className="text-sm font-medium text-white">
-                        Follow us on X
-                      </Label>
-                    </div>
-                    <a
-                      href="https://x.com/@try25thchapter"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10"
-                      >
-                        Follow
-                      </Button>
-                    </a>
-                  </div>
-                </div>
-
-                <DialogFooter className="flex-col sm:flex-col gap-3">
-                  <Button
-                    type="submit"
-                    disabled={reminding}
-                    className="w-full h-16 bg-primary text-primary-foreground font-serif font-semibold text-xl shadow-lg"
-                  >
-                    Confirm
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setStep(1)}
-                    className="w-full text-white/50 hover:text-white h-12"
-                  >
-                    Back
-                  </Button>
-                </DialogFooter>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <Button
+      onClick={() => setLocation("/")}
+      className={cn(
+        "w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]",
+        className,
+      )}
+    >
+      Read Episode 1
+    </Button>
   );
 }
 
@@ -384,19 +149,6 @@ export default function UpcomingSession() {
     previousSession && previousBlocks && previousBlocks.length > 0;
 
   const replayRef = useRef<HTMLDivElement>(null);
-
-  const { timeLeft, isStarting } = useCountdown(nextSession?.scheduledStart);
-  const timerHelpText = isStarting ? "" : "Starts In";
-
-  // Redirect when the session is in its live window (including status still 'scheduled').
-  useEffect(() => {
-    if (wsConnected && isSessionLive) {
-      setLocation("/");
-    }
-  }, [wsConnected, isSessionLive, setLocation]);
-
-  // If session is active, the user should be redirected anyway, but we show a link
-  const isScheduled = sessionStatus === "scheduled" && nextSession;
 
   // Construct schema params and validate before creating the full JSON-LD object
   const schemaParams = nextSession
@@ -515,330 +267,333 @@ export default function UpcomingSession() {
       <CoverImage src={coverImageUrl} className="scale-[95%] opacity-[0.5]" />
 
       {/* Hero Section */}
-      <section className="relative min-h-screen h-screen max-w-3xl w-full flex items-start justify-center py-2 pb-12 px-6 mb-12 overflow-hidden">
-        <div className="flex flex-col flex-1 max-w-xl min-h-full h-full w-full relative bg-black bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
-          <p className="py-5 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">
-            25th Chapter Presents
-          </p>
-          <Card className="relative z-10 h-full bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden animate-fade-in-up">
-            <CoverImage
-              src={coverImageUrl}
-              parallaxSpeed={0.05}
-              parallaxDirection="down"
-            />
-            <div className="h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50 text-glow-primary" />
-            <CardHeader className="isolate z-10 text-center pb-0 pt-10">
-              <CardDescription className="text-white/80 font-sans text-lg">
-                {isScheduled && (
-                  <span>
-                    {isTodayInTZ(
-                      new Date(nextSession.scheduledStart),
-                      userTimeZone,
-                    )
-                      ? "Today"
-                      : isTomorrowInTZ(
-                            new Date(nextSession.scheduledStart),
-                            userTimeZone,
-                          )
-                        ? "Tomorrow"
-                        : formatInTZ(
-                            new Date(nextSession.scheduledStart),
-                            userTimeZone,
-                            "EEEE, MMMM do",
-                          )}{" "}
-                    at{" "}
-                    {formatInTZ(
-                      new Date(nextSession.scheduledStart),
-                      userTimeZone,
-                      "h:mm a",
-                    )}{" "}
-                    {getTimezoneDisplay(userTimeZone).split(" ")[0]}
-                  </span>
-                )}
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent className="isolate z-10 space-y-10 flex flex-col flex-1 pt-8 pb-12 px-8">
-              <div className="flex flex-col space-y-10">
-                {nextSession && (
-                  <>
-                    <div className="p-8 bg-black/40 rounded-xl border border-white/5 space-y-4 shadow-inner">
-                      <h2 className="text-3xl font-serif font-semibold text-white text-center mb-4 tracking-tight leading-tight">
-                        {nextSession.title}
-                      </h2>
-                      <p className="text-white/50 font-sans leading-relaxed text-center group-hover:text-white/70 transition-colors">
-                        {nextSession.description}
-                      </p>
-                    </div>
-                    <div>
-                      {isStarting ? (
-                        <span className="text-5xl text-center mx-auto font-serif font-semibold text-primary/50 animate-blink">
-                          {timeLeft}
-                        </span>
-                      ) : (
-                        <Timer
-                          timeLeft={timeLeft}
-                          timerHelpText={timerHelpText}
-                        />
-                      )}
-                    </div>
-                  </>
-                )}
-
-                <div className="h-full flex flex-col flex-1 space-y-4">
-                  <ReserveSeatButton
-                    channelId={channelId}
-                    sessionId={nextSession?.id}
-                  />
-
-                  <div className="text-center h-full pt-2">
-                    {previousSessionExists ? (
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          trackEvent("Watch Previous Session Clicked", {
-                            channel: channelId,
-                          });
-                          document
-                            .getElementById("previous-session")
-                            ?.scrollIntoView({ behavior: "smooth" });
-                        }}
-                        className="text-base text-white/50 hover:text-white transition-colors"
-                      >
-                        Watch the previous session →
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        className="font-sans text-sm uppercase tracking-[0.3em] py-6 px-8 transition-all"
-                        onClick={() => {
-                          trackEvent("Preview Chapter Clicked", {
-                            channel: channelId,
-                          });
-                          document
-                            .getElementById("preview")
-                            ?.scrollIntoView({ behavior: "smooth" });
-                        }}
-                      >
-                        Learn More
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="pt-8 border-t border-white/5 text-center">
-                <p className="text-[10px] text-white/20 uppercase tracking-[0.5em]">
-                  The 25th Chapter
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-
-      {/* Previously Aired Section */}
-      {previousSessionExists && (
-        <section
-          id="previous-session"
-          className="w-full min-h-screen h-screen px-6 py-12 mb-12 bg-zinc-950/30"
-        >
-          <div className="max-w-md flex flex-col min-h-full mx-auto space-y-10">
-            <div className="px-6 text-center space-y-3">
-              <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
-                Previously Aired
-              </p>
-
-              <h2 className="text-4xl font-serif font-semibold text-white tracking-tight">
-                Catch up before tonight’s session
-              </h2>
-
-              <p className="text-white/50 max-w-2xl mx-auto font-sans">
-                Replay the previous chapter and experience how the story
-                unfolded.
-              </p>
-            </div>
-
-            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all duration-500 h-full">
-              <div className="flex flex-col flex-1 min-h-full h-full border">
-                <div
-                  ref={replayRef}
-                  className="relative min-h-[300px] h-[300px] bg-black overflow-hidden"
-                >
-                  <Replay
-                    session={previousSession}
-                    blocks={previousBlocks || []}
-                    onPlay={() => {
-                      trackEvent("Replay Started", { channel: channelId });
-                    }}
-                  />
-                  {/* <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" /> */}
-                </div>
-                {/* Content */}
-                {/* Episode One */}
-                {/* Desert Rose: 12 Days Since the Last Rain */}
-                {/* Two friends travel across a foreign country, uncovering secrets and dangers. */}
-                <div className="p-6 lg:p-8 flex flex-col justify-center">
-                  <div className="space-y-4">
-                    <p className="text-xs tracking-[0.3em] uppercase text-primary/50">
-                      {`Episode ${previousSession?.episodeNumber}`}
-                    </p>
-                    <h3 className="text-3xl font-serif font-semibold text-white leading-tight">
-                      {previousSession?.title}
-                    </h3>
-                    <p className="text-white/60 leading-relaxed">
-                      {previousSession?.description}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-row flex-wrap justify-center gap-4">
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  trackEvent("Learn More Clicked", { channel: channelId });
-                  document
-                    .getElementById("preview")
-                    ?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="uppercase text-sm hover:text-white tracking-[0.3em] py-6 px-8 transition-all"
-              >
-                Learn More
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
-      {/* Preview Section */}
-      <section id="preview" className="w-full px-6 mx-auto py-12">
-        <div className="flex flex-col gap-16 justify-center items-center">
-          {/* Mockup Display */}
-          <div className="flex flex-col max-w-md w-full space-y-8 lg:col-start-2">
-            <div className="space-y-4 px-6 mx-auto">
-              <h2 className="text-4xl font-serif font-semibold text-center text-white tracking-tight whitespace-nowrap">
-                The 25th Chapter
-              </h2>
-              <p className="text-white/50 font-sans text-lg max-w-2xl leading-relaxed">
-                Join fellow readers in a live session to unfold the narrative.
-              </p>
-            </div>
-            <div className="relative group flex-grow min-h-0 flex justify-center">
-              <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-60 transition duration-1000 w-full h-full"></div>
-              <img
-                src="/preview/1.png"
-                alt="The 25th Chapter: 25 minutes. One Story."
-                className="relative h-full w-auto object-contain rounded-xl border border-white/5 shadow-3xl bg-zinc-900"
-              />
-            </div>
-          </div>
-
-          <div className="min-h-[80vh]">
-            {/* FAQ Aside */}
-            <aside
-              id="faq"
-              className="border pt-12 pb-16 my-12 w-full max-w-md space-y-12 p-10 rounded-2xl backdrop-blur-sm lg:col-start-3"
+      <section className="relative min-h-screen max-w-6xl w-full flex items-center justify-center py-12 px-6 mb-12 overflow-hidden">
+        <div className="flex flex-col items-center space-y-12 max-w-4xl w-full">
+          {/* Hero Copy */}
+          <div className="text-center space-y-6 z-10">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8 }}
             >
-              <div className=" text-center space-y-4">
-                <h2 className="text-3xl font-serif font-semibold text-white">
-                  FAQ
-                </h2>
-                <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">
-                  Everything you need to know
-                </p>
-              </div>
+              <h1 className="font-serif font-semibold text-5xl md:text-7xl text-white/90 tracking-tight leading-tight">
+                One episode.
+                <br />
+                One mystery.
+                <br />
+                Start now.
+              </h1>
+            </motion.div>
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="text-white/60 font-sans text-lg md:text-xl max-w-2xl mx-auto leading-relaxed"
+            >
+              Premium interactive thrillers released one episode at a time.
+              <br />
+              Read immediately.
+              <br />
+              Follow for the next release.
+            </motion.p>
+          </div>
 
-              <div className="space-y-3">
-                {[
-                  {
-                    id: "session",
-                    q: "What is a 25-minute session?",
-                    a: "Every day is a new chapter. Gather for 25 minutes to read and influence the story in real-time.",
-                  },
-                  {
-                    id: "missed",
-                    q: "Can I read missed chapters?",
-                    a: "All chapters are saved and will be available soon.",
-                  },
-                  {
-                    id: "decisions",
-                    q: "How do decisions work?",
-                    a: "Readers decide on key plot points with a community vote. The path with the most votes becomes part of the story.",
-                  },
-                  {
-                    id: "app",
-                    q: "How can I download the app?",
-                    a: null,
-                  },
-                ].map((faq) => (
-                  <Collapsible
-                    key={faq.id}
-                    open={openFaq === faq.id}
-                    onOpenChange={() =>
-                      setOpenFaq(openFaq === faq.id ? null : faq.id)
-                    }
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-lg p-4 text-left transition-colors hover:bg-white/5 data-[state=open]:bg-white/5">
-                      <h3 className="text-2xl font-serif font-semibold text-white">
-                        {faq.q}
-                      </h3>
-                      <ChevronDown
-                        className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${openFaq === faq.id ? "rotate-180" : ""}`}
-                      />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="overflow-hidden transition-all duration-200 data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-                      <div className="px-4 py-4">
-                        {faq.a ? (
-                          <p className="text-white/50 font-sans text-lg leading-relaxed">
-                            {faq.a}
-                          </p>
-                        ) : (
-                          <div className="space-y-4">
-                            <p className="text-white/50 font-sans text-lg leading-relaxed">
-                              You can add The 25th Chapter to your home screen
-                              for a native app-like experience. Click below for
-                              a simple guide.
-                            </p>
-                            <Link to="/install">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-lg border-white/20 bg-white/5 hover:bg-white/10"
-                              >
-                                Installation Instructions
-                              </Button>
-                            </Link>
-                          </div>
-                        )}
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
+          {/* CTA */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.4 }}
+            className="w-full max-w-md"
+          >
+            <ReadEpisodeButton />
+          </motion.div>
+
+          {/* Phone Mockup */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.8, delay: 0.6 }}
+            className="relative group flex justify-center"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-60 transition duration-1000 w-full h-full"></div>
+            <img
+              src="/preview/1.png"
+              alt="The 25th Chapter Reading Experience"
+              className="relative h-full w-auto object-contain rounded-xl border border-white/5 shadow-3xl bg-zinc-900 max-h-[60vh]"
+            />
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Character Section */}
+      <section className="w-full min-h-screen px-6 py-24 bg-zinc-950/50">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center space-y-4 mb-16">
+            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+              The Investigators
+            </p>
+            <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
+              Meet the protagonists
+            </h2>
+            <p className="text-white/50 max-w-2xl mx-auto font-sans text-lg">
+              Every episode uncovers another piece of the conspiracy.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Character 1 */}
+            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 backdrop-blur-sm">
+              <div className="aspect-[3/4] bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center">
+                <div className="text-center space-y-4 p-8">
+                  <div className="w-32 h-32 mx-auto rounded-full bg-white/5 flex items-center justify-center">
+                    <span className="text-4xl">👤</span>
+                  </div>
+                  <h3 className="text-2xl font-serif font-semibold text-white">
+                    Agent One
+                  </h3>
+                  <p className="text-white/60 font-sans">
+                    She trusts no one.
+                  </p>
+                </div>
               </div>
-            </aside>
+            </div>
+
+            {/* Character 2 */}
+            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 backdrop-blur-sm">
+              <div className="aspect-[3/4] bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center">
+                <div className="text-center space-y-4 p-8">
+                  <div className="w-32 h-32 mx-auto rounded-full bg-white/5 flex items-center justify-center">
+                    <span className="text-4xl">👤</span>
+                  </div>
+                  <h3 className="text-2xl font-serif font-semibold text-white">
+                    Agent Two
+                  </h3>
+                  <p className="text-white/60 font-sans">
+                    He already knows too much.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Footer CTA */}
+      {/* Story Preview Rail */}
+      <section className="w-full px-6 py-24">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center space-y-4 mb-16">
+            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+              Featured Stories
+            </p>
+            <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
+              Explore the collection
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { theme: "Sci-Fi", emoji: "🚀" },
+              { theme: "Crime", emoji: "🔍" },
+              { theme: "Thriller", emoji: "⚡" },
+              { theme: "Mystery", emoji: "🔮" },
+              { theme: "Drama", emoji: "🎭" },
+              { theme: "Adventure", emoji: "🗺️" },
+              { theme: "Conspiracy", emoji: "🕵️" },
+              { theme: "Suspense", emoji: "🎬" },
+            ].map((story) => (
+              <div
+                key={story.theme}
+                className="group relative aspect-[2/3] rounded-xl border border-white/10 bg-gradient-to-br from-zinc-900 to-zinc-950 overflow-hidden cursor-pointer hover:border-primary/50 transition-all"
+              >
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
+                  <span className="text-4xl mb-4">{story.emoji}</span>
+                  <span className="text-white/80 font-serif font-semibold text-center">
+                    {story.theme}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section className="w-full px-6 py-24 bg-zinc-950/50">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center space-y-4 mb-16">
+            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+              How It Works
+            </p>
+            <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
+              Simple. Immersive. Ongoing.
+            </h2>
+          </div>
+
+          <div className="space-y-12">
+            {[
+              {
+                step: "01",
+                title: "Read Episode 1",
+                description: "Start reading immediately. No waiting, no synchronization.",
+              },
+              {
+                step: "02",
+                title: "Follow the Story",
+                description: "Choose to follow an ongoing series for future episode releases.",
+              },
+              {
+                step: "03",
+                title: "Return for New Episodes",
+                description: "Episodes release on a regular cadence. Continue the journey.",
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="flex gap-6 items-start p-8 rounded-2xl border border-white/5 bg-black/40 backdrop-blur-sm"
+              >
+                <span className="text-5xl font-serif font-semibold text-primary/30 flex-shrink-0">
+                  {item.step}
+                </span>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-serif font-semibold text-white">
+                    {item.title}
+                  </h3>
+                  <p className="text-white/60 font-sans text-lg">
+                    {item.description}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Upcoming Social Features */}
+      <section className="w-full px-6 py-24">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center space-y-4 mb-16">
+            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+              Coming Soon
+            </p>
+            <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
+              Upcoming Social Features
+            </h2>
+            <p className="text-white/50 max-w-2xl mx-auto font-sans text-lg">
+              The reading experience will evolve with community features designed
+              to enhance story engagement.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                title: "Reader Notes",
+                description: "Leave notes attached to specific moments in the story. AI ranks the highest quality notes for the community to discover.",
+              },
+              {
+                title: "Predictions",
+                description: "Make predictions about what happens next. See how your theories compare to the community distribution as episodes unfold.",
+              },
+              {
+                title: "Episode Discussions",
+                description: "Join spoiler-safe discussions after finishing each episode. Share theories, favorite moments, and reactions with fellow readers.",
+              },
+            ].map((feature) => (
+              <div
+                key={feature.title}
+                className="p-8 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-sm space-y-4"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-1 text-xs font-mono bg-primary/20 text-primary rounded">
+                    COMING SOON
+                  </span>
+                </div>
+                <h3 className="text-xl font-serif font-semibold text-white">
+                  {feature.title}
+                </h3>
+                <p className="text-white/60 font-sans leading-relaxed">
+                  {feature.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ Section */}
+      <section id="faq" className="w-full px-6 py-24 bg-zinc-950/50">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center space-y-4 mb-16">
+            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+              FAQ
+            </p>
+            <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
+              Everything you need to know
+            </h2>
+          </div>
+
+          <div className="space-y-3">
+            {[
+              {
+                id: "episodes",
+                q: "How do episodes work?",
+                a: "Each story is released in episodes. Episode 1 is available immediately. Future episodes release on a regular cadence. You can follow a story to be notified when new episodes arrive.",
+              },
+              {
+                id: "following",
+                q: "What does following mean?",
+                a: "Following a story means you'll receive notifications when new episodes release. It's not a waitlist—it's tracking an ongoing series you want to continue reading.",
+              },
+              {
+                id: "cost",
+                q: "Is this free?",
+                a: "Episode 1 is always free to read. Future episodes may require following the story or a subscription. Details vary by story.",
+              },
+              {
+                id: "decisions",
+                q: "How do decisions work?",
+                a: "At key moments in the story, you'll make choices that influence how the narrative unfolds. Your decisions shape your unique reading experience.",
+              },
+            ].map((faq) => (
+              <Collapsible
+                key={faq.id}
+                open={openFaq === faq.id}
+                onOpenChange={() =>
+                  setOpenFaq(openFaq === faq.id ? null : faq.id)
+                }
+              >
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-lg p-4 text-left transition-colors hover:bg-white/5 data-[state=open]:bg-white/5">
+                  <h3 className="text-xl font-serif font-semibold text-white">
+                    {faq.q}
+                  </h3>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${openFaq === faq.id ? "rotate-180" : ""}`}
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="overflow-hidden transition-all duration-200 data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+                  <div className="px-4 py-4">
+                    <p className="text-white/50 font-sans text-lg leading-relaxed">
+                      {faq.a}
+                    </p>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA */}
       <section className="relative w-full pt-24 pb-16 px-6 bg-gradient-to-b from-transparent to-zinc-950/80">
-        <CoverImage
-          src={
-            previousBlocks?.[randomIndexBlockWithImage]?.imageUrl ??
-            coverImageUrl
-          }
-        />
-        <div className="max-w-md mx-auto text-center space-y-8 z-10">
+        <CoverImage src={coverImageUrl} />
+        <div className="max-w-md mx-auto text-center space-y-8 z-10 relative">
           <div className="space-y-4">
             <h2 className="text-4xl font-serif font-semibold text-white tracking-tight">
-              The next story starts soon.
+              Episode 1 is available now.
             </h2>
           </div>
           <div className="max-w-sm mx-auto">
-            <ReserveSeatButton
-              className="py-6"
-              channelId={channelId}
-              sessionId={nextSession?.id}
-            />
+            <ReadEpisodeButton className="py-6" />
             <p className="py-5 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">
               The 25th Chapter
             </p>

@@ -2,22 +2,35 @@ import { useQuery } from "@tanstack/react-query";
 import type { Session, Block, ChatMessage } from "@shared/schema";
 
 export interface TailFocusOptions {
-  /** Max blocks to return (default: 12, matches server LIMIT) */
-  numBlocks?: number;
-  /** Percentage into the blocks to start (0-100, default: 50 = middle) */
-  startPercent?: number;
   /**
-   * If true (default): take from `startPercent`-mark to the end.
-   * If false: take `numBlocks` from the beginning.
+   * Max blocks to return (default: 12).
    */
-  fromEnd?: boolean;
+  numBlocks?: number;
+  /**
+   * Query direction (default: 'end').
+   *
+   * - 'end'   → last `numBlocks` blocks of the session.
+   * - 'start' → first `numBlocks` blocks of the session.
+   *
+   * Combined with `startPercent`:
+   *   - 'start' + startPercent → beginning up to the P% mark (up to numBlocks).
+   *   - 'end'   + startPercent → P% mark to the last block (up to numBlocks).
+   */
+  direction?: "start" | "end";
+  /**
+   * Percentage boundary (0–100).
+   * - 'start' mode: return blocks from the beginning up to the P% position.
+   * - 'end'   mode: return blocks from the P% position to the end.
+   * Omit for a pure head/tail query (first or last N blocks).
+   */
+  startPercent?: number;
 }
 
 interface UseSessionReplayHookProps {
   channelId: string;
   requestedSessionId?: number;
   notableOnly?: boolean;
-  /** Optionally narrow which blocks are shown (tail-focus, count cap). */
+  /** Optionally narrow which blocks are shown (direction, count cap, percent pivot). */
   tailFocus?: TailFocusOptions;
 }
 
@@ -39,29 +52,39 @@ interface SessionReplayData {
 }
 
 /**
- * Slice `blocks` to focus on the tail end of a session's history.
- * When `fromEnd` (default): start at the `startPercent` mark (e.g. 50% = middle)
- * and take up to `numBlocks`.
- * When `!fromEnd`: take up to `numBlocks` from the beginning.
+ * Client-side safety cap.
+ * The server applies direction/startPercent logic; this only enforces the
+ * numBlocks ceiling on whatever the server returns.
  */
 function applyTailFocus(
   blocks: BlockWithChats[],
   options?: TailFocusOptions,
 ): BlockWithChats[] {
   if (!options || blocks.length === 0) return blocks;
-
-  const { numBlocks = 12, startPercent = 50, fromEnd = true } = options;
-
-  if (fromEnd) {
-    const startIndex = Math.min(
-      Math.floor(blocks.length * (startPercent / 100)),
-      Math.max(0, blocks.length - 1),
-    );
-    return blocks.slice(startIndex).slice(0, numBlocks);
-  }
-
-  // fromStart mode: take from the beginning
+  const { numBlocks = 12 } = options;
   return blocks.slice(0, numBlocks);
+}
+
+/**
+ * Construct the blocks API URL, encoding all TailFocusOptions as query params
+ * so the server can handle direction and startPercent offset math.
+ */
+function buildBlocksUrl(
+  sessionId: number,
+  notableOnly: boolean,
+  tailFocus?: TailFocusOptions,
+): string {
+  const url = new URL("/api/blocks/history", window.location.origin);
+  url.searchParams.append("sessionId", sessionId.toString());
+  if (notableOnly) url.searchParams.append("notableOnly", "true");
+
+  const { numBlocks = 12, direction = "end", startPercent } = tailFocus ?? {};
+  url.searchParams.append("limit", String(numBlocks));
+  url.searchParams.append("direction", direction);
+  if (startPercent !== undefined)
+    url.searchParams.append("startPercent", String(startPercent));
+
+  return url.toString();
 }
 
 async function fetchSessionReplay(
@@ -77,22 +100,16 @@ async function fetchSessionReplay(
 
   // When we already know the session ID we can fire both requests in parallel.
   if (requestedSessionId) {
-    const blocksUrl = new URL("/api/blocks/history", window.location.origin);
-    blocksUrl.searchParams.append("sessionId", requestedSessionId.toString());
-    if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
-    if (tailFocus?.numBlocks)
-      blocksUrl.searchParams.append("limit", String(tailFocus.numBlocks));
-
-    const [sessionRes, blocksRes] = await Promise.all([
+    const [ sessionRes, blocksRes ] = await Promise.all([
       fetch(sessionUrl.toString()),
-      fetch(blocksUrl.toString()),
+      fetch(buildBlocksUrl(requestedSessionId, notableOnly, tailFocus)),
     ]);
 
     if (sessionRes.status === 404) return { session: null, blocks: [] };
     if (!sessionRes.ok) throw new Error("Failed to fetch session history");
     if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");
 
-    const [session, blocks] = await Promise.all([
+    const [ session, blocks ] = await Promise.all([
       sessionRes.json() as Promise<Session>,
       blocksRes.json() as Promise<BlockWithChats[]>,
     ]);
@@ -107,13 +124,9 @@ async function fetchSessionReplay(
 
   const session = (await sessionRes.json()) as Session;
 
-  const blocksUrl = new URL("/api/blocks/history", window.location.origin);
-  blocksUrl.searchParams.append("sessionId", session.id.toString());
-  if (notableOnly) blocksUrl.searchParams.append("notableOnly", "true");
-  if (tailFocus?.numBlocks)
-    blocksUrl.searchParams.append("limit", String(tailFocus.numBlocks));
-
-  const blocksRes = await fetch(blocksUrl.toString());
+  const blocksRes = await fetch(
+    buildBlocksUrl(session.id, notableOnly, tailFocus),
+  );
   if (!blocksRes.ok) throw new Error("Failed to fetch historical blocks");
 
   const blocks = (await blocksRes.json()) as BlockWithChats[];
@@ -138,7 +151,6 @@ export function useSessionReplay({
     queryFn: () =>
       fetchSessionReplay(channelId, requestedSessionId, notableOnly, tailFocus),
     enabled: !!channelId,
-    staleTime: Infinity,
   });
 
   if (error) {

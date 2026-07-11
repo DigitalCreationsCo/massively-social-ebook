@@ -1,8 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useSessionReplay } from "@shared/hooks/use-session-replay";
-import { Replay } from "@shared/components/Replay";
-import { useAdminToken } from "../../hooks/useAdminToken";
-import { adminFetch } from "../../api/client";
+import { Replay, type ReplayHandle } from "@shared/components/Replay";
 
 interface ReplayDetailProps {
   sessionId: number;
@@ -19,11 +17,16 @@ export default function ReplayDetail({
   sessionId,
   channelId,
 }: ReplayDetailProps) {
-  const { token } = useAdminToken();
+  const replayRef = useRef<ReplayHandle>(null);
   const { session, blocks, isLoading, error } = useSessionReplay({
     channelId,
     requestedSessionId: sessionId,
     notableOnly: false,
+    tailFocus: {
+      numBlocks: 100,
+      startPercent: 70,
+      direction: "end"
+    },
   });
   const [renderStatus, setRenderStatus] = useState<RenderStatus>({
     type: "idle",
@@ -42,19 +45,18 @@ export default function ReplayDetail({
     );
   if (!session || !blocks) return <p>No replay data found.</p>;
 
-  const handleRender = async () => {
+  const handleDownload = async () => {
     setRenderStatus({ type: "loading" });
     try {
-      const res = await adminFetch<{ message: string; status: string }>(
-        `/replays/${sessionId}/render`,
-        token,
-        { method: "POST" },
-      );
-      setRenderStatus({ type: "success", message: res.message });
+      await replayRef.current?.downloadVideo();
+      setRenderStatus({
+        type: "success",
+        message: "Video downloaded successfully",
+      });
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : String(err);
-      console.error("[ReplayDetail] Failed to trigger render:", err, {
+      console.error("[ReplayDetail] Video capture failed:", err, {
         sessionId,
         channelId,
       });
@@ -66,11 +68,11 @@ export default function ReplayDetail({
     <div className="h-full flex flex-col">
       <h2 className="text-lg font-semibold mb-2">{session.title}</h2>
       <div className="flex-1">
-        <Replay session={session} blocks={blocks} />
+        <Replay ref={ replayRef } session={ session } blocks={ blocks } />
       </div>
       <div className="mt-4 space-y-2">
         <button
-          onClick={handleRender}
+          onClick={ handleDownload }
           disabled={renderStatus.type === "loading"}
           className={`px-4 py-2 rounded text-sm ${
             renderStatus.type === "loading"
@@ -79,7 +81,7 @@ export default function ReplayDetail({
           }`}
         >
           {renderStatus.type === "loading"
-            ? "Starting render..."
+            ? "Recording video..."
             : "Download MP4"}
         </button>
         {renderStatus.type === "success" && (
@@ -87,7 +89,7 @@ export default function ReplayDetail({
         )}
         {renderStatus.type === "error" && (
           <p className="text-red-500 text-sm">
-            Failed to start rendering: {renderStatus.message}
+            Download failed: { renderStatus.message }
           </p>
         )}
       </div>

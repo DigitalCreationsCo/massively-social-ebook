@@ -13,6 +13,9 @@ interface DecisionPhaseProps {
   turnsToNextChoice: number;
   hasVoted: boolean;
   onVote: (choice: "A" | "B") => void;
+  onFollow?: () => void;
+  isFollowing?: boolean;
+  followerCount?: number;
   optionA?: VoteOption | null;
   optionB?: VoteOption | null;
   voteResults: VoteResults;
@@ -26,6 +29,9 @@ export function DecisionPhase({
   turnsToNextChoice,
   hasVoted,
   onVote,
+  onFollow,
+  isFollowing,
+  followerCount,
   optionA,
   optionB,
   voteResults,
@@ -122,7 +128,7 @@ export function DecisionPhase({
                 animate={{ opacity: 1 }}
                 className="flex items-center gap-2 text-primary font-bold tracking-[0.2em]"
               >
-                The Story Is Closing
+                Episode Complete
               </motion.div>
             )}
           </div>
@@ -207,6 +213,47 @@ export function DecisionPhase({
               </div>
             </motion.div>
           )}
+        </motion.div>
+      )}
+
+      {/* End of Episode Follow Flow */}
+      {phase === "resolution" && onFollow && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="px-4 pb-4 md:px-8 relative z-10"
+        >
+          <div className="bg-black/40 backdrop-blur-md border border-white/10 px-6 py-6 rounded-2xl space-y-4">
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-serif font-semibold text-white">
+                Episode 2 releases Tuesday
+              </h3>
+              <p className="text-white/60 font-sans text-sm">
+                Follow to receive Episode 2
+              </p>
+            </div>
+            
+            {followerCount && (
+              <div className="text-center">
+                <p className="text-xs text-white/40 font-mono">
+                  Join {followerCount.toLocaleString()} readers following this story
+                </p>
+              </div>
+            )}
+
+            {!isFollowing ? (
+              <button
+                onClick={onFollow}
+                className="w-full py-3 px-6 rounded-xl font-serif text-lg border-2 border-primary/30 text-primary hover:border-primary hover:bg-primary/10 transition-all duration-300"
+              >
+                Follow This Story
+              </button>
+            ) : (
+              <div className="w-full py-3 px-6 rounded-xl font-serif text-lg border-2 border-primary/20 bg-primary/5 text-primary/60 text-center">
+                ✓ Following
+              </div>
+            )}
+          </div>
         </motion.div>
       )}
 

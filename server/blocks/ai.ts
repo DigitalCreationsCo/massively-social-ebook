@@ -249,10 +249,10 @@ export async function generateStoryImage(description: string): Promise<string> {
   const response = await ai.models.generateContent({
     model: lmParamsGoogle.imageModel,
     contents: [
-      { inlineData: baseInlineData },
-      { inlineData: subject1InlineData },
-      { inlineData: subject2InlineData },
-      { inlineData: subject3InlineData },
+      // { inlineData: baseInlineData },
+      // { inlineData: subject1InlineData },
+      // { inlineData: subject2InlineData },
+      // { inlineData: subject3InlineData },
       prompt
     ],
     config: {

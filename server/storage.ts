@@ -246,63 +246,90 @@ export class DatabaseStorage implements IStorage {
     sessionId: number,
     notableOnly: boolean,
     limit: number = 12,
+    direction: "start" | "end" = "end",
+    startPercent?: number,
   ): Promise<BlockWithChats[]> {
-    // Clamp to a safe range
     const safeLimit = Math.max(1, Math.min(limit, 200));
 
-    // const cacheKey = buildReplayCacheKey(sessionId, notableOnly, safeLimit);
-    // const cached = replayCache.get(cacheKey);
+    const whereCondition = notableOnly
+      ? and(eq(blocks.sessionId, sessionId), eq(blocks.isNotable, true))
+      : eq(blocks.sessionId, sessionId);
 
-    // if (cached) {
-    //   return cached.data;
-    // }
-
-    // 1. Fetch blocks using the stable composite index scan
-    let queryConditions: Partial<Record<keyof typeof blocks, any>> = {
-      sessionId: Number(sessionId),
+    const selectFields = {
+      id: blocks.id,
+      sessionId: blocks.sessionId,
+      title: blocks.title,
+      content: blocks.content,
+      imageUrl: blocks.imageUrl,
+      optionA: blocks.optionA,
+      optionB: blocks.optionB,
+      isNotable: blocks.isNotable,
+      createdAt: blocks.createdAt,
     };
 
-    if (notableOnly === true) {
-      queryConditions = { ...queryConditions, isNotable: true };
+    // ── startPercent cases ────────────────────────────────────────────────────
+    // These need total row count so we can convert the percentage to an offset.
+    if (startPercent !== undefined) {
+      const [ { total } ] = await db
+        .select({ total: sql<number>`cast(count(*) as integer)` })
+        .from(blocks)
+        .where(whereCondition);
+
+      const pivotIndex = Math.floor(total * (startPercent / 100));
+
+      if (direction === "start") {
+        // beginning → P% mark (up to safeLimit rows).
+        const rowsToFetch = Math.min(safeLimit, pivotIndex);
+        if (rowsToFetch === 0) return [];
+
+        const rows = await db
+          .select(selectFields)
+          .from(blocks)
+          .where(whereCondition)
+          .orderBy(asc(blocks.createdAt))
+          .limit(rowsToFetch);
+
+        return rows.map((block) => ({ ...block, chats: [] }));
+      }
+
+      // direction === "end": P% mark → last block (up to safeLimit rows).
+      const offset = Math.min(pivotIndex, Math.max(0, total - 1));
+      const rows = await db
+        .select(selectFields)
+        .from(blocks)
+        .where(whereCondition)
+        .orderBy(asc(blocks.createdAt))
+        .offset(offset)
+        .limit(safeLimit);
+
+      return rows.map((block) => ({ ...block, chats: [] }));
     }
 
-    const replayBlocks = await db
-      .select({
-        id: blocks.id,
-        sessionId: blocks.sessionId,
-        title: blocks.title,
-        content: blocks.content,
-        imageUrl: blocks.imageUrl,
-        optionA: blocks.optionA,
-        optionB: blocks.optionB,
-        isNotable: blocks.isNotable,
-        createdAt: blocks.createdAt,
-      })
+    // ── Pure head/tail queries — no count needed ──────────────────────────────
+
+    if (direction === "start") {
+      // First safeLimit blocks.
+      const rows = await db
+        .select(selectFields)
+        .from(blocks)
+        .where(whereCondition)
+        .orderBy(asc(blocks.createdAt))
+        .limit(safeLimit);
+
+      return rows.map((block) => ({ ...block, chats: [] }));
+    }
+
+    // direction === "end" (default): last safeLimit blocks, returned in asc order.
+    const rows = await db
+      .select(selectFields)
       .from(blocks)
-      .where(
-        notableOnly
-          ? and(eq(blocks.sessionId, sessionId), eq(blocks.isNotable, true))
-          : eq(blocks.sessionId, sessionId),
-      )
-      .orderBy(asc(blocks.createdAt))
+      .where(whereCondition)
+      .orderBy(desc(blocks.createdAt))
       .limit(safeLimit);
 
-    if (replayBlocks.length === 0) {
-      return [];
-    }
-
-    const result: BlockWithChats[] = replayBlocks.map((block) => ({
-      ...block,
-      chats: [],
-    }));
-
-    // replayCache.set(cacheKey, {
-    //   data: result,
-    //   createdAt: Date.now(),
-    // });
-
-    return result;
+    return rows.reverse().map((block) => ({ ...block, chats: [] }));
   }
+
 
   async getVotesForBlock(blockId: number): Promise<Vote[]> {
     return await db.select().from(votes).where(eq(votes.blockId, blockId));
@@ -369,6 +396,22 @@ export class DatabaseStorage implements IStorage {
     if (validImages.length === 0) return null;
 
     return validImages[Math.floor(Math.random() * validImages.length)];
+  }
+
+  async getPreviousImage(channelId: string): Promise<string | null> {
+    const allWithImages = await db
+      .select({ imageUrl: blocks.imageUrl })
+      .from(blocks)
+      .innerJoin(sessions, eq(blocks.sessionId, sessions.id))
+      .where(eq(sessions.channelId, channelId))
+      .limit(100);
+
+    const validImages = allWithImages
+      .map((b) => b.imageUrl)
+      .filter((url): url is string => !!url);
+    if (validImages.length === 0) return null;
+
+    return validImages.at(-1) ?? null;
   }
 
   async getBlockCount(channelId: string): Promise<number> {

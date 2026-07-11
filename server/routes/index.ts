@@ -227,7 +227,7 @@ function pregenerateOption(
           imageErr,
         );
         imageUrl =
-          (await storage.getRandomImage(channelId)) ||
+          (await storage.getPreviousImage(channelId)) ||
           "/images/img_1771936309521_ieycq2.jpg";
       }
 
@@ -341,7 +341,7 @@ async function startSessionForChannelId(
         imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
       } catch {
         imageUrl =
-          (await storage.getRandomImage(channelId)) ||
+          (await storage.getPreviousImage(channelId)) ||
           "/images/img_1771936309521_ieycq2.jpg";
       }
       block = await storage.createBlock({
@@ -1277,7 +1277,7 @@ export async function handleGameLoopTick(
                   imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
                 } catch {
                   imageUrl =
-                    (await storage.getRandomImage(channelId)) ||
+                    (await storage.getPreviousImage(channelId)) ||
                     "/images/img_1771936309521_ieycq2.jpg";
                 }
                 const resBlock = await storage.createBlock({
@@ -1493,7 +1493,7 @@ export async function handleGameLoopTick(
                     imageUrl = await generateAndUploadStoryImage(nextContent.content, channelId, "block");
                   } catch {
                     imageUrl =
-                      (await storage.getRandomImage(channelId)) ||
+                      (await storage.getPreviousImage(channelId)) ||
                       "/images/img_1771936309521_ieycq2.jpg";
                   }
                   nextData = { ...nextContent, imageUrl };
@@ -1695,7 +1695,7 @@ export async function handleGameLoopTick(
                       "gameloop",
                     );
                     imageUrl =
-                      (await storage.getRandomImage(channelId)) ||
+                      (await storage.getPreviousImage(channelId)) ||
                       "/images/img_1771936309521_ieycq2.jpg";
                   }
                   nextData = { ...nextContent, imageUrl };

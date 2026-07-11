@@ -10,12 +10,23 @@ import {
 import type { PlayerRef } from "@remotion/player";
 import { Player } from "@remotion/player";
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from "react";
+
+export interface ReplayHandle {
+  /**
+   * Captures the current Remotion Player canvas as a video file
+   * and triggers a browser download. Plays through the full video in
+   * real time to capture all frames.
+   */
+  downloadVideo: () => Promise<void>;
+}
 
 interface ReplayProps {
   blocks: BlockWithChats[];
@@ -99,7 +110,6 @@ function SplashScene() {
           transform: `scale(${scale})`,
           color: "white",
           fontSize: 72,
-          fontWeight: 700,
           fontFamily: '"Playfair Display", serif',
           letterSpacing: "0.05em",
         }}
@@ -288,7 +298,8 @@ function FinalFadeScene() {
 
 // ── Player wrapper ─────────────────────────────────────────────────────
 
-export const Replay = ({ blocks, onPlay }: ReplayProps) => {
+export const Replay = forwardRef<ReplayHandle, ReplayProps>(
+  ({ blocks, onPlay }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<PlayerRef>(null);
   const onPlayRef = useRef(onPlay);
@@ -421,6 +432,88 @@ export const Replay = ({ blocks, onPlay }: ReplayProps) => {
     [blocks, blockDurations, cumulativeStarts, fadeOutStart],
   );
 
+  // ── Expose downloadVideo via ref ──
+  useImperativeHandle(
+    ref,
+    () => ({
+      downloadVideo: async (): Promise<void> => {
+        // Wait for the Player's canvas to be in the DOM (images
+        // preloading, Player mount, and Remotion canvas creation
+        // are all async).  Poll up to 30 s so the button works even
+        // when clicked before the Player is fully ready.
+        let canvas: HTMLCanvasElement | null = null;
+        for (let attempt = 0; attempt < 300; attempt++) {
+          canvas =
+            containerRef.current?.querySelector<HTMLCanvasElement>(
+              "canvas",
+            ) ?? null;
+          if (canvas) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (!canvas) {
+          throw new Error(
+            "Player canvas not available – the player may have failed to initialise",
+          );
+        }
+
+        // Capture the canvas as a video stream at the replay's FPS
+        const stream = canvas.captureStream(FPS);
+
+        // Pick the best supported container format
+        const mimeType = MediaRecorder.isTypeSupported(
+          "video/webm;codecs=vp9",
+        )
+          ? "video/webm;codecs=vp9"
+          : MediaRecorder.isTypeSupported("video/webm")
+            ? "video/webm"
+            : "video/mp4";
+
+        return new Promise<void>((resolve, reject) => {
+          const chunks: Blob[] = [];
+
+          const recorder = new MediaRecorder(stream, { mimeType });
+
+          recorder.ondataavailable = (e: BlobEvent) => {
+            if (e.data.size > 0) chunks.push(e.data);
+          };
+
+          recorder.onerror = () => {
+            stream.getTracks().forEach((t) => t.stop());
+            reject(new Error("Video recording failed"));
+          };
+
+          recorder.onstop = () => {
+            stream.getTracks().forEach((t) => t.stop());
+            const blob = new Blob(chunks, { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `session-replay.${mimeType.includes("mp4") ? "mp4" : "webm"}`;
+            a.click();
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+
+          // Start recording
+          recorder.start();
+
+          // Listen for when the player finishes
+          const onEnded = () => {
+            playerRef.current?.removeEventListener("ended", onEnded);
+            recorder.stop();
+          };
+
+          playerRef.current?.addEventListener("ended", onEnded);
+
+          // Seek to start and begin playback to feed frames into the recorder
+          playerRef.current?.seekTo(0);
+          playerRef.current?.play();
+        });
+      },
+    }),
+    [totalFrames],
+  );
+
   // Nothing meaningful to show — bail
   if (totalFrames <= SPLASH_FRAMES + FADE_OUT_FRAMES) return null;
 
@@ -451,4 +544,4 @@ export const Replay = ({ blocks, onPlay }: ReplayProps) => {
       />
     </div>
   );
-};
+});
