@@ -87,6 +87,18 @@ cp .env.example .env
     - **5-Minute Push Warning**: Urgent "Go-Time" alerts to minimize attendance leak.
 - **Session Resolution Phase** — Sessions end with a dedicated `resolution` phase where the AI generates a dramatic cliffhanger or intriguing ending, ensuringstories don't just cut off abruptly.
 - **Automated Session Scheduling** — Integrated a recurring scheduler that automatically seeds daily story sessions (Sci-Fi and Mystery) if none are scheduled.
+
+### Episode Generation Requirements
+For the scheduler to automatically generate story episodes, the following must be configured:
+
+1. **Channel Configuration**: A record must exist in the `channels` database table.
+2. **Active Schedule**: An enabled schedule record must exist for the channel in the `schedules` table with `interval_enabled = true`, and properly defined `scheduled_days` and `scheduled_time`.
+3. **Background Scheduler**: The server process must be running with the `SessionScheduler` active (initialized via `startRecurringScheduler()` at startup).
+4. **AI Generation Services**:
+   - Text generation: Access to the configured AI model for block creation (Default: 20 blocks per episode).
+   - Image generation/upload: Access to the configured image generation and GCS upload service.
+
+*Generation Details*: Blocks are generated sequentially in a batch to maintain narrative context (Default duration: 25 minutes per session).
 - **Admin & Debug Security** — Token-based protection (`x-admin-token`) for all sensitive admin management and debug endpoints.
 - **Admin App Subdomain Routing** — Serves the built admin app automatically on the root of the `control.25thchapter.com` production subdomain, or from `/admin` (non-API) on other domains.
 - **Basic Auth Protection** — Enforces secure Basic Authentication on the admin app using the `ADMIN_PASSWORD` env variable.
