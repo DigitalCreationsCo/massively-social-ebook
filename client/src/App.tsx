@@ -6,8 +6,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
+import { AuthProvider } from "@/hooks/use-auth";
 import LiveEbook from "@/pages/LiveEbook";
-import UpcomingSession from "@/pages/UpcomingSession";
+import LandingPage from "@/pages/UpcomingSession";
 import { VersionOverlay } from "@/components/VersionOverlay";
 import Install from "@/pages/Install";
 import About from "@/pages/About";
@@ -28,8 +29,8 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/" component={LiveEbook} />
-      <Route path="/upcoming" component={() => <UpcomingSession />} />
+      <Route path="/" component={LandingPage} />
+      <Route path="/read" component={LiveEbook} />
       <Route path="/install" component={Install} />
       <Route path="/about" component={About} />
       <Route component={NotFound} />
@@ -41,10 +42,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <UpdatePrompt />
-        <Router />
-        <VersionOverlay />
+        <AuthProvider>
+          <Toaster />
+          <UpdatePrompt />
+          <Router />
+          <VersionOverlay />
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

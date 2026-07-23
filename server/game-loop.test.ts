@@ -1,21 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   handleGameLoopTick,
-  computeDecisionEndsAt,
+  READING_SEGMENT_MS,
+  START_BEFORE_MS,
+  LOBBY_DELAY_MS,
   clearChannelCache,
-  NARRATIVE_TURN_MS,
-  VOTING_PHASE_MS,
-  POST_VOTE_READING_MS,
-  AFTERPARTY_MS,
 } from './routes/index';
 import { storage } from './storage';
-import * as ai from './blocks/ai';
+import * as batchGenerate from './blocks/batch-generate';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
-
-const { mockGenerateAndUploadImage } = vi.hoisted(() => ({
-  mockGenerateAndUploadImage: vi.fn(),
-}));
 
 vi.mock('./storage', () => ({
   storage: {
@@ -25,29 +19,28 @@ vi.mock('./storage', () => ({
     getSessionById: vi.fn(),
     tryAcquireGameLock: vi.fn(),
     releaseGameLock: vi.fn(),
-    createBlock: vi.fn(),
-    getBlockById: vi.fn(),
-    getVotesForBlock: vi.fn(),
-    getRandomImage: vi.fn(),
-    updateSessionStatus: vi.fn(),
     upsertChannelState: vi.fn(),
-    createLore: vi.fn(),
-    getPendingBlock: vi.fn(),
-    deletePendingBlocksForBlock: vi.fn(),
+    updateSessionStatus: vi.fn(),
+    getBlocksBySessionOrdered: vi.fn(),
   },
 }));
 
-vi.mock('./blocks/ai', () => ({
-  generateStoryBlock: vi.fn(),
+vi.mock('./blocks/batch-generate', () => ({
+  batchGenerateBlocks: vi.fn().mockResolvedValue({ blocksGenerated: 5, blocksFailed: 0, errors: [] }),
+  getPreviousSessionContext: vi.fn().mockResolvedValue({ title: 'Previous', content: '...' }),
 }));
 
-vi.mock('./image-uploader', () => ({
-  generateAndUploadStoryImage: (...args: unknown[]) =>
-    mockGenerateAndUploadImage(...args),
+vi.mock('./logger', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 
 const mockedStorage = vi.mocked(storage);
-const mockedAi = vi.mocked(ai);
+const mockedBatchGenerate = vi.mocked(batchGenerate);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -60,12 +53,12 @@ function mockSession(overrides: Partial<any> = {}) {
   return {
     id: 1,
     channelId: 'scifi',
-    title: 'Active Session',
-    description: 'A test session',
-    scheduledStart: new Date(now - 10000),
-    scheduledEnd: new Date(now + 1_000_000),
+    title: 'Episode 1',
+    description: 'The mystery begins.',
+    scheduledStart: new Date(now - 10_000),
+    scheduledEnd: new Date(now + 24 * 60 * 60 * 1000), // 24h discussion window
     timezone: 'UTC',
-    status: 'active',
+    status: 'scheduled',
     notifyCount: 0,
     sessionNumber: 1,
     seasonNumber: 1,
@@ -77,32 +70,15 @@ function mockSession(overrides: Partial<any> = {}) {
   };
 }
 
-function mockBlock(overrides: Partial<any> = {}) {
-  return {
-    id: 1,
-    channelId: 'scifi',
-    sessionId: 1,
-    title: 'Test Block',
-    content: 'Test content for the block',
-    imageUrl: '/images/test.jpg',
-    optionA: { label: 'Go Left', description: 'Venture into the unknown' },
-    optionB: { label: 'Go Right', description: 'Take the safe path' },
-    isNotable: false,
-    embedding: null,
-    createdAt: new Date(),
-    ...overrides,
-  };
-}
-
 function mockChannelState(overrides: Partial<any> = {}) {
   const now = Date.now();
   return {
     channelId: 'scifi',
     currentPhase: 'reading',
-    phaseEndsAt: new Date(now + 10_000),
-    decisionEndsAt: new Date(now + 10_000 + 2 * NARRATIVE_TURN_MS),
-    initialTimeToDecision: 2 * NARRATIVE_TURN_MS + 10_000,
-    turnsToNextChoice: 2,
+    phaseEndsAt: new Date(now + READING_SEGMENT_MS),
+    decisionEndsAt: new Date(now + READING_SEGMENT_MS),
+    initialTimeToDecision: 0,
+    turnsToNextChoice: 0,
     currentBlockId: 1,
     activeSessionId: 1,
     processingLockedUntil: null,
@@ -111,17 +87,22 @@ function mockChannelState(overrides: Partial<any> = {}) {
   };
 }
 
-function mockPendingBlock(overrides: Partial<any> = {}) {
+function mockBlock(overrides: Partial<any> = {}) {
   return {
-    id: 10,
+    id: 1,
     channelId: 'scifi',
-    forBlockId: 1,
-    choice: 'A',
-    title: 'Pregenerated Continuation',
-    content: 'This was pre-generated.',
-    imageUrl: '/images/pregen.jpg',
-    optionA: { label: 'Opt A', description: 'Desc A' },
-    optionB: { label: 'Opt B', description: 'Desc B' },
+    sessionId: 1,
+    title: 'The Beginning',
+    content: 'Story text...',
+    dialogue: null,
+    imageUrl: '/images/test.jpg',
+    optionA: { label: 'Go Left', description: 'Venture left' },
+    optionB: { label: 'Go Right', description: 'Go right' },
+    ttsEnabled: true,
+    audioUrl: null,
+    isNotable: false,
+    embedding: null,
+    searchVector: null,
     createdAt: new Date(),
     ...overrides,
   };
@@ -129,47 +110,9 @@ function mockPendingBlock(overrides: Partial<any> = {}) {
 
 // ── Tests ───────────────────────────────────────────────────────────────────────
 
-describe('computeDecisionEndsAt', () => {
-  it('returns phaseEndsAt when already in voting phase', () => {
-    const st = {
-      currentPhase: 'voting' as const,
-      phaseEndsAt: 5000,
-      turnsToNextChoice: 2,
-    };
-    expect(computeDecisionEndsAt(st)).toBe(5000);
-  });
-
-  it('returns phaseEndsAt when in resolution phase', () => {
-    const st = {
-      currentPhase: 'resolution' as const,
-      phaseEndsAt: 5000,
-      turnsToNextChoice: 0,
-    };
-    expect(computeDecisionEndsAt(st)).toBe(5000);
-  });
-
-  it('returns phaseEndsAt + turns * NARRATIVE_TURN_MS + VOTING_PHASE_MS during reading with turns', () => {
-    const st = {
-      currentPhase: 'reading' as const,
-      phaseEndsAt: 10000,
-      turnsToNextChoice: 3,
-    };
-    expect(computeDecisionEndsAt(st)).toBe(10000 + 3 * NARRATIVE_TURN_MS + VOTING_PHASE_MS);
-  });
-
-  it('returns phaseEndsAt + VOTING_PHASE_MS when turnsToNextChoice is 0 during reading', () => {
-    const st = {
-      currentPhase: 'reading' as const,
-      phaseEndsAt: 10000,
-      turnsToNextChoice: 0,
-    };
-    expect(computeDecisionEndsAt(st)).toBe(10000 + VOTING_PHASE_MS);
-  });
-});
-
 describe('handleGameLoopTick', () => {
   const mockBroadcast = vi.fn();
-  const BASE_NOW = 1_000_000_000_000; // Fixed timestamp for deterministic tests
+  const BASE_NOW = 1_000_000_000_000;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -182,531 +125,191 @@ describe('handleGameLoopTick', () => {
     vi.useRealTimers();
   });
 
-  // ── Heartbeat ────────────────────────────────────────────────────────────────
+  // ── Session Lifecycle ────────────────────────────────────────────────────────
 
-  it('broadcasts heartbeat SYNC_STATE when phase has not ended', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 10_000) })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    // Clear channel cache so getChannelState is called to populate it
-    clearChannelCache();
-
-    await handleGameLoopTick(BASE_NOW + 5_000, mockBroadcast);
-
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        timeRemaining: 5_000,
-        phaseInitialMs: expect.any(Number),
-      }),
-    }));
-  });
-
-  // ── Narrative Turn ───────────────────────────────────────────────────────────
-
-  it('performs narrative turn: decrements turns and stays in reading', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 2 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.createBlock.mockResolvedValue(mockBlock({ id: 2, title: 'New Block' }));
-    mockedStorage.getPendingBlock.mockResolvedValue(null); // No pregenerated
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Narrative Turn',
-      content: 'New story content...',
-      optionA: { label: 'A', description: 'desc A' },
-      optionB: { label: 'B', description: 'desc B' },
+  it('starts a scheduled session when the start threshold is reached', async () => {
+    const session = mockSession({
+      scheduledStart: new Date(BASE_NOW - 60_000), // Started 1 min ago
+      scheduledEnd: new Date(BASE_NOW + 86_400_000),
+      status: 'scheduled',
     });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/new.jpg');
 
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    // Should have upserted state with decremented turns
-    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
-    const lastUpsert = upsertCalls[upsertCalls.length - 1];
-    expect(lastUpsert[1].turnsToNextChoice).toBe(1);
-
-    // Should have created a new block
-    expect(mockedStorage.createBlock).toHaveBeenCalled();
-
-    // Broadcast should include new phase state
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        turnsToNextChoice: 1,
-      }),
-    }));
-  });
-
-  it('uses pregenerated pending block when available for narrative turn', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
+    mockedStorage.getChannelState.mockResolvedValue(null); // No channel state yet
+    mockedStorage.getNextSession.mockResolvedValue(session);
     mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockResolvedValue(mockPendingBlock());
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    // Should NOT have called AI since pending block exists
-    expect(mockedAi.generateStoryBlock).not.toHaveBeenCalled();
-    // Should have used pending block data
-    expect(mockedStorage.createBlock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'Pregenerated Continuation',
-        content: 'This was pre-generated.',
-      })
-    );
-    // Should clean up pending blocks
-    expect(mockedStorage.deletePendingBlocksForBlock).toHaveBeenCalledWith(1);
-  });
-
-  it('falls back to inline generation when pregeneration is missing', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockResolvedValue(null);
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Inline Fallback',
-      content: 'Generated inline.',
-      optionA: { label: 'A', description: 'desc A' },
-      optionB: { label: 'B', description: 'desc B' },
-    });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/inline.jpg');
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    expect(mockedAi.generateStoryBlock).toHaveBeenCalled();
-    expect(mockedStorage.createBlock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Inline Fallback' })
-    );
-  });
-
-  it('releases game lock in finally block after narrative turn', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockResolvedValue(null);
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Test', content: 'Content',
-      optionA: { label: 'A', description: 'd' },
-      optionB: { label: 'B', description: 'd' },
-    });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/x.jpg');
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    expect(mockedStorage.releaseGameLock).toHaveBeenCalledWith('scifi');
-  });
-
-  // ── Enter Voting Phase ──────────────────────────────────────────────────────
-
-  it('enters voting phase when turnsToNextChoice reaches 0', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        phaseEndsAt: new Date(BASE_NOW + 1_000),
-        turnsToNextChoice: 0,
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    // Should have upserted state to voting phase
-    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
-    const lastUpsert = upsertCalls[upsertCalls.length - 1];
-    expect(lastUpsert[1].currentPhase).toBe('voting');
-
-    // Broadcast should indicate voting phase
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        phase: 'voting',
-        phaseInitialMs: VOTING_PHASE_MS,
-      }),
-    }));
-  });
-
-  it('includes both decision timer and phase timer in voting entry broadcast', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        phaseEndsAt: new Date(BASE_NOW + 1_000),
-        turnsToNextChoice: 0,
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    const payload = mockBroadcast.mock.calls.find(
-      (c: any[]) => c[1].type === 'SYNC_STATE'
-    )?.[1].payload;
-    expect(payload.timeRemaining).toBe(VOTING_PHASE_MS);
-    expect(payload.timeToNextDecision).toBe(VOTING_PHASE_MS);
-    expect(payload.phaseInitialMs).toBe(VOTING_PHASE_MS);
-  });
-
-  // ── Vote Tally ──────────────────────────────────────────────────────────────
-
-  it('tallies votes after voting phase ends and creates lore', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'voting',
-        phaseEndsAt: new Date(BASE_NOW + 1_000),
-        turnsToNextChoice: 0,
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getVotesForBlock.mockResolvedValue([
-      { choice: 'A', userId: '1' },
-      { choice: 'A', userId: '2' },
-      { choice: 'B', userId: '3' },
-    ] as any);
-    mockedStorage.getPendingBlock.mockResolvedValue(null); // No pregen
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Post-Vote',
-      content: 'After the vote...',
-      optionA: { label: 'Next A', description: 'desc A' },
-      optionB: { label: 'Next B', description: 'desc B' },
-    });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/postvote.jpg');
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    // Should have tallied votes
-    expect(mockedStorage.getVotesForBlock).toHaveBeenCalledWith(1);
-
-    // Should have created a lore entry for the vote outcome
-    expect(mockedStorage.createLore).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelId: 'scifi',
-        content: expect.stringContaining('"Go Left" won'),
-      })
-    );
-
-    // Should have transitioned back to reading
-    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
-    const lastUpsert = upsertCalls[upsertCalls.length - 1];
-    expect(lastUpsert[1].currentPhase).toBe('reading');
-    expect(lastUpsert[1].turnsToNextChoice).toBeGreaterThanOrEqual(2);
-    expect(lastUpsert[1].turnsToNextChoice).toBeLessThanOrEqual(4);
-
-    // Broadcast should show post-vote reading phase
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        currentPhase: 'reading',
-        phaseInitialMs: POST_VOTE_READING_MS,
-      }),
-    }));
-  });
-
-  it('creates lore with correct winner info after vote tally', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'voting',
-        phaseEndsAt: new Date(BASE_NOW + 1_000),
-        turnsToNextChoice: 0,
-        currentBlockId: 1,
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(
-      mockBlock({
-        title: 'The Crossroads',
-        optionA: { label: 'Left Path', description: 'Go left' },
-        optionB: { label: 'Right Path', description: 'Go right' },
-      })
-    );
-    // B wins
-    mockedStorage.getVotesForBlock.mockResolvedValue([
-      { choice: 'A', userId: '1' },
-      { choice: 'B', userId: '2' },
-      { choice: 'B', userId: '3' },
-    ] as any);
-    mockedStorage.getPendingBlock.mockResolvedValue(mockPendingBlock({ choice: 'B' }));
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    expect(mockedStorage.createLore).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelId: 'scifi',
-        content: expect.stringContaining('"Right Path" won'),
-      })
-    );
-  });
-
-  // ── Resolution Phase ────────────────────────────────────────────────────────
-
-  it('enters resolution phase when session scheduled end is reached', async () => {
-    const now = BASE_NOW;
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(now + 1_000) })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(
-      mockSession({ scheduledEnd: new Date(now - 1_000) }) // Past end
-    );
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Resolution',
-      content: 'The story concludes...',
-    });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/res.jpg');
-
-    await handleGameLoopTick(now, mockBroadcast);
-
-    // Should have upserted to resolution
-    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
-    const lastUpsert = upsertCalls[upsertCalls.length - 1];
-    expect(lastUpsert[1].currentPhase).toBe('resolution');
-
-    // Broadcast should indicate resolution
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        phase: 'resolution',
-        phaseInitialMs: 60_000,
-      }),
-    }));
-  });
-
-  it('transitions to afterparty phase after resolution ends', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'resolution',
-        phaseEndsAt: new Date(BASE_NOW - 1_000), // Past end
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(
-      mockSession({ scheduledEnd: new Date(BASE_NOW - 10_000) })
-    );
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.getBlocksBySessionOrdered.mockResolvedValue([mockBlock()]); // Pre-generated
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
 
     await handleGameLoopTick(BASE_NOW, mockBroadcast);
 
-    // Should NOT complete the session yet — instead transition to afterparty
-    expect(mockedStorage.updateSessionStatus).not.toHaveBeenCalled();
-
-    // Should set phase to afterparty with 3-minute timer
-    const upsertCalls = mockedStorage.upsertChannelState.mock.calls;
-    const lastUpsert = upsertCalls[upsertCalls.length - 1];
-    expect(lastUpsert[1].currentPhase).toBe('afterparty');
-    expect(lastUpsert[1].phaseEndsAt.getTime() - BASE_NOW).toBeCloseTo(AFTERPARTY_MS, -3); // ~3 min
-
-    // Broadcast should indicate afterparty phase
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        phase: 'afterparty',
-        phaseInitialMs: AFTERPARTY_MS,
-      }),
-    }));
-  });
-
-  it('completes session after afterparty phase ends', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'afterparty',
-        phaseEndsAt: new Date(BASE_NOW - 1_000), // Past end
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(
-      mockSession({ scheduledEnd: new Date(BASE_NOW - 10_000) })
-    );
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-
-    await handleGameLoopTick(BASE_NOW, mockBroadcast);
-
-    expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(1, 'completed');
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SESSION_STATUS',
-      payload: { status: 'completed', session: expect.any(Object) },
-    }));
-  });
-
-  // ── Session Start ───────────────────────────────────────────────────────────
-
-  it('starts a new session when scheduled time is reached', async () => {
-    const now = BASE_NOW;
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    // No cached state - no active session
-    mockedStorage.getChannelState.mockResolvedValue(null);
-    // But there is a next session
-    mockedStorage.getNextSession.mockResolvedValue(
-      mockSession({
-        scheduledStart: new Date(now - 60_000), // Started 1 min ago
-        scheduledEnd: new Date(now + 1_000_000),
-      })
-    );
-    // For startSessionForChannelId internals
-    mockedStorage.getCurrentBlock = vi.fn().mockResolvedValue(null);
-    mockedStorage.getLastBlock = vi.fn().mockResolvedValue(null);
-    mockedStorage.createBlock = vi.fn().mockResolvedValue(mockBlock());
-    mockedStorage.getRandomImage = vi.fn().mockResolvedValue('/images/default.jpg');
-    mockedStorage.tryAcquireGameLock = vi.fn().mockResolvedValue(true);
-
-    // Need to mock AI for creating initial block
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'Initial Block',
-      content: 'Once upon a time...',
-      optionA: { label: 'Door A', description: 'Open door A' },
-      optionB: { label: 'Door B', description: 'Open door B' },
-    });
-    mockGenerateAndUploadImage.mockResolvedValue('/images/initial.jpg');
-
-    await handleGameLoopTick(now, mockBroadcast);
-
-    // Should have created a session and upserted channel state
+    // Should have activated the session
+    expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(session.id, 'active');
     expect(mockedStorage.upsertChannelState).toHaveBeenCalledWith(
       'scifi',
-      expect.objectContaining({ currentPhase: 'reading' })
+      expect.objectContaining({
+        currentPhase: 'reading',
+        activeSessionId: session.id,
+      }),
     );
-  });
-
-  // ── Lock Contention ─────────────────────────────────────────────────────────
-
-  it('skips phase transition when lock is not acquired', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000) })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    // Lock not acquired
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(false);
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    // Should not have upserted anything or created blocks
-    expect(mockedStorage.upsertChannelState).not.toHaveBeenCalled();
-    expect(mockedStorage.createBlock).not.toHaveBeenCalled();
-    expect(mockedStorage.releaseGameLock).not.toHaveBeenCalled();
-  });
-
-  it('releases lock even when transition throws', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockRejectedValue(new Error('DB error'));
-
-    // Should not throw - catch block handles it
-    await expect(
-      handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast)
-    ).resolves.not.toThrow();
-
-    // But lock should still be released
+    // Should have released the lock
     expect(mockedStorage.releaseGameLock).toHaveBeenCalledWith('scifi');
-  });
 
-  // ── Image Generation Failures ───────────────────────────────────────────────
-
-  it('uses fallback image when AI image generation fails in narrative turn', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockResolvedValue(null);
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'No Image Block',
-      content: 'Text only...',
-      optionA: { label: 'A', description: 'd' },
-      optionB: { label: 'B', description: 'd' },
+    // Should broadcast session status
+    expect(mockBroadcast).toHaveBeenCalledWith('scifi', {
+      type: 'SESSION_STATUS',
+      payload: { status: 'active', session },
     });
-    mockGenerateAndUploadImage.mockRejectedValue(new Error('AI down'));
-    mockedStorage.getRandomImage.mockResolvedValue('/images/fallback.jpg');
-
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
-
-    expect(mockedStorage.createBlock).toHaveBeenCalledWith(
-      expect.objectContaining({ imageUrl: '/images/fallback.jpg' })
-    );
   });
 
-  it('uses hardcoded fallback when randomImage also fails', async () => {
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 1_000), turnsToNextChoice: 1 })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
-    mockedStorage.getBlockById.mockResolvedValue(mockBlock());
-    mockedStorage.getPendingBlock.mockResolvedValue(null);
-    mockedAi.generateStoryBlock.mockResolvedValue({
-      title: 'No Image',
-      content: 'Text only...',
-      optionA: { label: 'A', description: 'd' },
-      optionB: { label: 'B', description: 'd' },
+  it('calls batchGenerateBlocks when no pre-generated blocks exist', async () => {
+    const session = mockSession({
+      scheduledStart: new Date(BASE_NOW - 60_000),
+      status: 'scheduled',
     });
-    mockGenerateAndUploadImage.mockRejectedValue(new Error('AI down'));
-    mockedStorage.getRandomImage.mockResolvedValue(null);
 
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(null);
+    mockedStorage.getNextSession.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    // No blocks pre-generated
+    mockedStorage.getBlocksBySessionOrdered
+      .mockResolvedValueOnce([])  // First call: empty
+      .mockResolvedValueOnce([mockBlock()]); // Second call: now available
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
 
-    expect(mockedStorage.createBlock).toHaveBeenCalledWith(
-      expect.objectContaining({ imageUrl: '/images/img_1771936309521_ieycq2.jpg' })
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should have triggered batch generation
+    expect(mockedBatchGenerate.batchGenerateBlocks).toHaveBeenCalledWith(
+      'scifi',
+      session.id,
+      expect.any(Object),
     );
   });
 
-  // ── Channel Cache ───────────────────────────────────────────────────────────
+  it('does NOT start a session before the start threshold', async () => {
+    const session = mockSession({
+      scheduledStart: new Date(BASE_NOW + 10 * 60 * 1000), // 10 min from now
+      status: 'scheduled',
+    });
 
-  it('uses cached channel state on subsequent ticks', async () => {
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(null);
+    mockedStorage.getNextSession.mockResolvedValue(session);
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should not have started anything
+    expect(mockedStorage.updateSessionStatus).not.toHaveBeenCalled();
+    expect(mockedStorage.upsertChannelState).not.toHaveBeenCalled();
+  });
+
+  it('returns { continue: false } when no active session and no next session', async () => {
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(null);
+    mockedStorage.getNextSession.mockResolvedValue(null);
+
+    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
+    expect(result).toEqual({ continue: false });
+  });
+
+  // ── Active Session Behaviors ────────────────────────────────────────────────
+
+  it('returns { continue: true } for an active session within its window', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
     mockedStorage.getChannelState.mockResolvedValue(
       mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 10_000) })
     );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
+    mockedStorage.getSessionById.mockResolvedValue(
+      mockSession({ scheduledEnd: new Date(BASE_NOW + 86_400_000) })
+    );
 
-    // First tick - should call getChannelState (cache miss)
-    await handleGameLoopTick(BASE_NOW + 1_000, mockBroadcast);
-    expect(mockedStorage.getChannelState).toHaveBeenCalledTimes(1);
-
-    mockedStorage.getChannelState.mockClear();
-
-    // Second tick soon after - should use cache
-    await handleGameLoopTick(BASE_NOW + 1_200, mockBroadcast);
-    expect(mockedStorage.getChannelState).not.toHaveBeenCalled();
+    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
+    expect(result).toEqual({ continue: true });
   });
 
-  // ── Stale Session Handling ──────────────────────────────────────────────────
+  it('sends heartbeat SYNC_STATE for an active session', async () => {
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    // Populate cache with channel state
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 10_000) })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(
+      mockSession({ scheduledEnd: new Date(BASE_NOW + 86_400_000) })
+    );
+
+    // First call populates cache
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should broadcast SYNC_STATE with time remaining
+    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
+      type: 'SYNC_STATE',
+      payload: expect.objectContaining({
+        timeRemaining: expect.any(Number),
+        phaseInitialMs: READING_SEGMENT_MS,
+      }),
+    }));
+  });
+
+  // ── Session Expiry (Discussion Window) ───────────────────────────────────────
+
+  it('completes session when discussion window expires', async () => {
+    const session = mockSession({
+      scheduledEnd: new Date(BASE_NOW - 1_000), // Just expired
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({ activeSessionId: session.id })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+
+    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should have marked session as completed
+    expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(session.id, 'completed');
+    // Should have cleared channel state
+    expect(mockedStorage.upsertChannelState).toHaveBeenCalledWith('scifi', {
+      activeSessionId: null,
+      currentBlockId: null,
+      currentPhase: 'reading',
+    });
+    // Should broadcast completed status
+    expect(mockBroadcast).toHaveBeenCalledWith('scifi', {
+      type: 'SESSION_STATUS',
+      payload: { status: 'completed', session },
+    });
+    // Should return continue: false
+    expect(result).toEqual({ continue: false });
+  });
+
+  it('releases lock even after session expiry succeeds', async () => {
+    const session = mockSession({
+      scheduledEnd: new Date(BASE_NOW - 1_000),
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({ activeSessionId: session.id })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Lock should be released in the finally block
+    expect(mockedStorage.releaseGameLock).toHaveBeenCalledWith('scifi');
+  });
+
+  // ── Edge Cases ──────────────────────────────────────────────────────────────
 
   it('clears stale activeSessionId when session is missing', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
@@ -723,49 +326,139 @@ describe('handleGameLoopTick', () => {
     });
   });
 
-  it('does not produce lore resolve error when currentBlock is missing at tally time', async () => {
+  it('handles lock contention gracefully (does not duplicate session start)', async () => {
+    const session = mockSession({
+      scheduledStart: new Date(BASE_NOW - 60_000),
+      status: 'scheduled',
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(null);
+    mockedStorage.getNextSession.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(false); // Lock not acquired
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    // Should NOT have started anything
+    expect(mockedStorage.updateSessionStatus).not.toHaveBeenCalled();
+    expect(mockedStorage.upsertChannelState).not.toHaveBeenCalled();
+  });
+
+  it('handles errors gracefully without throwing', async () => {
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockRejectedValue(new Error('DB connection error'));
+
+    await expect(
+      handleGameLoopTick(BASE_NOW, mockBroadcast)
+    ).resolves.not.toThrow();
+  });
+
+  // ── Cache Behaviors ─────────────────────────────────────────────────────────
+
+  it('uses cached channel state on subsequent ticks', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
     mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'voting',
-        phaseEndsAt: new Date(BASE_NOW + 1_000),
-        currentBlockId: null, // No current block
-      })
+      mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 10_000) })
     );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
+    mockedStorage.getSessionById.mockResolvedValue(
+      mockSession({ scheduledEnd: new Date(BASE_NOW + 86_400_000) })
+    );
+
+    // First tick — cache miss, calls getChannelState
+    await handleGameLoopTick(BASE_NOW + 1_000, mockBroadcast);
+    expect(mockedStorage.getChannelState).toHaveBeenCalledTimes(1);
+
+    mockedStorage.getChannelState.mockClear();
+
+    // Second tick — cache hit
+    await handleGameLoopTick(BASE_NOW + 1_200, mockBroadcast);
+    expect(mockedStorage.getChannelState).not.toHaveBeenCalled();
+  });
+
+  it('skips cache for consecutive ticks with phase boundary', async () => {
+    // When a session ends (activeSessionId cleared), the cache is invalidated
+    const session = mockSession({
+      scheduledEnd: new Date(BASE_NOW - 1_000),
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({ activeSessionId: session.id })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(session);
     mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
 
-    await handleGameLoopTick(BASE_NOW + 2_000, mockBroadcast);
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
 
-    // Should not have called createLore when currentBlock is null
-    expect(mockedStorage.createLore).not.toHaveBeenCalled();
+    // Cache should have been invalidated
+    expect(mockedStorage.getChannelState).toHaveBeenCalled(); // First call
+    // Now the next tick should re-fetch (cache was cleared)
+    mockedStorage.getChannelState.mockClear();
+    mockedStorage.getNextSession.mockResolvedValue(null);
+
+    await handleGameLoopTick(BASE_NOW + 1_000, mockBroadcast);
+
+    // Should have called getChannelState again since cache was invalidated
+    expect(mockedStorage.getChannelState).toHaveBeenCalled();
+  });
+
+  // ── Logging ─────────────────────────────────────────────────────────────────
+
+  it('logs when starting a session', async () => {
+    const session = mockSession({
+      scheduledStart: new Date(BASE_NOW - 60_000),
+      status: 'scheduled',
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(null);
+    mockedStorage.getNextSession.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.getBlocksBySessionOrdered.mockResolvedValue([mockBlock()]);
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
+
+    const { logger } = await import('./logger');
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Starting on-demand session'),
+      expect.any(String),
+    );
+  });
+
+  it('logs when completing a session', async () => {
+    const session = mockSession({
+      scheduledEnd: new Date(BASE_NOW - 1_000),
+    });
+
+    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
+    mockedStorage.getChannelState.mockResolvedValue(
+      mockChannelState({ activeSessionId: session.id })
+    );
+    mockedStorage.getSessionById.mockResolvedValue(session);
+    mockedStorage.tryAcquireGameLock.mockResolvedValue(true);
+    mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
+    mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
+
+    const { logger } = await import('./logger');
+
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Ending session'),
+      expect.any(String),
+    );
   });
 
   // ── Timing Constants ────────────────────────────────────────────────────────
 
-  it('uses correct timing constants for each phase', () => {
-    expect(NARRATIVE_TURN_MS).toBe(40_000);
-    expect(VOTING_PHASE_MS).toBe(40_000);
-    expect(POST_VOTE_READING_MS).toBe(40_000);
-  });
-
-  it('phase initial times use correct constants', async () => {
-    // Phase durations are sent as phaseInitialMs in SYNC_STATE broadcasts
-    mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    mockedStorage.getChannelState.mockResolvedValue(
-      mockChannelState({
-        currentPhase: 'reading',
-        phaseEndsAt: new Date(BASE_NOW + 10_000),
-        turnsToNextChoice: 1,
-      })
-    );
-    mockedStorage.getSessionById.mockResolvedValue(mockSession());
-
-    await handleGameLoopTick(BASE_NOW + 5_000, mockBroadcast);
-
-    const payload = mockBroadcast.mock.calls.find(
-      (c: any[]) => c[1].type === 'SYNC_STATE'
-    )?.[1].payload;
-    expect(payload.phaseInitialMs).toBe(NARRATIVE_TURN_MS);
+  it('exposes correct timing constants', () => {
+    expect(READING_SEGMENT_MS).toBe(25_000);
+    expect(START_BEFORE_MS).toBe(3 * 60 * 1000);
+    expect(LOBBY_DELAY_MS).toBe(3 * 60 * 1000);
   });
 });

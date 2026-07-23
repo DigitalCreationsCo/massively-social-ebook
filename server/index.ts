@@ -3,11 +3,16 @@ import { registerRoutes } from "./routes";
 import { registerAdminRoutes } from "./routes/admin-routes";
 import { registerReplayRoutes } from "./routes/replay-routes";
 import { registerTtsRoutes } from "./routes/tts-routes";
+import { registerAuthRoutes } from "./routes/auth-routes";
+import { registerNotesRoutes } from "./routes/notes-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
 import { createAdminStaticMiddleware } from "./middleware/admin-static";
+import session from "express-session";
+import pgSession from "connect-pg-simple";
+import { pool } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -65,6 +70,39 @@ app.use((req, res, next) => {
 // ── Request Logger ───────────────────────────────────────────────────────
 app.use(createRequestLogger());
 
+// ── Session Middleware ──────────────────────────────────────────────────
+const PgStore = pgSession(session);
+const sessionStore = new PgStore({
+  pool,
+  tableName: "user_sessions",
+  createTableIfMissing: true,
+});
+app.use(
+  session({
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      sameSite: "lax",
+    },
+  }),
+);
+
+// Export session store for WebSocket authentication
+export { sessionStore };
+
+// Extend express-session types
+declare module "express-session" {
+  interface SessionData {
+    userId?: number;
+    username?: string;
+  }
+}
+
 (async () => {
   // ── Health check / keep-alive endpoint ─────────────────────────────
   // Responds immediately (no DB) so external cron/pinger can keep the
@@ -84,10 +122,12 @@ app.use(createRequestLogger());
     res.json({ ok: true, pool: poolStatus, ts: Date.now() });
   });
 
-  await registerRoutes(httpServer, app);
+  await registerRoutes(httpServer, app, sessionStore);
   registerAdminRoutes(app);
   registerReplayRoutes(app);
   registerTtsRoutes(app);
+  registerAuthRoutes(app);
+  registerNotesRoutes(app);
   startRecurringScheduler();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

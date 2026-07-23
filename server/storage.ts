@@ -11,6 +11,9 @@ import {
   votes,
   chat,
   reactions,
+  noteLikes,
+  type NoteLike,
+  type InsertNoteLike,
   sessions,
   lore,
   channels,
@@ -18,7 +21,6 @@ import {
   type Block,
   type InsertBlock,
   type Vote,
-  type InsertVote,
   type ChatMessage,
   type InsertChat,
   type Reaction,
@@ -76,8 +78,6 @@ export interface IStorage {
     notableOnly: boolean,
   ): Promise<BlockWithChats[]>;
 
-  createVote(vote: InsertVote): Promise<Vote>;
-  getVotesForBlock(blockId: number): Promise<Vote[]>;
   getVotesBySession(sessionId: number): Promise<Vote[]>;
   getRecentChat(
     channelId: string,
@@ -160,6 +160,24 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   updateUserPushToken(email: string, token: string): Promise<User>;
   banUser(id: number, banned: boolean): Promise<User>;
+  // Auth
+  getUserById(id: number): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUserWithPassword(
+    username: string,
+    passwordHash: string,
+  ): Promise<User>;
+
+  // Notes
+  getNotesForBlock(blockId: number): Promise<ChatMessage[]>;
+  likeNote(noteId: number, username: string): Promise<NoteLike>;
+  unlikeNote(noteId: number, username: string): Promise<void>;
+  getNoteLikeCount(noteId: number): Promise<number>;
+  hasUserLikedNote(noteId: number, username: string): Promise<boolean>;
+
+  // Blocks
+  getBlocksBySessionOrdered(sessionId: number): Promise<Block[]>;
+
   getSystemSetting(key: string): Promise<string | undefined>;
   setSystemSetting(key: string, value: string): Promise<void>;
   createNotificationLog(log: InsertNotificationLog): Promise<void>;
@@ -330,15 +348,6 @@ export class DatabaseStorage implements IStorage {
     return rows.reverse().map((block) => ({ ...block, chats: [] }));
   }
 
-
-  async getVotesForBlock(blockId: number): Promise<Vote[]> {
-    return await db.select().from(votes).where(eq(votes.blockId, blockId));
-  }
-
-  async createVote(vote: InsertVote): Promise<Vote> {
-    const [newVote] = await db.insert(votes).values(vote).returning();
-    return newVote;
-  }
 
   async getVotesBySession(sessionId: number): Promise<Vote[]> {
     return await db.select().from(votes).where(eq(votes.sessionId, sessionId));
@@ -933,6 +942,84 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  async getUserById(id: number): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, username));
+    return user;
+  }
+
+  async createUserWithPassword(username: string, passwordHash: string): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values({ username, passwordHash })
+      .returning();
+    return user;
+  }
+
+  // ── Notes ──────────────────────────────────────────────────────────────────
+
+  async getNotesForBlock(blockId: number): Promise<ChatMessage[]> {
+    return await db
+      .select()
+      .from(chat)
+      .where(eq(chat.blockId, blockId))
+      .orderBy(asc(chat.createdAt));
+  }
+
+  async likeNote(noteId: number, username: string): Promise<NoteLike> {
+    const [like] = await db
+      .insert(noteLikes)
+      .values({ noteId, username })
+      .onConflictDoNothing()
+      .returning();
+    return like;
+  }
+
+  async unlikeNote(noteId: number, username: string): Promise<void> {
+    await db
+      .delete(noteLikes)
+      .where(and(eq(noteLikes.noteId, noteId), eq(noteLikes.username, username)));
+  }
+
+  async getNoteLikeCount(noteId: number): Promise<number> {
+    const [result] = await db
+      .select({ value: count() })
+      .from(noteLikes)
+      .where(eq(noteLikes.noteId, noteId));
+    return result?.value ?? 0;
+  }
+
+  async hasUserLikedNote(noteId: number, username: string): Promise<boolean> {
+    const [like] = await db
+      .select()
+      .from(noteLikes)
+      .where(and(eq(noteLikes.noteId, noteId), eq(noteLikes.username, username)))
+      .limit(1);
+    return !!like;
+  }
+
+  // ── Blocks ─────────────────────────────────────────────────────────────────
+
+  async getBlocksBySessionOrdered(sessionId: number): Promise<Block[]> {
+    return await db
+      .select()
+      .from(blocks)
+      .where(eq(blocks.sessionId, sessionId))
+      .orderBy(asc(blocks.id));
   }
 
   async getSystemSetting(key: string): Promise<string | undefined> {

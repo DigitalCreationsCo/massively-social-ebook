@@ -21,6 +21,7 @@ export { ChatMessage };
 const START_BEFORE_MS = 3 * 60 * 1000;
 
 export interface StoryState {
+  id: number;
   channelId: string;
   title: string | null;
   content: string;
@@ -43,11 +44,6 @@ export interface VoteOption {
   description: string;
 }
 
-export interface VoteResults {
-  A: number;
-  B: number;
-}
-
 export function useLiveState(channelId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -60,7 +56,7 @@ export function useLiveState(channelId: string) {
     return newName;
   });
   useEffect(() => {
-    if (!username) {
+    if (username) {
       identifyUser(username);
     }
   }, [username]);
@@ -70,12 +66,7 @@ export function useLiveState(channelId: string) {
   // Tracks clientId → optimistic message id so we can replace the optimistic
   // placeholder with the server-confirmed message when CHAT_MESSAGE arrives.
   const pendingClientIds = useRef(new Map<string, number>());
-  const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
-  const [localTimeToDecision, setLocalTimeToDecision] = useState(0);
-  const [localInitialTimeToDecision, setLocalInitialTimeToDecision] =
-    useState(0);
-  const [localInitialTimeRemaining, setLocalInitialTimeRemaining] = useState(0);
-  const [localTurnsToNextChoice, setLocalTurnsToNextChoice] = useState(0);
+
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | "loading">(
     "scheduled",
   );
@@ -83,7 +74,7 @@ export function useLiveState(channelId: string) {
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [macroPhase, setMacroPhase] = useState<MacroPhase>("waiting");
   const [reactions, setReactions] = useState<Reaction[]>([]);
-  const [voteResults, setVoteResults] = useState<VoteResults>({ A: 0, B: 0 });
+
   const [viewerCount, setViewerCount] = useState(
     () => 1247 + Math.floor(Math.random() * 500),
   );
@@ -136,8 +127,68 @@ export function useLiveState(channelId: string) {
     }
   }, [initialSession, initialChannel, sessionLoading, wsConnected]);
 
+  // Fetch all blocks for the active session
+  const { data: allBlocks = [], isLoading: blocksLoading } = useQuery({
+    queryKey: [api.blocks.current.path, channelId, "all"],
+    queryFn: async () => {
+      const sessionId = activeSession?.id;
+      if (!sessionId) return [];
+      const res = await fetch(`/api/blocks/session/${sessionId}`);
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to fetch blocks");
+      return res.json() as Promise<StoryState[]>;
+    },
+    enabled: !!activeSession?.id,
+    staleTime: 5000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+  });
+
+  // Track which block index we're on
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
+  const currentBlock = allBlocks[currentBlockIndex] ?? null;
+
+  // Auto-advance: move to next block every READING_SEGMENT_MS (25s)
+  // Allow manual skip after 11s
+  useEffect(() => {
+    if (allBlocks.length === 0) return;
+    if (currentBlockIndex >= allBlocks.length - 1) return;
+
+    const SKIP_AFTER_MS = 11_000;
+    const ADVANCE_MS = 25_000;
+    let skipped = false;
+
+    const skipTimer = setTimeout(() => {
+      skipped = true;
+    }, SKIP_AFTER_MS);
+
+    const advanceTimer = setInterval(() => {
+      if (skipped) {
+        // If enough time has passed to skip, advance now
+      }
+      setCurrentBlockIndex((prev) => {
+        if (prev >= allBlocks.length - 1) return prev;
+        return prev + 1;
+      });
+      clearInterval(advanceTimer);
+    }, ADVANCE_MS);
+
+    return () => {
+      clearTimeout(skipTimer);
+      clearInterval(advanceTimer);
+    };
+  }, [currentBlockIndex, allBlocks.length]);
+
+  // Allow manual advance to next block
+  const advanceToNextBlock = useCallback(() => {
+    setCurrentBlockIndex((prev) => {
+      if (prev >= allBlocks.length - 1) return prev;
+      return prev + 1;
+    });
+  }, [allBlocks.length]);
+
   // Fetch initial REST state
-  const { data: currentBlock, isLoading: blockLoading } = useQuery({
+  const { data: currentBlockData, isLoading: blockLoading } = useQuery({
     queryKey: [api.blocks.current.path, channelId],
     queryFn: async () => {
       const res = await fetch(
@@ -149,10 +200,6 @@ export function useLiveState(channelId: string) {
     },
     retry: false,
     staleTime: Infinity,
-    // Poll every 30s as a safety net for missed WebSocket messages. The WS
-    // SYNC_STATE/SESSION_STATUS handlers are the primary update path; this
-    // ensures the client eventually recovers if WS messages are dropped or
-    // the connection is interrupted during a critical transition.
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
   });
@@ -166,50 +213,8 @@ export function useLiveState(channelId: string) {
       if (!res.ok) throw new Error("Failed to fetch chat history");
       return res.json() as Promise<ChatMessage[]>;
     },
-    // WebSocket CHAT_MESSAGE handler calls setQueryData on this key for every
-    // incoming message, so background refetches would just duplicate work.
     staleTime: Infinity,
   });
-
-  // Sync local timers with server state
-  useEffect(() => {
-    if (currentBlock?.timeRemaining !== undefined) {
-      setLocalTimeRemaining(Math.floor(currentBlock.timeRemaining / 1000));
-    }
-    if (currentBlock?.timeToNextDecision !== undefined) {
-      setLocalTimeToDecision(
-        Math.floor(currentBlock.timeToNextDecision / 1000),
-      );
-    }
-    if (currentBlock?.initialTimeToNextDecision !== undefined) {
-      setLocalInitialTimeToDecision(
-        Math.floor(currentBlock.initialTimeToNextDecision / 1000),
-      );
-    }
-    if (currentBlock?.phaseInitialMs !== undefined) {
-      setLocalInitialTimeRemaining(
-        Math.floor(currentBlock.phaseInitialMs / 1000),
-      );
-    }
-  }, [
-    currentBlock?.timeRemaining,
-    currentBlock?.timeToNextDecision,
-    currentBlock?.initialTimeToNextDecision,
-    currentBlock?.phaseInitialMs,
-    currentBlock?.phase,
-    currentBlock?.id,
-  ]);
-
-  // Simulate viewer count fluctuations
-  // useEffect(() => {
-  //   const interval = setInterval(() => {
-  //     setViewerCount((prev) => {
-  //       const change = Math.floor(Math.random() * 21) - 10;
-  //       return Math.max(100, prev + change);
-  //     });
-  //   }, 5000);
-  //   return () => clearInterval(interval);
-  // }, []);
 
   // WebSocket Connection
   useEffect(() => {
@@ -289,34 +294,11 @@ export function useLiveState(channelId: string) {
             if (message.type === "SYNC_STATE") {
               const payload = message.payload as StoryState;
 
-              // Update the cached block data so the UI shows the correct
-              // story content, phase, voting options, etc.  The REST query
-              // has staleTime: Infinity so it never refetches — the WS is
-              // the sole update path after initial page load.
               queryClient.setQueryData<StoryState>(
                 [api.blocks.current.path, channelId],
                 payload,
               );
 
-              setLocalTurnsToNextChoice(payload.turnsToNextChoice);
-              if (payload.timeRemaining !== undefined) {
-                setLocalTimeRemaining(Math.floor(payload.timeRemaining / 1000));
-              }
-              if (payload.timeToNextDecision !== undefined) {
-                setLocalTimeToDecision(
-                  Math.floor(payload.timeToNextDecision / 1000),
-                );
-              }
-              if (payload.initialTimeToNextDecision !== undefined) {
-                setLocalInitialTimeToDecision(
-                  Math.floor(payload.initialTimeToNextDecision / 1000),
-                );
-              }
-              if (payload.phaseInitialMs !== undefined) {
-                setLocalInitialTimeRemaining(
-                  Math.floor(payload.phaseInitialMs / 1000),
-                );
-              }
             } else if (message.type === "CHAT_MESSAGE") {
               const payload = message.payload as ChatMessage & {
                 clientId?: string;
@@ -324,8 +306,6 @@ export function useLiveState(channelId: string) {
               queryClient.setQueryData<ChatMessage[]>(
                 [api.chat.history.path, channelId],
                 (old = []) => {
-                  // If this message has a clientId we're tracking, replace the
-                  // optimistic placeholder with the server-confirmed message.
                   if (
                     payload.clientId &&
                     pendingClientIds.current.has(payload.clientId)
@@ -338,15 +318,10 @@ export function useLiveState(channelId: string) {
                       m.id === optimisticId ? payload : m,
                     );
                   }
-                  // For messages from other clients (no clientId), guard
-                  // against any accidental duplicates by server id.
                   if (old.some((m) => m.id === payload.id)) return old;
                   return [...old, payload];
                 },
               );
-            } else if (message.type === "VOTE_UPDATE") {
-              const payload = message.payload as VoteResults;
-              setVoteResults(payload);
             } else if (message.type === "REACTION_RECEIVED") {
               const payload = message.payload as Reaction;
               setReactions((prev) => [...prev, payload]);
@@ -404,11 +379,7 @@ export function useLiveState(channelId: string) {
     };
   }, [queryClient, channelId]);
 
-  // Refine the Macro Phase calculation to be more robust
-  //
-  // The server now explicitly tracks afterparty as a phase (broadcast via
-  // SYNC_STATE), so we check currentBlock.phase first.  The lobby/gathering
-  // window is still computed client-side from scheduledStart timestamps.
+  // Refine the Macro Phase calculation
   useEffect(() => {
     if (!activeSession) {
       setMacroPhase("waiting");
@@ -420,12 +391,7 @@ export function useLiveState(channelId: string) {
       const start = new Date(activeSession.scheduledStart).getTime();
       const end = new Date(activeSession.scheduledEnd).getTime();
 
-      // Server tells us when we're in afterparty — this is authoritative
-      // and covers the ~3-minute window after resolution ends.
-      if (currentBlock?.phase === "afterparty") {
-        setMacroPhase("afterparty");
-      } else if (now > end || currentBlock?.phase === "resolution") {
-        // Resolution phase = reading concluding, chat opens up
+      if (now > end || currentBlock?.phase === "resolution") {
         setMacroPhase("afterparty");
       } else if (now < start - START_BEFORE_MS) {
         setMacroPhase("waiting");
@@ -460,14 +426,11 @@ export function useLiveState(channelId: string) {
         channelId,
         sessionId: activeSession?.id || null,
         blockId: currentBlock?.id || null,
-        userId: username,
         username,
         text,
         createdAt: new Date(),
       };
 
-      // Track this optimistic message so we can replace it when the server
-      // broadcasts back the confirmed message (instead of appending a duplicate).
       pendingClientIds.current.set(clientId, optimisticId);
 
       queryClient.setQueryData<ChatMessage[]>(
@@ -484,49 +447,7 @@ export function useLiveState(channelId: string) {
         }),
       );
     },
-    [username, queryClient, toast, channelId],
-  );
-
-  const submitVote = useCallback(
-    (choice: "A" | "B") => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        toast({
-          title: "Vote failed",
-          description: "You are offline.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      sessionStorage.setItem(`voted_${channelId}_${currentBlock?.id}`, choice);
-
-      wsRef.current.send(
-        JSON.stringify({
-          type: "SUBMIT_VOTE",
-          payload: { choice, userId: username },
-        }),
-      );
-
-      // Update local vote results optimistically
-      setVoteResults((prev) => ({
-        ...prev,
-        [choice]: prev[choice] + 1,
-      }));
-
-      toast({
-        title: "Vote cast!",
-        description: `You chose ${currentBlock?.optionA && choice === "A" ? currentBlock.optionA.label : currentBlock?.optionB?.label}.`,
-        duration: 2000,
-      });
-    },
-    [
-      currentBlock?.id,
-      currentBlock?.optionA,
-      currentBlock?.optionB,
-      toast,
-      username,
-      channelId,
-    ],
+    [username, queryClient, toast, channelId, currentBlock?.id, activeSession?.id],
   );
 
   const submitReaction = useCallback(
@@ -542,26 +463,22 @@ export function useLiveState(channelId: string) {
         }),
       );
 
-      // Optimistic update
       setReactions((prev) => [
         ...prev,
         {
-          id: Date.now(), // Temporary ID
+          id: Date.now(),
           channelId: channelId,
           sessionId: activeSession?.id || 0,
           blockId,
           userId: username,
           emoji,
-          paragraphIndex,
+          paragraphIndex: paragraphIndex ?? null,
           createdAt: new Date(),
         },
       ]);
     },
     [username, channelId, activeSession],
   );
-
-  const hasVotedCurrent =
-    sessionStorage.getItem(`voted_${channelId}_${currentBlock?.id}`) !== null;
 
   const isSessionLive = useMemo(
     () => shouldShowLiveSession(sessionStatus, activeSession),
@@ -572,14 +489,7 @@ export function useLiveState(channelId: string) {
   const mostRecentMessage =
     (chatHistory ?? []).length > 0 ? chatHistory[chatHistory.length - 1] : null;
 
-  // Reset vote results when the story block changes
-  useEffect(() => {
-    setVoteResults({ A: 0, B: 0 });
-  }, [currentBlock?.id]);
-
   // ── Auto-ambient: generate from session.description wrapped in [] ─────
-  // Ambient loops continuously throughout the session (gathering + reading).
-  // Retries with exponential backoff if TTS generation or playback fails.
   useEffect(() => {
     let cancelled = false;
 
@@ -629,9 +539,6 @@ export function useLiveState(channelId: string) {
   }, [macroPhase, activeSession?.description, ambientRetryTick, activeSession?.id]);
 
   // ── Auto-dialogue: generate from block.dialogue || block.content ───────
-  // Skips TTS for fallback blocks (ttsEnabled === false) to avoid wasting
-  // HF API credits on system-generated placeholder text like "Temporal
-  // Distortion" or "System Reboot".
   useEffect(() => {
     if (currentBlock?.id && currentBlock.id !== lastBlockId.current) {
       lastBlockId.current = currentBlock.id;
@@ -646,21 +553,16 @@ export function useLiveState(channelId: string) {
   }, [currentBlock?.id, currentBlock?.dialogue, currentBlock?.content, currentBlock?.ttsEnabled]);
 
   return {
-    isLoading: blockLoading || chatLoading || sessionLoading,
+    isLoading: blocksLoading || chatLoading || sessionLoading,
     wsConnected,
     username,
-    currentBlock,
-    localTimeRemaining,
-    localTimeToDecision,
-    localInitialTimeToDecision,
-    localInitialTimeRemaining,
-    localTurnsToNextChoice,
+    currentBlock: currentBlock ?? currentBlockData,
+    allBlocks,
+    currentBlockIndex,
+    advanceToNextBlock,
     chatHistory,
-    hasVotedCurrent,
     submitChat,
-    submitVote,
     submitReaction,
-    voteResults,
     reactions,
     viewerCount,
     mostRecentMessage,

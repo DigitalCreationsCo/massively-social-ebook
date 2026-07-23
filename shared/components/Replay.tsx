@@ -305,7 +305,7 @@ export const Replay = forwardRef<ReplayHandle, ReplayProps>(
   const onPlayRef = useRef(onPlay);
   onPlayRef.current = onPlay; // always fresh, no re-render cascade
 
-  const [isIntersecting, setIsIntersecting] = useState(false);
+  // const [isIntersecting, setIsIntersecting] = useState(false);
 
   // ── Preload block images before the Player renders ──
   const [imagesReady, setImagesReady] = useState(false);
@@ -346,7 +346,7 @@ export const Replay = forwardRef<ReplayHandle, ReplayProps>(
   const callback: IntersectionObserverCallback = useCallback(
     (newData) => {
       const intersecting = newData[0].isIntersecting;
-      setIsIntersecting(intersecting);
+      // setIsIntersecting(intersecting);
       if (intersecting) {
         playerRef.current?.play();
         onPlayRef.current?.();

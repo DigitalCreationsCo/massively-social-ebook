@@ -64,7 +64,7 @@ export function LiveChat({
 
   // ── Unread counter ──────────────────────────────────────────────────────
   const [unreadCount, setUnreadCount] = useState(0);
-  const lastSeenIdRef = useRef<number>(0);
+  const lastSeenIdRef = useRef<number>(Infinity);
 
   useEffect(() => {
     if (!isEffectivelyOpen && history.length > 0) {

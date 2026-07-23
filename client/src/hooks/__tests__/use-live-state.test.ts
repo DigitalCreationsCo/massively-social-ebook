@@ -112,9 +112,7 @@ describe('useLiveState', () => {
                 })
             });
         });
-        expect(result.current.localTimeRemaining).toBe(50);
-        expect(result.current.localTimeToDecision).toBe(120);
-        expect(result.current.localInitialTimeToDecision).toBe(180);
+
     });
     
     it('handles CHAT_MESSAGE and updates query data', async () => {
@@ -129,17 +127,6 @@ describe('useLiveState', () => {
             });
         });
         expect(mockQueryClient.setQueryData).toHaveBeenCalledWith(['/api/chat', 'scifi'], expect.any(Function));
-    });
-
-    it('handles VOTE_UPDATE and updates vote results', async () => {
-        const { result } = renderHook(() => useLiveState('scifi'));
-        await act(async () => { vi.runOnlyPendingTimers(); });
-        act(() => {
-            wsInstance.onmessage({
-                data: JSON.stringify({ type: 'VOTE_UPDATE', payload: { A: 5, B: 3 } })
-            });
-        });
-        expect(result.current.voteResults).toEqual({ A: 5, B: 3 });
     });
 
     it('handles REACTION_RECEIVED and updates reactions state', async () => {
@@ -239,19 +226,6 @@ describe('useLiveState', () => {
     expect(afterReplace[0].id).toBe(42);         // Server-confirmed id
     expect(afterReplace[0].text).toBe('Hello world');
   });
-    
-  it('submits vote and updates sessionStorage', async () => {
-        const { result } = renderHook(() => useLiveState('scifi'));
-        await act(async () => { vi.runOnlyPendingTimers(); });
-
-        act(() => {
-            result.current.submitVote('A');
-        });
-
-        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('SUBMIT_VOTE'));
-        expect(sessionStorage.getItem('voted_scifi_1')).toBe('A');
-        expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: "Vote cast!" }));
-    });
     
     it('submits reaction and optimistically updates', async () => {
         const { result } = renderHook(() => useLiveState('scifi'));

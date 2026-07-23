@@ -53,8 +53,7 @@ export function Storyblock({
           transition={{ duration: 2, repeat: Infinity }}
           className="flex flex-col items-center gap-4"
         >
-          <BookOpen className="w-12 h-12" />
-          <p className="font-serif font-semibold text-lg text-primary/60 tracking-tight">Awaiting Story</p>
+          <p className="font-serif font-semibold text-lg text-primary tracking-tight">Loading</p>
         </motion.div>
       </div>
     );

@@ -18,25 +18,19 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "server/db";
 import {
   type ChannelId,
-  type CachedBlock,
-  NARRATIVE_TURN_MS,
-  VOTING_PHASE_MS,
-  POST_VOTE_READING_MS,
+  READING_SEGMENT_MS,
   LOBBY_DELAY_MS,
   START_BEFORE_MS,
-  AFTERPARTY_MS,
   PHASE_INITIAL_MS,
-  computeDecisionEndsAt,
   clearChannelCache,
   stateCache,
-  blockCache,
   startSessionForChannelId,
   handleChannelTick,
 } from "../game-loop/channel-tick";
 import { RealtimeEngine, type ActivationResult, type TickResult } from "@portalshq/runtime-core";
 
 // Re-export for tests
-export { NARRATIVE_TURN_MS, VOTING_PHASE_MS, POST_VOTE_READING_MS, LOBBY_DELAY_MS, START_BEFORE_MS, AFTERPARTY_MS, computeDecisionEndsAt, clearChannelCache } from "../game-loop/channel-tick";
+export { READING_SEGMENT_MS, LOBBY_DELAY_MS, START_BEFORE_MS, clearChannelCache } from "../game-loop/channel-tick";
 
 /**
  * Validates that the WebSocket is registered to a channel.
@@ -70,6 +64,7 @@ export function getChannelIdForWs(
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
+  sessionStoreParam?: any,
 ): Promise<Server> {
   // ── ChannelId Endpoints ───────────────────────────────────────────────────
 
@@ -383,86 +378,8 @@ export async function registerRoutes(
     res.json({ success: true, message: "Phase skip triggered" });
   });
 
-  app.post(
-    "/api/debug/sessions/tally",
-    isDevOnly,
-    isAdmin,
-    async (req, res) => {
-      const { channelId } = req.body;
-      if (!channelId)
-        return res
-          .status(400)
-          .json({ success: false, message: "channelId is required" });
-      const dbState = await storage.getChannelState(channelId);
-      if (!dbState?.activeSessionId) {
-        return res
-          .status(404)
-          .json({ success: false, message: "No active session" });
-      }
-      if (dbState.currentPhase !== "voting") {
-        return res
-          .status(400)
-          .json({ success: false, message: "Not in voting phase" });
-      }
-      logger.debug(`Forcing tally for channel ${channelId}`, "debug");
-      await storage.upsertChannelState(channelId, { phaseEndsAt: new Date() });
-      res.json({ success: true, message: "Tally forced" });
-    },
-  );
-
-  app.post(
-    "/api/debug/sessions/narrative",
-    isDevOnly,
-    isAdmin,
-    async (req, res) => {
-      const { channelId } = req.body;
-      if (!channelId)
-        return res
-          .status(400)
-          .json({ success: false, message: "channelId is required" });
-      const dbState = await storage.getChannelState(channelId);
-      if (!dbState?.activeSessionId) {
-        return res
-          .status(404)
-          .json({ success: false, message: "No active session" });
-      }
-      if (dbState.turnsToNextChoice <= 0) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Already at decision phase" });
-      }
-      logger.debug(`Forcing narrative turn for channel ${channelId}`, "debug");
-      await storage.upsertChannelState(channelId, { phaseEndsAt: new Date() });
-      res.json({ success: true, message: "Narrative turn forced" });
-    },
-  );
-
-  app.post(
-    "/api/debug/sessions/resolve",
-    isDevOnly,
-    isAdmin,
-    async (req, res) => {
-      const { channelId } = req.body;
-      if (!channelId)
-        return res
-          .status(400)
-          .json({ success: false, message: "channelId is required" });
-      const dbState = await storage.getChannelState(channelId);
-      if (!dbState?.activeSessionId) {
-        return res.status(404).json({
-          success: false,
-          message: "No active session for this channel",
-        });
-      }
-      logger.debug(`Forcing resolution for channel ${channelId}`, "debug");
-      await storage.updateSessionScheduledEnd(
-        dbState.activeSessionId,
-        new Date(),
-      );
-      await storage.upsertChannelState(channelId, { phaseEndsAt: new Date() });
-      res.json({ success: true, message: "Resolution triggered" });
-    },
-  );
+  // Note: /api/debug/sessions/tally, /narrative, and /resolve were removed
+  // as part of the Phase 2j cleanup (old live-voting model no longer exists).
 
   app.get(api.blocks.current.path, async (req, res) => {
     const channelId = String(req.query.channelId || "");
@@ -488,8 +405,36 @@ export async function registerRoutes(
       timeToNextDecision: Math.max(0, dbState.decisionEndsAt.getTime() - now),
       initialTimeToNextDecision: dbState.initialTimeToDecision,
       turnsToNextChoice: dbState.turnsToNextChoice,
-      phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
+      phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? READING_SEGMENT_MS,
     });
+  });
+
+  // GET /api/blocks/session/:sessionId
+  // Returns all blocks for a given session, ordered by sequence.
+  app.get("/api/blocks/session/:sessionId", async (req, res) => {
+    const sessionId = parseInt(req.params.sessionId, 10);
+    if (isNaN(sessionId)) {
+      return res.status(400).json({ error: "Invalid sessionId" });
+    }
+    try {
+      const blocks = await storage.getBlocksBySessionOrdered(sessionId);
+      res.json(
+        blocks.map((b) => ({
+          ...b,
+          createdAt:
+            b.createdAt?.toISOString() ?? new Date().toISOString(),
+          optionA: b.optionA as any,
+          optionB: b.optionB as any,
+        })),
+      );
+    } catch (error) {
+      logger.error(
+        "Failed to fetch blocks for session",
+        "routes",
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      res.status(500).json({ error: "Failed to fetch blocks" });
+    }
   });
 
   // GET /api/blocks/history
@@ -558,6 +503,22 @@ export async function registerRoutes(
       `http://${request.headers.host}`,
     ).pathname;
     if (pathname !== "/ws") return;
+
+    // Parse session cookie from the upgrade request
+    // express-session doesn't automatically apply to WebSocket upgrades
+    const cookieHeader = request.headers.cookie;
+    if (cookieHeader) {
+      const cookies = cookieHeader.split(';').reduce((acc: Record<string, string>, cookie) => {
+        const [key, value] = cookie.trim().split('=');
+        acc[key] = value;
+        return acc;
+      }, {});
+      const sessionId = cookies['connect.sid'];
+      if (sessionId) {
+        // Attach session ID to socket for later lookup
+        (socket as any).sessionId = sessionId;
+      }
+    }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
@@ -645,7 +606,7 @@ export async function registerRoutes(
                     ),
                     initialTimeToNextDecision: dbState.initialTimeToDecision,
                     turnsToNextChoice: dbState.turnsToNextChoice,
-                    phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? NARRATIVE_TURN_MS,
+phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? READING_SEGMENT_MS,
                   },
                 }),
               );
@@ -681,19 +642,52 @@ export async function registerRoutes(
             text: string;
             clientId?: string;
           };
+          
+          // Require authentication - check session from the WebSocket upgrade request
+          const wsSocket = (ws as any)._socket;
+          const sessionId = wsSocket?.sessionId as string | undefined;
+          
+          if (!sessionId) {
+            ws.send(JSON.stringify({
+              type: "ERROR",
+              payload: { message: "Authentication required to send chat messages" },
+            }));
+            return;
+          }
+
+          // Look up session from the session store
+          const sessionData = await new Promise((resolve) => {
+            sessionStoreParam?.get(sessionId, (err: any, session: any) => {
+              if (err || !session) {
+                resolve(null);
+              } else {
+                resolve(session);
+              }
+            });
+          });
+
+          const sessionUsername = (sessionData as any)?.data?.username || (sessionData as any)?.username;
+          if (!sessionUsername) {
+            ws.send(JSON.stringify({
+              type: "ERROR",
+              payload: { message: "Authentication required to send chat messages" },
+            }));
+            return;
+          }
+          
           if (username && text) {
             const dbState = await storage.getChannelState(currentChannelId);
-            let sessionId = dbState?.activeSessionId ?? undefined;
-            if (!sessionId) {
+            let sessionIdDb = dbState?.activeSessionId ?? undefined;
+            if (!sessionIdDb) {
               const nextSession =
                 await storage.getNextSession(currentChannelId);
-              sessionId = nextSession?.id;
+              sessionIdDb = nextSession?.id;
             }
             const newMsg = await storage.createChat({
               channelId: currentChannelId,
-              username,
+              username: sessionUsername, // Use authenticated username from session
               text,
-              sessionId,
+              sessionId: sessionIdDb,
             });
             broadcast(currentChannelId, {
               type: "CHAT_MESSAGE",
@@ -728,35 +722,8 @@ export async function registerRoutes(
               payload: reaction,
             });
           }
-        } else if (message.type === "SUBMIT_VOTE") {
-          const { choice, userId } = message.payload as {
-            choice: string;
-            userId: string;
-          };
-          if (choice === "A" || choice === "B") {
-            // Read phase and current block from DB — authoritative regardless of instance.
-            const dbState = await storage.getChannelState(currentChannelId);
-            const currentBlock = dbState?.currentBlockId
-              ? await storage.getBlockById(dbState.currentBlockId)
-              : null;
-
-            if (dbState?.currentPhase === "voting" && currentBlock) {
-              await storage.createVote({
-                channelId: currentChannelId,
-                sessionId: dbState.activeSessionId || 0,
-                blockId: currentBlock.id,
-                userId: userId || `anon-${Math.random()}`,
-                choice,
-              });
-              const votes = await storage.getVotesForBlock(currentBlock.id);
-              const countA = votes.filter((v) => v.choice === "A").length;
-              const countB = votes.filter((v) => v.choice === "B").length;
-              broadcast(currentChannelId, {
-                type: "VOTE_UPDATE",
-                payload: { A: countA, B: countB },
-              });
-            }
-          }
+          // Note: SUBMIT_VOTE handler was removed as part of the Phase 2j
+          // cleanup — the old live-voting model no longer exists.
         }
       } catch (err) {
         logger.error(

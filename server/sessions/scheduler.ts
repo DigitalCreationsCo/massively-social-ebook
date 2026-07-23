@@ -205,24 +205,32 @@ export class SessionScheduler {
                 const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
                 logger.info(`[Scheduler] Creating session "${title}" at ${start.toISOString()} (tz: ${schedule.timezone})`, 'scheduler');
-                const session = await storage.createSessionWithScheduleUpdate({
-                    channelId: schedule.channelId,
-                    scheduleId: schedule.id,
-                    title: title,
-                    description: channel?.description ?? "Upcoming Session",
-                    scheduledStart: start,
-                    scheduledEnd: end,
-                    timezone: schedule.timezone,
-                    sessionNumber: nextSessionNumber,
-                    seasonNumber: seasonNumber,
-                    episodeNumber: episodeNumber,
-                    subtitle: config?.subtitle ?? null,
-                }, schedule.id);
+                try {
+                    await storage.createSessionWithScheduleUpdate({
+                        channelId: schedule.channelId,
+                        scheduleId: schedule.id,
+                        title: title,
+                        description: channel?.description ?? "Upcoming Session",
+                        scheduledStart: start,
+                        scheduledEnd: end,
+                        timezone: schedule.timezone,
+                        sessionNumber: nextSessionNumber,
+                        seasonNumber: seasonNumber,
+                        episodeNumber: episodeNumber,
+                        subtitle: config?.subtitle ?? undefined,
+                    }, schedule.id);
 
-                const nextRun = computeNextRunAt(schedule);
-                await storage.updateScheduleNextRunAt(schedule.id, nextRun);
+                    const nextRun = computeNextRunAt(schedule);
+                    await storage.updateScheduleNextRunAt(schedule.id, nextRun);
 
-                logger.info(`Spawned session "${title}" (S${seasonNumber} E${episodeNumber}) from schedule ${schedule.id}`, 'scheduler');
+                    logger.info(`Spawned session "${title}" (S${seasonNumber} E${episodeNumber}) from schedule ${schedule.id}`, 'scheduler');
+                } catch (err: any) {
+                    if (err.message?.includes('23505') || err.message?.includes('unique constraint')) {
+                        logger.warn(`[Scheduler] Collision detected for session "${title}" at ${start.toISOString()}. Skipping creation for schedule ${schedule.id}.`, 'scheduler');
+                    } else {
+                        throw err;
+                    }
+                }
             } catch (err) {
                 logger.error(`Failed to process schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));
             }
@@ -295,23 +303,31 @@ export class SessionScheduler {
                     const episodeNumber = ((nextSessionNumber - 1) % seasonSize) + 1;
 
                     logger.info(`[Seeding] Creating session "${title}" at ${exactScheduledStartTimestamp.toISOString()} (tz: ${schedule.timezone}) for schedule ${schedule.id}`, 'scheduler');
-                    await storage.createSessionWithScheduleUpdate({
-                        channelId: schedule.channelId,
-                        scheduleId: schedule.id,
-                        title: title,
-                        description: channelData?.description ?? 'Upcoming session',
-                        scheduledStart: exactScheduledStartTimestamp,
-                        scheduledEnd: exactScheduledEndTimestamp,
-                        timezone: schedule.timezone,
-                        sessionNumber: nextSessionNumber,
-                        seasonNumber: seasonNumber,
-                        episodeNumber: episodeNumber,
-                        subtitle: config?.subtitle ?? null,
-                    }, schedule.id);
+                    try {
+                        await storage.createSessionWithScheduleUpdate({
+                            channelId: schedule.channelId,
+                            scheduleId: schedule.id,
+                            title: title,
+                            description: channelData?.description ?? 'Upcoming session',
+                            scheduledStart: exactScheduledStartTimestamp,
+                            scheduledEnd: exactScheduledEndTimestamp,
+                            timezone: schedule.timezone,
+                            sessionNumber: nextSessionNumber,
+                            seasonNumber: seasonNumber,
+                            episodeNumber: episodeNumber,
+                            subtitle: config?.subtitle ?? undefined,
+                        }, schedule.id);
 
-                    await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
+                        await storage.updateScheduleNextRunAt(schedule.id, computeNextRunAt(schedule));
 
-                    logger.info(`[Seeding] Resolved gap. Spawned session "${title}" at ${exactScheduledStartTimestamp.toISOString()} for schedule ${schedule.id}`, 'scheduler');
+                        logger.info(`[Seeding] Resolved gap. Spawned session "${title}" at ${exactScheduledStartTimestamp.toISOString()} for schedule ${schedule.id}`, 'scheduler');
+                    } catch (err: any) {
+                        if (err.message?.includes('23505') || err.message?.includes('unique constraint')) {
+                            logger.warn(`[Seeding] Collision detected for session "${title}" at ${exactScheduledStartTimestamp.toISOString()}. Skipping seeding for schedule ${schedule.id}.`, 'scheduler');
+                        } else {
+                            throw err;
+                        }
+                    }
                 }
             } catch (err) {
                 logger.error(`[Seeding] Uncaught error ensuring sessions for schedule ${schedule.id}`, 'scheduler', err instanceof Error ? err : new Error(String(err)));

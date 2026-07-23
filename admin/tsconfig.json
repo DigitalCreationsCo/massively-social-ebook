@@ -25,6 +25,5 @@
     "src",
     "../shared"
   ],
-  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "exclude": ["node_modules", "build", "dist", "**/*.test.*"],
 }

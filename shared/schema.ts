@@ -473,7 +473,7 @@ export const chat = pgTable(
     blockId: integer("block_id").references(() => blocks.id, {
       onDelete: "set null",
     }), // nullable - chat may exist outside sessions
-    username: text("username"),
+    username: text("username").notNull().default(''),
     text: text("text").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -527,6 +527,8 @@ export type InsertReaction = z.infer<typeof insertReactionSchema>;
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").unique(),
+  username: text("username").unique(),
+  passwordHash: text("password_hash"),
   pushToken: text("push_token"),
   isBanned: boolean("is_banned").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -538,6 +540,32 @@ export const insertUserSchema = createInsertSchema(users).omit({
 });
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+
+// Note Likes table - allows users to like notes (chat messages on blocks)
+export const noteLikes = pgTable(
+  "note_likes",
+  {
+    id: serial("id").primaryKey(),
+    noteId: integer("note_id")
+      .notNull()
+      .references(() => chat.id, { onDelete: "cascade" }),
+    username: text("username").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    unqNoteUser: unique("unq_note_user").on(table.noteId, table.username),
+    idxNoteLikesNote: index("idx_note_likes_note").on(table.noteId),
+  }),
+);
+
+export const insertNoteLikeSchema = createInsertSchema(noteLikes).omit({
+  id: true,
+  createdAt: true,
+});
+export type NoteLike = typeof noteLikes.$inferSelect;
+export type InsertNoteLike = z.infer<typeof insertNoteLikeSchema>;
 
 // System Settings table
 export const systemSettings = pgTable("system_settings", {

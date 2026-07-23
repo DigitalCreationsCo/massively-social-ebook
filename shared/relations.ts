@@ -116,6 +116,14 @@ export const relations = defineRelations(schema, (r) => ({
             from: r.chat.blockId,
             to: r.blocks.id,
         }),
+        noteLikes: r.many.noteLikes(),
+    },
+
+    noteLikes: {
+        note: r.one.chat({
+            from: r.noteLikes.noteId,
+            to: r.chat.id,
+        }),
     },
 
     reactions: {

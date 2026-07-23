@@ -7,8 +7,6 @@
       "@/*": ["./client/src/*"],
       "@shared/*": ["./shared/*"],
       "@assets/*": ["./attached_assets/*"],
-      "narrative-engine": ["./packages/narrative-engine"],
-      "narrative-engine-lab": ["./packages/narrative-engine-lab"],
     },
   },
 }

@@ -30,7 +30,6 @@ describe('LiveEbook routing', () => {
             viewerCount: 0,
             chatHistory: [],
             currentBlock: null,
-            voteResults: { A: 0, B: 0 },
         });
 
         render(<LiveEbook />);
@@ -45,15 +44,8 @@ describe('LiveEbook routing', () => {
             viewerCount: 10,
             chatHistory: [],
             currentBlock: { id: 1, content: 'Story starting...' },
-            voteResults: { A: 0, B: 0 },
-            localTimeRemaining: 10000,
-            localTimeToDecision: 20000,
-            localInitialTimeToDecision: 20000,
-            localTurnsToNextChoice: 2,
-            hasVotedCurrent: false,
             username: 'tester',
             submitChat: vi.fn(),
-            submitVote: vi.fn(),
             mostRecentMessage: null,
             macroPhase: 'reading',
             reactions: [],
@@ -75,7 +67,6 @@ describe('LiveEbook routing', () => {
             viewerCount: 0,
             chatHistory: [],
             currentBlock: { id: 1, content: 'Live chapter' },
-            voteResults: { A: 0, B: 0 },
             macroPhase: 'reading',
             reactions: [],
             submitReaction: vi.fn(),
@@ -104,7 +95,6 @@ describe('LiveEbook routing', () => {
             viewerCount: 0,
             chatHistory: [],
             currentBlock: null,
-            voteResults: { A: 0, B: 0 },
         });
 
         render(<LiveEbook />);

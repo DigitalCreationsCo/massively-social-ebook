@@ -1,7 +1,7 @@
 import { sql, asc, eq, and } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { NarrativeProvider, BaseNarrativeBlock, BaseNarrativeLore, HybridCandidate } from "narrative-engine";
+import { NarrativeProvider, NarrativeBlock as BaseNarrativeBlock, NarrativeLore as BaseNarrativeLore, HybridCandidate } from "@portalshq/narrativeengine";
 import { blocks, lore } from "@shared/schema";
 import { generateEmbedding } from "./embedding";
 

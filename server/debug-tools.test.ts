@@ -24,6 +24,7 @@ vi.mock('./storage', () => ({
         updateSessionScheduledEnd: vi.fn(),
         getChannel: vi.fn(),
         updateSessionStatus: vi.fn(),
+        getBlocksBySessionOrdered: vi.fn(),
     },
 }));
 
@@ -90,6 +91,9 @@ describe('Debug Tools API', () => {
             mockedStorage.getNextSession.mockResolvedValue({ id: 123, scheduledStart: new Date(), scheduledEnd: new Date() } as any);
             mockedStorage.updateSessionStatus.mockResolvedValue({ id: 123, status: 'active' } as any);
             mockedStorage.getChannel.mockResolvedValue({ channelId: 'm2w4k' } as any);
+            // startSessionForChannelId calls getBlocksBySessionOrdered twice; if empty, it will try to batch-generate
+            // Return empty so it triggers auto-generation path, but batch-generate is not mocked
+            mockedStorage.getBlocksBySessionOrdered.mockResolvedValue([]);
 
             const res = await request(app)
                 .post('/api/debug/sessions/start')
@@ -120,10 +124,9 @@ describe('Debug Tools API', () => {
             expect(res.body.success).toBe(true);
         });
 
-        it('POST /api/debug/sessions/resolve triggers resolution', async () => {
-            mockedStorage.getActiveSession.mockResolvedValue({ id: 123, scheduledEnd: new Date() } as any);
-            mockedStorage.getChannelState.mockResolvedValue({ activeSessionId: 123 } as any);
-            
+        it('POST /api/debug/sessions/resolve is removed (Phase 2j cleanup)', async () => {
+            // The resolve endpoint was removed as part of the Phase 2j cleanup
+            // (old live-voting model no longer exists).
             const app3 = express();
             app3.use(express.json());
             await registerRoutes(createServer(app3), app3);
@@ -133,8 +136,7 @@ describe('Debug Tools API', () => {
                 .set('x-admin-token', ADMIN_TOKEN)
                 .send({ channelId: 'm2w4k' });
 
-            expect(res.status).toBe(200);
-            expect(res.body.success).toBe(true);
+            expect(res.status).toBe(404);
         });
     });
 });

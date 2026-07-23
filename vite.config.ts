@@ -24,6 +24,9 @@ const replitPlugins =
 
 export default defineConfig({
   root: "client",
+  optimizeDeps: {
+    force: true,
+  },
   plugins: [
     react(),
     runtimeErrorOverlay(),
@@ -43,14 +46,6 @@ export default defineConfig({
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "server": path.resolve(import.meta.dirname, "server"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
-      "narrative-engine": path.resolve(
-        import.meta.dirname,
-        "packages/narrative-engine",
-      ),
-      "narrative-engine-lab": path.resolve(
-        import.meta.dirname,
-        "packages/narrative-engine-lab",
-      ),
     },
   },
   build: {
@@ -70,8 +65,6 @@ export default defineConfig({
       "**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../server/**/*.{test,spec}.?(c|m)[jt]s?(x)",
       "../shared/**/*.{test,spec}.?(c|m)[jt]s?(x)",
-      // Only include src from packages, not dist (dist contains old compiled tests)
-      "../packages/**/src/**/*.{test,spec}.?(c|m)[jt]s?(x)",
     ],
     setupFiles: [
       path.resolve(import.meta.dirname, "client/src/test/setup.ts"),

@@ -1,6 +1,6 @@
 {
   "include": ["client/src/**/*", "shared/**/*", "server/**/*"],
-  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
+  "exclude": ["node_modules", "build", "dist", "**/*.test.*"],
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
@@ -8,6 +8,8 @@
     "target": "ES2022",
     "module": "ESNext",
     "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": true,
     "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",
     "esModuleInterop": true,
@@ -20,8 +22,6 @@
       "@/*": ["./client/src/*"],
       "@shared/*": ["./shared/*"],
       "@assets/*": ["./attached_assets/*"],
-      "narrative-engine": ["./packages/narrative-engine"],
-      "narrative-engine-lab": ["./packages/narrative-engine-lab"]
     }
   }
 }
