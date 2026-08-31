@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useLocation } from "wouter";
-import { useLiveState } from "@/hooks/use-live-state";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, WifiOff } from "lucide-react";
 import { validateSchemaDates } from "@/lib/validateSchema";
 import { trackEvent } from "@/lib/analytics";
 import { DEFAULT_CHANNEL_ID } from "@/App";
@@ -12,47 +11,53 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { motion } from "framer-motion";
-import { useSessionReplay } from "@shared/hooks/use-session-replay";
-import { Replay } from "@shared/components/Replay";
 import { AuthModal } from "@/components/AuthModal";
 import { useAuth } from "@/hooks/use-auth";
+import { api } from "@shared/routes";
+import type { Channel, Session } from "@shared/schema";
+import { LiveChat } from "@/components/LiveChat";
+import { LiveStreamPlayer } from "@/components/LiveStreamPlayer";
+import { PushToggle } from "@/components/pwa/PushToggle";
+import { useLiveChannel } from "@/hooks/use-live-channel";
+import { usePlayback } from "@/hooks/use-playback";
+import { cn } from "@/lib/utils";
+
+function formatViewerCount(viewerCount?: number) {
+  if (typeof viewerCount !== "number") return "—";
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(viewerCount);
+}
 
 export default function LandingPage() {
   const channelId = DEFAULT_CHANNEL_ID;
-  const {
-    sessionStatus,
-    activeSession,
-    isLoading: isLiveSessionLoading,
-    wsConnected,
-    activeChannel,
-  } = useLiveState(channelId);
+  const sessionQuery = useQuery({
+    queryKey: [api.sessions.next.path, channelId],
+    queryFn: async () => {
+      const response = await fetch(`${api.sessions.next.path}?channelId=${encodeURIComponent(channelId)}`);
+      if (!response.ok) return null;
+      return response.json() as Promise<{ session: Session | null; channel: Channel }>;
+    },
+    staleTime: 30_000,
+  });
+  const activeSession = sessionQuery.data?.session ?? null;
+  const activeChannel = sessionQuery.data?.channel ?? null;
+  const sessionStatus = activeSession?.status ?? "scheduled";
 
   const { user: authUser, isAuthenticated, logout } = useAuth();
-  const [_, setLocation] = useLocation();
   const [openFaq, setOpenFaq] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
+  
+  // Live broadcast hooks
+  const liveState = useLiveChannel(channelId);
+  const playbackQuery = usePlayback(channelId);
+  const broadcast = playbackQuery.data?.broadcast;
+  const delivery = playbackQuery.data?.delivery;
+  const manifestUrl = playbackQuery.data?.playback?.playbackManifestUrl;
+  const hasHealthyBroadcast = Boolean(delivery?.isRunning && delivery.isHealthy && manifestUrl);
+  const deliveryIssue = delivery && (!delivery.isRunning || !delivery.isHealthy);
 
-  const {
-    session: previousSession,
-    blocks: previousBlocks,
-    isLoading: isReplayLoading,
-  } = useSessionReplay({ channelId, notableOnly: true, tailFocus: {} });
-
-  const previousSessionExists =
-    previousSession && previousBlocks && previousBlocks.length > 0;
-
-  const replayRef = useRef<HTMLDivElement>(null);
-
-  // Determine which session to feature: an active one or the latest completed one
-  const featuredSession = activeSession ?? previousSession;
-  const featuredBlocks = previousBlocks ?? [];
-  const featuredTitle = featuredSession?.title.split(":").at(-1)!.trim() ?? "Episode 1";
-  const sessionIsActive =
-    sessionStatus === "active" && activeSession !== null;
-
-  useEffect(() => {
-    console.log({featuredSession})
-  }, [featuredSession]);
+  const featuredSession = activeSession;
+  const featuredTitle = featuredSession?.title.split(":").at(-1)?.trim() ?? "Live Broadcast";
 
   // Construct schema params and validate before creating the full JSON-LD object
   const schemaParams = featuredSession
@@ -71,9 +76,9 @@ export default function LandingPage() {
     featuredSession && isValidSchema && schemaParams
       ? {
           "@context": "https://schema.org",
-          "@type": "ItemPage",
-          name: "The 25th Chapter: Daily Serial Story",
-          description: `A new episode of an interactive thriller released daily. Read ${featuredTitle} now.`,
+          "@type": "BroadcastEvent",
+          name: "The 25th Chapter: Continuous Live Story",
+          description: `An AI-generated mystery broadcast unfolding live. Watch ${featuredTitle} now.`,
           url: "https://25thchapter.com",
           image: "https://25thchapter.com/preview/1.png",
           author: { "@type": "Organization", name: "25th Chapter" },
@@ -94,40 +99,21 @@ export default function LandingPage() {
         }
       : null;
 
-  const isLoading = isLiveSessionLoading || isReplayLoading;
+  const isLoading = sessionQuery.isLoading;
 
   const coverImageUrl = activeChannel?.coverImage ?? undefined;
-
-  const randomIndexBlockWithImage = useMemo(() => {
-    const validIndexes = (previousBlocks ?? [])
-      .map((block, index) => (block?.imageUrl ? index : -1))
-      .filter((index) => index !== -1);
-
-    if (validIndexes.length === 0) {
-      return -1;
-    }
-
-    return validIndexes[Math.floor(Math.random() * validIndexes.length)];
-  }, [previousBlocks]);
-
-  // Redirect to /read if there's an active live session
-  useEffect(() => {
-    if (wsConnected && sessionIsActive) {
-      setLocation("/read");
-    }
-  }, [wsConnected, sessionIsActive, setLocation]);
 
   const AuthButton = () => (
     <div className="z-50 py-6 m-auto">
       {isAuthenticated ? (
         <>
         <div className="flex items-center border gap-2">
-          <span className="text-white/40 hidden sm:inline">
+          <span className="text-white/75 hidden sm:inline">
             {authUser?.username}
           </span>
           <button
             onClick={logout}
-            className="text-white/40 hover:text-white/70 transition-colors font-sans"
+            className="text-white/75 transition-colors font-sans"
            >
              Sign out
            </button>
@@ -136,7 +122,7 @@ export default function LandingPage() {
       ) : (
         <button
           onClick={() => setAuthModalOpen(true)}
-          className="text-white/40 hover:text-white/70 transition-colors font-sans underline"
+          className="text-white/75 hover:text-white transition-colors font-sans underline"
         >
           Sign in
         </button>
@@ -149,7 +135,7 @@ export default function LandingPage() {
       <div className="min-h-screen w-full bg-black flex flex-col items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <p className="font-serif font-semibold tracking-widest text-sm text-white/60">
+          <p className="font-serif font-semibold tracking-widest text-sm text-white/75">
             Loading
           </p>
         </div>
@@ -167,9 +153,61 @@ export default function LandingPage() {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
+          LIVE PLAYER SECTION (Above the fold)
+         ═══════════════════════════════════════════════════════════════════ */}
+      <main className="min-h-[70dvh] overflow-x-hidden bg-[#050403] text-foreground selection:bg-primary/30 w-full">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "BroadcastEvent",
+              name: "Massively Social — Live Broadcast",
+              description: "Drop into a continuous AI-generated cinematic broadcast and join the live conversation.",
+              isLiveBroadcast: hasHealthyBroadcast,
+            }),
+          }}
+        />
+        <div className="relative z-10 mx-auto flex min-h-[70dvh] flex-col px-4 pb-5 pt-4 sm:px-6 sm:pb-7 sm:pt-6">
+          <header className="mb-5 flex items-center justify-between gap-4">
+            <div></div>
+            <PushToggle />
+          </header>
+
+          {!liveState.wsConnected && !liveState.isLoading && (
+            <div className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-amber-300/10 bg-amber-300/[0.06] px-4 py-2 text-xs text-amber-100/65">
+              <WifiOff className="size-3.5" />
+              Connecting
+            </div>
+          )}
+
+          <section className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-6">
+            
+            <div className="flex min-w-0 flex-col lg:pl-[23rem]">
+              <div className="mb-4 flex items-center justify-center gap-2">
+                <span className={cn("size-2 rounded-full", hasHealthyBroadcast ? "animate-pulse bg-primary shadow-[0_0_12px_rgba(251,191,36,0.9)]" : "bg-white/25")} aria-hidden="true" />
+                <span className="hidden h-4 w-px bg-white/15 sm:block" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary/80">{hasHealthyBroadcast ? "On air" : playbackQuery.isLoading ? "Checking signal" : broadcast?.mode || "Signal unavailable"}</span>
+              </div>
+
+              <LiveStreamPlayer manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} />
+
+              {deliveryIssue && <div className="mt-3 rounded-lg px-4 py-3 text-sm"><span className="font-medium text-white/75">{delivery?.lastError || "We are reconnecting the signal."}</span></div>}
+              {playbackQuery.isError && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-white/65">We could not check the broadcast right now. Try refreshing in a moment.</div>}
+
+            </div>
+
+            <aside className="flex min-h-[20rem] overflow-hidden border border-white/10 bg-black/35 shadow-[0_20px_80px_rgba(0,0,0,0.28)] backdrop-blur-sm lg:min-h-0">
+              <LiveChat numUsers={formatViewerCount(broadcast?.viewerCount)} history={liveState.chatHistory ?? []} mostRecentMessage={liveState.mostRecentMessage} username={liveState.username ?? "Guest"} onSend={liveState.submitChat ?? (() => undefined)} isOpen={chatOpen} keepOpen onToggle={() => setChatOpen((open) => !open)} />
+            </aside>
+          </section>
+        </div>
+      </main>
+
+      {/* ═══════════════════════════════════════════════════════════════════
           HERO SECTION
          ═══════════════════════════════════════════════════════════════════ */}
-      <section className="relative w-full flex items-center justify-center py-12 px-6 overflow-hidden">
+      <section id="content-section" className="relative w-full flex items-center justify-center py-12 px-6 overflow-hidden">
         {/* Background gradient */}
         <div className="absolute inset-0 bg-gradient-to-b from-zinc-950 via-black to-black" />
         {coverImageUrl && (
@@ -192,7 +230,7 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
-            className="text-xs tracking-[0.4em] text-primary/60 font-sans uppercase"
+            className="text-xs tracking-[0.4em] text-white font-sans uppercase"
           >
             25th Chapter Presents
           </motion.p>
@@ -204,20 +242,18 @@ export default function LandingPage() {
             transition={{ duration: 0.8, delay: 0.1 }}
             className="relative text-center space-y-6"
           >
-            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/40 to-primary/20 rounded-2xl blur-2xl opacity-60 transition duration-1000 w-full h-full" />
+            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-white/40 to-primary/20 rounded-2xl blur-2xl opacity-60 transition duration-1000 w-full h-full" />
             <h1 className="font-serif font-semibold text-5xl md:text-7xl text-white tracking-tight leading-tight">
               One mystery.
               <br />
               One daily episode.
             </h1>
-            <p className="text-white/50 font-sans text-lg max-w-2xl mx-auto leading-relaxed">
-              An interactive thriller released one episode at a time.
-              <br />
-              {featuredTitle} is available now.
+            <p className="text-white/75 font-sans text-lg max-w-2xl mx-auto leading-relaxed">
+              An interactive thriller story in motion.
             </p>
           </motion.div>
 
-          {/* CTA */}
+          {/* CTA - Player is visible above the fold */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -226,12 +262,12 @@ export default function LandingPage() {
           >
             <Button
               onClick={() => {
-                trackEvent("Read Now Clicked", { channel: channelId });
-                setLocation("/read");
+                trackEvent("Scroll to Content", { channel: channelId });
+                document.getElementById('content-section')?.scrollIntoView({ behavior: "smooth" });
               }}
               className="w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-10 shadow-[0_0_30px_rgba(var(--primary),0.2)] transition-all hover:scale-[1.01]"
             >
-              Read {featuredTitle}
+              Explore the Story
             </Button>
           </motion.div>
 
@@ -253,65 +289,6 @@ export default function LandingPage() {
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          FEATURED EPISODE / PREVIOUSLY AIRED
-         ═══════════════════════════════════════════════════════════════════ */}
-      {previousSessionExists && (
-        <section className="w-full px-6 py-24 bg-zinc-950/50">
-          <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.3 }}
-          className="max-w-4xl mx-auto">
-            <div className="text-center space-y-4 mb-16">
-              <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
-                Previous Episode
-              </p>
-              <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
-                {previousSession?.title ?? featuredTitle}
-              </h2>
-              <p className="text-white/50 max-w-2xl mx-auto font-sans text-lg">
-                {previousSession?.description ??
-                  "The mystery unfolds. Watch the episode now."}
-              </p>
-              {previousSession?.episodeNumber && (
-                <p className="text-xs tracking-[0.3em] uppercase text-primary/50">
-                  Episode {previousSession.episodeNumber}
-                </p>
-              )}
-            </div>
-
-            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all duration-500">
-              <div
-                ref={replayRef}
-                className="relative aspect-video bg-black overflow-hidden"
-              >
-                <Replay
-                  session={previousSession}
-                  blocks={previousBlocks || []}
-                  onPlay={() => {
-                    trackEvent("Replay Started", { channel: channelId });
-                  }}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
-              </div>
-            </div>
-
-            <div className="flex justify-center mt-8">
-              <Button
-                onClick={() => {
-                  trackEvent("Read Now From Replay", { channel: channelId });
-                  setLocation("/read");
-                }}
-                className="bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold text-xl py-6 px-12 shadow-lg transition-all hover:scale-[1.01]"
-              >
-                {`Read ${featuredTitle}`}
-              </Button>
-            </div>
-          </motion.div>
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════
           CHARACTER SECTION
          ═══════════════════════════════════════════════════════════════════ */}
       <section className="w-full px-6 py-24 bg-zinc-950/50">
@@ -325,17 +302,17 @@ export default function LandingPage() {
             <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
               Follow the investigation
             </h2>
-            <p className="text-white/50 max-w-2xl mx-auto font-sans text-lg">
+            <p className="text-white/75 max-w-2xl mx-auto font-sans text-lg">
               Every episode uncovers another piece of the conspiracy.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+          <div className="grid md:grid-cols-2 gap-8 max-w-2xl mx-auto">
             {/* Character 1 */}
-            <div className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/10">
+            <div className="group order-2 relative aspect-[1/2] overflow-hidden rounded-2xl border border-white/10">
               {/* Background Image */}
               <img
-                src="/hero1.png"
+                src="hero1.png"
                 alt="Special Agent Nathan Gunn"
                 className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 md:opacity-80 group-hover:opacity-100"
               />
@@ -349,18 +326,18 @@ export default function LandingPage() {
                 <h3 className="text-3xl font-serif font-semibold text-white">
                   Nathan Gunn
                 </h3>
-                <p className="mt-1 text-sm text-white/70">
+                <p className="mt-1 text-sm text-white/75">
                   Federal investigator
                 </p>
                 </div>
-                <p className="mt-5 text-white/90 leading-relaxed">
+                <p className="mt-5 leading-relaxed">
                   A theft investigation leads him to a mystery that challenge his beliefs.
                 </p>
               </div>
             </div>
 
             {/* Character 2 */}
-            <div className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/10">
+            <div className="group relative aspect-[1/2] overflow-hidden rounded-2xl border border-white/10">
               {/* Background Image */}
               <img
                 src="/hero2.png"
@@ -375,11 +352,11 @@ export default function LandingPage() {
                 <h3 className="text-3xl font-serif font-semibold text-white">
                   Claire Cole
                 </h3>
-                <p className="mt-1 text-sm text-white/70">
+                <p className="mt-1 text-sm text-white/75">
                   Major crimes detective
                 </p>
                 </div>
-                <p className="mt-5 text-white/90 leading-relaxed">
+                <p className="mt-5 leading-relaxed">
                   She built her career on seeing what others miss. This case leaves behind evidence she can't explain.
                 </p>
               </div>
@@ -394,7 +371,7 @@ export default function LandingPage() {
       <section className="w-full px-6 py-24 bg-zinc-950/30">
         <div className="max-w-4xl mx-auto">
           <div className="text-center space-y-4 mb-16">
-            <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
+            <p className="text-xs tracking-[0.4em] text-white/75 uppercase">
               How It Works
             </p>
             <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
@@ -406,35 +383,35 @@ export default function LandingPage() {
             {[
               {
                 step: "01",
-                title: `Read ${featuredTitle}`,
+                title: "Enter the live signal",
                 description:
-                  "Start reading immediately. No waiting, no live sessions. Each episode takes about 8 minutes to read.",
+                  "The channel broadcasts continuously. Join wherever the story is and stay as long as you like.",
               },
               {
                 step: "02",
-                title: "Follow the Story",
+                title: "Join the conversation",
                 description:
-                  "Each episode ends with a choice that shapes the narrative. Your decisions carry forward.",
+                  "Talk with other viewers while messages from the wider stream arrive in the same room.",
               },
               {
                 step: "03",
-                title: "Return For The Next Chapter",
+                title: "Catch the scheduled chapters",
                 description:
-                  "New episodes release daily. The story continues — and so do the consequences of your choices.",
+                  "Named episodes become canonical story windows inside the always-on broadcast.",
               },
             ].map((item) => (
               <div
                 key={item.step}
                 className="flex gap-6 items-start p-8 rounded-2xl border border-white/5 bg-black/40 backdrop-blur-sm"
               >
-                <span className="text-5xl font-serif font-semibold text-primary/30 flex-shrink-0">
+                <span className="text-5xl font-serif font-semibold text-primary/75 flex-shrink-0">
                   {item.step}
                 </span>
                 <div className="space-y-2">
                   <h3 className="text-2xl font-serif font-semibold text-white">
                     {item.title}
                   </h3>
-                  <p className="text-white/60 font-sans text-lg">
+                  <p className="text-white/75 font-sans text-lg">
                     {item.description}
                   </p>
                 </div>
@@ -450,7 +427,7 @@ export default function LandingPage() {
       <section id="faq" className="w-full px-6 py-24 bg-zinc-950/50">
         <div className="max-w-2xl mx-auto">
           <div className="text-center space-y-4 mb-16">
-            <p className="text-sm text-primary/60 font-sans uppercase tracking-widest">
+            <p className="text-sm text-white/75 font-sans uppercase tracking-widest">
               FAQ
             </p>
             <h2 className="text-4xl md:text-5xl font-serif font-semibold text-white tracking-tight">
@@ -463,7 +440,7 @@ export default function LandingPage() {
               {
     id: "episodes",
     q: "How do episodes work?",
-    a: `Stories are released one episode at a time. ${featuredTitle} is available now, and new episodes are released regularly. Each episode takes about 8 minutes to read.`,
+    a: `Stories are released one episode at a time. ${featuredTitle} is available now, and new episodes are released regularly. Each episode takes about 8 minutes to watch.`,
   },
   //  {
   //               id: "choices",
@@ -487,13 +464,13 @@ export default function LandingPage() {
   },
   {
     id: "missed",
-    q: "Can I read older episodes?",
-    a: "Yes. Once an episode is released, you can read it anytime and catch up at your own pace.",
+    q: "Can I watch older episodes?",
+    a: "Yes. Once an episode is released, you can watch it anytime and catch up at your own pace.",
   },
   {
     id: "app",
     q: "Do I need to download an app?",
-    a: "No. You can read in your browser, or add The 25th Chapter to your home screen for an app-like experience.",
+    a: "No. You can watch in your browser, or add The 25th Chapter to your home screen for an app-like experience.",
   },
             ].map((faq) => (
               <Collapsible
@@ -508,12 +485,12 @@ export default function LandingPage() {
                     {faq.q}
                   </h3>
                   <ChevronDown
-                    className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${openFaq === faq.id ? "" : "-rotate-90"}`}
+                    className={`h-4 w-4 shrink-0 text-white/75 transition-transform duration-200 ${openFaq === faq.id ? "" : "-rotate-90"}`}
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="overflow-hidden transition-all duration-200 data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
                   <div className="px-4 py-4">
-                    <p className="text-white/50 font-sans text-lg leading-relaxed">
+                    <p className="text-white/75 font-sans text-lg leading-relaxed">
                       {faq.a}
                     </p>
                   </div>
@@ -528,14 +505,14 @@ export default function LandingPage() {
           FINAL CTA
          ═══════════════════════════════════════════════════════════════════ */}
       <section className="relative w-full pt-24 pb-16 px-6 bg-gradient-to-b from-transparent to-zinc-950/80">
-        {/* Background image */}
-        {randomIndexBlockWithImage >= 0 && (
+        {/* The channel art stays stable while the live stream itself changes. */}
+        {coverImageUrl && (
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.05]"
           >
             <img
-              src={previousBlocks?.[randomIndexBlockWithImage]?.imageUrl ?? coverImageUrl ?? ""}
+              src={coverImageUrl}
               alt=""
               className="h-full w-full object-cover select-none"
               draggable={false}
@@ -552,15 +529,15 @@ export default function LandingPage() {
           <div className="max-w-sm mx-auto">
             <Button
               onClick={() => {
-                trackEvent("Final CTA Read Now", { channel: channelId });
-                setLocation("/read");
+                trackEvent("Final CTA Explore", { channel: channelId });
+                document.getElementById('content-section')?.scrollIntoView({ behavior: "smooth" });
               }}
               className="w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-6 shadow-lg transition-all hover:scale-[1.01]"
             >
-              Read {featuredTitle}
+              Explore {featuredTitle}
             </Button>
-            <p className="py-5 text-xs tracking-[0.4em] text-primary/70 font-sans uppercase text-center">
-              The 25th Chapter
+            <p className="py-5 text-xs tracking-[0.4em] text-white font-sans uppercase text-center">
+              25th Chapter
             </p>
           </div>
           <Button

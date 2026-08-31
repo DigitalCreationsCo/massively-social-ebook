@@ -7,7 +7,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { UpdatePrompt } from "@/components/pwa/UpdatePrompt";
 import { AuthProvider } from "@/hooks/use-auth";
-import LiveEbook from "@/pages/LiveEbook";
 import LandingPage from "@/pages/UpcomingSession";
 import { VersionOverlay } from "@/components/VersionOverlay";
 import Install from "@/pages/Install";
@@ -30,7 +29,6 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={LandingPage} />
-      <Route path="/read" component={LiveEbook} />
       <Route path="/install" component={Install} />
       <Route path="/about" component={About} />
       <Route component={NotFound} />
