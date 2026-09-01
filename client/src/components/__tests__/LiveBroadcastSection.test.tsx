@@ -6,8 +6,8 @@ import { usePlayback } from "@/hooks/use-playback";
 
 vi.mock("@/hooks/use-live-channel");
 vi.mock("@/hooks/use-playback");
-vi.mock("@/components/LiveStreamPlayer", () => ({
-  LiveStreamPlayer: ({ manifestUrl }: { manifestUrl?: string }) => <div data-testid="live-stream-player">{manifestUrl || "no manifest"}</div>,
+vi.mock("@/components/VideoDeliveryPlayer", () => ({
+  VideoDeliveryPlayer: ({ manifestUrl }: { manifestUrl?: string }) => <div data-testid="video-delivery-player">{manifestUrl || "no manifest"}</div>,
 }));
 
 const baseLiveState = {
@@ -32,7 +32,7 @@ describe("LiveBroadcastSection component", () => {
     render(<LiveBroadcastSection />);
 
     expect(screen.getByText(/signal unavailable/i)).toBeInTheDocument();
-    expect(screen.getByTestId("live-stream-player")).toHaveTextContent("no manifest");
+    expect(screen.getByTestId("video-delivery-player")).toHaveTextContent("no manifest");
   });
 
   it("uses the playback API signal and its real viewer count", () => {
@@ -49,7 +49,7 @@ describe("LiveBroadcastSection component", () => {
 
     expect(screen.getByText(/on air/i)).toBeInTheDocument();
     expect(screen.getByText("12.5K")).toBeInTheDocument();
-    expect(screen.getByTestId("live-stream-player")).toHaveTextContent("https://media.example/live.m3u8");
+    expect(screen.getByTestId("video-delivery-player")).toHaveTextContent("https://media.example/live.m3u8");
   });
 
   it("explains a delivery failure while preserving chat and watch access", () => {
@@ -86,6 +86,6 @@ describe("LiveBroadcastSection component", () => {
     render(<LiveBroadcastSection />);
 
     expect(screen.getByText(/production paused/i)).toBeInTheDocument();
-    expect(screen.getByText(/stream service reconnects: streamer control api is unreachable/i)).toBeInTheDocument();
+    expect(screen.getByText(/service reconnecting: streamer control api is unreachable/i)).toBeInTheDocument();
   });
 });

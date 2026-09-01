@@ -1,5 +1,4 @@
 import { LiveChat } from "@/components/LiveChat";
-import { LiveStreamPlayer } from "@/components/LiveStreamPlayer";
 import { PushToggle } from "@/components/pwa/PushToggle";
 import { useLiveChannel } from "@/hooks/use-live-channel";
 import { usePlayback } from "@/hooks/use-playback";
@@ -8,6 +7,7 @@ import { ArrowLeft, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { DEFAULT_CHANNEL_ID } from "@/App";
 import { useLocation } from "wouter";
+import { VideoDeliveryPlayer } from "./VideoDeliveryPlayer";
 
 function formatViewerCount(viewerCount?: number) {
   if (typeof viewerCount !== "number") return "—";
@@ -59,10 +59,10 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
 
       <section className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-6">
         <div className="flex min-w-0 flex-col 2xl:pl-[23rem]">
-          <LiveStreamPlayer manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
+          <VideoDeliveryPlayer manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
 
           {waitingForStreamer && <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 text-sm text-amber-100/75">
-            Production is paused while the stream service reconnects{broadcast?.streamer?.reason ? `: ${broadcast.streamer.reason}` : "."}
+            Service reconnecting{broadcast?.streamer?.reason ? `: ${broadcast.streamer.reason}` : "."}
           </div>}
           {deliveryIssue && <div className="mt-3 rounded-lg px-4 py-3 text-sm"><span className="font-medium text-white/75">{delivery?.lastError || "We are reconnecting the signal."}</span></div>}
           {playbackQuery.isError && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-white/65">We could not check the broadcast right now. Try refreshing in a moment.</div>}

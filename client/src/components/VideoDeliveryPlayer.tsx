@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { mediaAnalytics } from "@/lib/media-analytics";
 import { CenterPlayButton, MediaControls, type PlayerState } from "./MediaControls";
 
-interface LiveStreamPlayerProps {
+interface VideoDeliveryPlayerProps {
   manifestUrl?: string | null;
   isLive: boolean;
   channelId?: string;
@@ -17,8 +17,14 @@ function canPlayNativeHls(video: HTMLVideoElement) {
   return Boolean(video.canPlayType("application/vnd.apple.mpegurl") || video.canPlayType("application/x-mpegURL"));
 }
 
-export function LiveStreamPlayer({ manifestUrl, isLive, channelId = "default", className }: LiveStreamPlayerProps) {
+export function VideoDeliveryPlayer({ 
+  manifestUrl, 
+  isLive, 
+  channelId = "default",
+  className 
+}: VideoDeliveryPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -27,6 +33,9 @@ export function LiveStreamPlayer({ manifestUrl, isLive, channelId = "default", c
   const [sourceVersion, setSourceVersion] = useState(0);
   const [playerState, setPlayerState] = useState<PlayerState>(manifestUrl ? "loading" : "idle");
   const [isMuted, setIsMuted] = useState(true);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [areControlsVisible, setAreControlsVisible] = useState(true);
+  const controlsFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyticsSessionIdRef = useRef<string | null>(null);
 
   // Detect media type from URL
@@ -161,16 +170,87 @@ export function LiveStreamPlayer({ manifestUrl, isLive, channelId = "default", c
     if (video.paused) await attemptPlayback();
   };
 
+  const toggleFullScreen = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch((error) => {
+        console.error("Error attempting to enable full screen:", error);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  const showControls = useCallback(() => {
+    setAreControlsVisible(true);
+    if (controlsFadeTimerRef.current) {
+      clearTimeout(controlsFadeTimerRef.current);
+      controlsFadeTimerRef.current = null;
+    }
+    controlsFadeTimerRef.current = setTimeout(() => {
+      setAreControlsVisible(false);
+      controlsFadeTimerRef.current = null;
+    }, 6000);
+  }, []);
+
+  const handleContainerMouseEnter = useCallback(() => {
+    showControls();
+  }, [showControls]);
+
+  const handleContainerMouseMove = useCallback(() => {
+    showControls();
+  }, [showControls]);
+
+  const handleContainerFocus = useCallback(() => {
+    showControls();
+  }, [showControls]);
+
+  const handleContainerMouseLeave = useCallback(() => {
+    if (controlsFadeTimerRef.current) {
+      clearTimeout(controlsFadeTimerRef.current);
+      controlsFadeTimerRef.current = null;
+    }
+    setAreControlsVisible(false);
+  }, []);
+
+  useEffect(() => {
+    const handleFullScreenChange = () => {
+      setIsFullScreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullScreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullScreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (controlsFadeTimerRef.current) {
+        clearTimeout(controlsFadeTimerRef.current);
+        controlsFadeTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const isUnavailable = !manifestUrl;
   const isBusy = playerState === "loading" || playerState === "reconnecting";
   const shouldShowPlay = playerState === "paused" || playerState === "error";
 
   return (
     <div
-      className={cn("group relative isolate aspect-video w-full overflow-hidden rounded-[2rem] border border-white/20 bg-[#050403] shadow-[0_28px_100px_rgba(0,0,0,0.55)]", className)}
+      ref={containerRef}
+      className={cn("group relative isolate aspect-video w-full overflow-hidden rounded-[2rem] border border-white/20 bg-[#050403] shadow-[0_28px_100px_rgba(0,0,0,0.55)]", isFullScreen ? "rounded-none border-none" : "", className)}
       role={isUnavailable ? undefined : "group"}
-      aria-label={isUnavailable ? undefined : "Live broadcast player"}
+      aria-label={isUnavailable ? undefined : "Video delivery player"}
       tabIndex={isUnavailable ? undefined : 0}
+      onMouseEnter={handleContainerMouseEnter}
+      onMouseMove={handleContainerMouseMove}
+      onMouseLeave={handleContainerMouseLeave}
+      onFocus={handleContainerFocus}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
       {!isUnavailable && (
@@ -180,7 +260,7 @@ export function LiveStreamPlayer({ manifestUrl, isLive, channelId = "default", c
           autoPlay 
           playsInline 
           className="relative size-full object-cover transition-opacity duration-700" 
-          aria-label="Live broadcast video" 
+          aria-label="Media player video" 
           onPlay={() => {
             setPlayerState("playing");
             mediaAnalytics.trackPlay(videoRef.current?.currentTime);
@@ -225,8 +305,11 @@ export function LiveStreamPlayer({ manifestUrl, isLive, channelId = "default", c
             isMuted={isMuted}
             isLive={isLive}
             isBusy={isBusy}
+            isFullScreen={isFullScreen}
             onPlaybackToggle={handlePlaybackToggle}
             onToggleMute={toggleMute}
+            onToggleFullScreen={toggleFullScreen}
+            className={cn("transition-opacity duration-500", areControlsVisible || isFullScreen ? "opacity-100" : "opacity-0")}
           />
           <CenterPlayButton
             playerState={playerState}
