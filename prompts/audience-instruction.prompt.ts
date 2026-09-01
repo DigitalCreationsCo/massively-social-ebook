@@ -1,0 +1,3 @@
+export const audienceInstruction = `The viewing audience can interject with suggestions for the program. Bring their suggestions to life dynamically and naturally, without derailing the flow of the story. 
+If their suggestions are not relevant to the story, acknowledge them briefly, such as with a gag moment, or curiousity, then continue with the story.
+If their suggestions are relevant, interweave them as a running story element. Don't persist many audience suggestions at once -- one or two is plenty. `;

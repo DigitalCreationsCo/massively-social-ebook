@@ -1,212 +1,163 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock('@google/genai', () => ({
-    GoogleGenAI: class { },
-    Type: { OBJECT: 'object', STRING: 'string' }
+const {
+  mockGenerateText,
+  mockGenerateImage,
+  mockGetLanguageModel,
+  mockGetImageModel,
+  mockGenerateContext,
+} = vi.hoisted(() => ({
+  mockGenerateText: vi.fn(),
+  mockGenerateImage: vi.fn(),
+  mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
+  mockGetImageModel: vi.fn(() => ({ provider: "test" })),
+  mockGenerateContext: vi.fn((_channelId: string, immediateContext: string) =>
+    Promise.resolve(immediateContext),
+  ),
 }));
 
-// Mock the RAG module so AI tests remain isolated
-vi.mock('./rag', () => ({
-    RagProvider: class { },
-    buildRAGContext: vi.fn((_channelId: string, immediateContext: string) =>
-        Promise.resolve(immediateContext)
-    ),
+vi.mock("ai", () => ({
+  generateText: mockGenerateText,
+  generateImage: mockGenerateImage,
+  Output: { object: vi.fn((definition: unknown) => definition) },
 }));
 
-const { mockGenerateContext } = vi.hoisted(() => ({
-    mockGenerateContext: vi.fn((_channelId: string, immediateContext: string) =>
-        Promise.resolve(immediateContext)
-    )
+vi.mock("./ai-provider", () => ({
+  getAiConfiguration: () => ({
+    text: { provider: "test", model: "test-text-model" },
+    image: { provider: "test", model: "test-image-model" },
+  }),
+  getLanguageModel: mockGetLanguageModel,
+  getImageModel: mockGetImageModel,
 }));
 
-vi.mock('narrative-engine', () => ({
-    NarrativeEngine: class {
-        generateContext = mockGenerateContext;
-    },
-    configureLabEngine: vi.fn(),
+vi.mock("./rag", () => ({ RagProvider: class {} }));
+
+vi.mock("@portalshq/narrativeengine", () => ({
+  NarrativeEngine: class {
+    generateContext = mockGenerateContext;
+  },
+  configureLabEngine: vi.fn(),
 }));
 
-vi.mock('./storage', () => ({
-    storage: {}
-}));
+import { generateStoryBlock, generateStoryImage } from "./ai";
 
-import { ai, generateStoryBlock, generateStoryImage } from './ai';
+describe("AI Generators", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGenerateContext.mockImplementation((_channelId: string, immediateContext: string) =>
+      Promise.resolve(immediateContext),
+    );
+  });
 
-describe('AI Generators', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        // Reassign models mock methods safely
-        (ai as any).models = {
-            generateContent: vi.fn(),
-            generateImages: vi.fn()
-        } as any;
+  describe("generateStoryBlock", () => {
+    it("generates a validated story block through the configured language model", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        output: {
+          title: "Test Title",
+          content: "Test content here.",
+          optionA: { label: "A", description: "desc A" },
+          optionB: { label: "B", description: "desc B" },
+          isNotable: false,
+        },
+      });
 
-        mockGenerateContext.mockImplementation((_channelId: string, immediateContext: string) =>
-            Promise.resolve(immediateContext)
-        );
+      const result = await generateStoryBlock("scifi", "Previous block text");
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(mockGetLanguageModel).toHaveBeenCalledTimes(1);
+      expect(mockGenerateText.mock.calls[0][0].instructions).toContain(
+        "Characters don't make stupid decisions",
+      );
+      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Current story context:");
+      expect(result.title).toBe("Test Title");
+      expect(result.content).toBe("Test content here.");
+      expect(result.optionA?.label).toBe("A");
+      expect(result.optionB?.label).toBe("B");
     });
 
-    describe('generateStoryBlock', () => {
-        it('should generate a valid story block result', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                text: JSON.stringify({
-                    title: 'Test Title',
-                    content: 'Test content here.',
-                    optionA: { label: 'A', description: 'desc A' },
-                    optionB: { label: 'B', description: 'desc B' },
-                })
-            });
+    it("throws when the provider returns no structured output", async () => {
+      mockGenerateText.mockResolvedValueOnce({ output: undefined });
 
-            const result = await generateStoryBlock('scifi', 'Previous block text');
-
-            expect(ai.models.generateContent).toHaveBeenCalledTimes(1);
-            expect(result.title).toBe('Test Title');
-            expect(result.content).toBe('Test content here.');
-            expect(result.optionA?.label).toBe('A');
-            expect(result.optionB?.label).toBe('B');
-        });
-
-        it('should throw an error if no text is returned', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                text: undefined
-            });
-
-            await expect(generateStoryBlock('scifi', 'Previous context')).rejects.toThrow('Failed to generate story block: No text returned.');
-        });
-
-        it('should throw error if empty text is returned', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({ text: '' });
-            await expect(generateStoryBlock('scifi', 'Context')).rejects.toThrow('Failed to generate story block: No text returned.');
-        });
-
-        it('should call NarrativeEngine.generateContext with the channelId and previousContext', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                text: JSON.stringify({
-                    title: 'RAG Title',
-                    content: 'RAG content',
-                    optionA: { label: 'A', description: 'desc A' },
-                    optionB: { label: 'B', description: 'desc B' },
-                })
-            });
-
-            await generateStoryBlock('mystery', 'The detective investigated.');
-
-            expect(mockGenerateContext).toHaveBeenCalledWith('mystery', 'The detective investigated.');
-        });
-
-        it('should use enriched context when NarrativeEngine returns different content', async () => {
-            const enrichedContext = 'Story So Far:\n1. It began.\n\nCurrent Situation:\nThe crew arrived.';
-            mockGenerateContext.mockResolvedValueOnce(enrichedContext);
-
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                text: JSON.stringify({
-                    title: 'Enriched Title',
-                    content: 'Enriched content',
-                    optionA: { label: 'A', description: 'desc A' },
-                    optionB: { label: 'B', description: 'desc B' },
-                })
-            });
-
-            const result = await generateStoryBlock('scifi', 'The crew arrived.');
-
-            expect(result.title).toBe('Enriched Title');
-            // The prompt should have included ragContext since enrichedContext !== previousContext
-            const calledPrompt = (ai.models.generateContent as any).mock.calls[ 0 ][ 0 ].contents;
-            expect(calledPrompt).toContain('Story So Far');
-        });
-
-        it('should remove options when isResolution is true', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                text: JSON.stringify({
-                    title: 'Resolution Title',
-                    content: 'Resolution content.',
-                    optionA: { label: 'A', description: 'desc A' },
-                    optionB: { label: 'B', description: 'desc B' },
-                })
-            });
-
-            const result = await generateStoryBlock('scifi', 'Previous', true);
-
-            expect(result.optionA).toBeUndefined();
-            expect(result.optionB).toBeUndefined();
-            expect(result.title).toBe('Resolution Title');
-        });
+      await expect(generateStoryBlock("scifi", "Previous context")).rejects.toThrow(
+        "Failed to generate story block: No structured output returned.",
+      );
     });
 
-    describe('generateStoryImage', () => {
-        it('should generate an image and return raw base64 (no data URI prefix)', async () => {
-            const base64Image = 'YmFzZTY0dGVzdGk='; // base64 for "base64testi"
+    it("calls NarrativeEngine.generateContext with the channel and previous context", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        output: { title: "RAG Title", content: "RAG content", isNotable: false },
+      });
 
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [ {
-                    content: {
-                        parts: [ {
-                            inlineData: {
-                                data: base64Image
-                            }
-                        } ]
-                    }
-                } ]
-            });
+      await generateStoryBlock("mystery", "The detective investigated.");
 
-            const result = await generateStoryImage('A test image description');
-
-            expect(ai.models.generateContent).toHaveBeenCalledTimes(1);
-            expect(ai.models.generateContent).toHaveBeenCalledWith({
-                model: 'gemini-2.5-flash-image',
-                contents: expect.any(String),
-                config: {
-                    responseModalities: [ "image" ],
-                    candidateCount: 1,
-                    imageConfig: {
-                        aspectRatio: "16:9",
-                    }
-                }
-            });
-            // Returns RAW base64 — NOT a data: URI.  The caller is responsible
-            // for uploading to object storage.
-            expect(result).toBe(base64Image);
-            expect(result).not.toContain('data:image');
-        });
-
-        it('should throw if no image data is returned from Gemini', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [ {
-                    content: {
-                        parts: []
-                    }
-                } ]
-            });
-
-            await expect(
-                generateStoryImage('A test image description'),
-            ).rejects.toThrow('No image data returned from Gemini.');
-        });
-
-        it('should throw if candidates is undefined', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({});
-
-            await expect(
-                generateStoryImage('A test image description'),
-            ).rejects.toThrow('No image data returned from Gemini.');
-        });
-
-        it('should throw if content is undefined', async () => {
-            (ai.models.generateContent as any).mockResolvedValueOnce({
-                candidates: [ {} ]
-            });
-
-            await expect(
-                generateStoryImage('A test image description'),
-            ).rejects.toThrow('No image data returned from Gemini.');
-        });
-
-        it('should propagate API errors (no silent fallback)', async () => {
-            (ai.models.generateContent as any).mockRejectedValueOnce(new Error('API Error'));
-
-            await expect(
-                generateStoryImage('A test image description'),
-            ).rejects.toThrow('API Error');
-        });
+      expect(mockGenerateContext).toHaveBeenCalledWith(
+        "mystery",
+        "The detective investigated.",
+      );
     });
+
+    it("includes enriched RAG context in the AI SDK prompt", async () => {
+      const enrichedContext = "Story So Far:\\n1. It began.\\n\\nCurrent Situation:\\nThe crew arrived.";
+      mockGenerateContext.mockResolvedValueOnce(enrichedContext);
+      mockGenerateText.mockResolvedValueOnce({
+        output: { title: "Enriched Title", content: "Enriched content", isNotable: false },
+      });
+
+      await generateStoryBlock("scifi", "The crew arrived.");
+
+      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Story So Far");
+    });
+
+    it("removes options when resolving a story", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        output: {
+          title: "Resolution Title",
+          content: "Resolution content.",
+          optionA: { label: "A", description: "desc A" },
+          optionB: { label: "B", description: "desc B" },
+          isNotable: true,
+        },
+      });
+
+      const result = await generateStoryBlock("scifi", "Previous", true);
+
+      expect(result.optionA).toBeUndefined();
+      expect(result.optionB).toBeUndefined();
+      expect(result.title).toBe("Resolution Title");
+    });
+  });
+
+  describe("generateStoryImage", () => {
+    it("returns raw base64 from the configured image provider", async () => {
+      const base64Image = "YmFzZTY0dGVzdGk=";
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: base64Image } });
+
+      const result = await generateStoryImage("A test image description");
+
+      expect(mockGenerateImage).toHaveBeenCalledWith({
+        model: expect.anything(),
+        prompt: expect.any(String),
+        n: 1,
+        aspectRatio: "16:9",
+      });
+      expect(mockGetImageModel).toHaveBeenCalledTimes(1);
+      expect(result).toBe(base64Image);
+      expect(result).not.toContain("data:image");
+    });
+
+    it("throws when no image data is returned", async () => {
+      mockGenerateImage.mockResolvedValueOnce({ image: undefined });
+
+      await expect(generateStoryImage("A test image description")).rejects.toThrow(
+        "No image data returned from the configured AI provider.",
+      );
+    });
+
+    it("propagates provider errors", async () => {
+      mockGenerateImage.mockRejectedValueOnce(new Error("API Error"));
+
+      await expect(generateStoryImage("A test image description")).rejects.toThrow("API Error");
+    });
+  });
 });

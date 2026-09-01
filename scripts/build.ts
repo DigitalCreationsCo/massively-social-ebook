@@ -6,8 +6,11 @@ import { config } from "dotenv";
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
 const allowlist = [
-  "@google/genai",
+  "@ai-sdk/google",
+  "@ai-sdk/openai",
   "axios",
+  "ai",
+  "ai-sdk-provider-opencode-sdk",
   "connect-pg-simple",
   "cors",
   "date-fns",

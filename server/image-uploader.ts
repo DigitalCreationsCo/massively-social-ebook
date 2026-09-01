@@ -28,7 +28,14 @@ export function getGcsImageStorage(): GCPStorageManager {
  * - `cover`:  channel cover / profile images
  * - `pending`: pre-generated images stored in pending_blocks for the next vote
  */
-export type ImageType = "block" | "cover" | "pending";
+export type ImageType = "block" | "cover" | "pending" | "ambient";
+
+/** Finished generated image bytes, ready for direct queue ingestion or archival. */
+export interface GeneratedStoryImage {
+  buffer: Buffer;
+  mimeType: "image/jpeg";
+  filename: string;
+}
 
 /**
  * Builds a deterministic GCS object path for a generated image.
@@ -47,12 +54,13 @@ export function buildImagePath(
     block: "blocks",
     cover: "cover",
     pending: "pending",
+    ambient: "ambient",
   };
   return `channels/${channelId}/images/${folderMap[imageType]}/${uuid}.jpg`;
 }
 
 /**
- * Generates a story image via Gemini and uploads it to GCS in one step.
+ * Generates a story image through the configured AI SDK provider and uploads it to GCS in one step.
  *
  * 1. Calls `generateStoryImage(description)` which returns raw base64.
  * 2. Builds a unique GCS path scoped to the channel and image type.
@@ -70,10 +78,27 @@ export async function generateAndUploadStoryImage(
   channelId: string,
   imageType: ImageType,
 ): Promise<string> {
+  return archiveStoryImage(await generateStoryImageAsset(description), channelId, imageType);
+}
+
+/** Generate image bytes without making object storage part of broadcast ingestion. */
+export async function generateStoryImageAsset(description: string): Promise<GeneratedStoryImage> {
   const base64Data = await generateStoryImage(description);
+  const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
+  const buffer = Buffer.from(normalized, "base64");
+  if (buffer.length === 0) throw new Error("Image generator returned empty image data");
+  return { buffer, mimeType: "image/jpeg", filename: `story-${crypto.randomUUID()}.jpg` };
+}
+
+/** Archive a generated image separately from its direct streamer upload. */
+export async function archiveStoryImage(
+  image: GeneratedStoryImage,
+  channelId: string,
+  imageType: ImageType,
+): Promise<string> {
   const gcs = getGcsImageStorage();
   const path = buildImagePath(channelId, imageType);
-  const gsUri = await gcs.uploadBase64Image(base64Data, path, "image/jpeg");
+  const gsUri = await gcs.uploadBase64Image(image.buffer.toString("base64"), path, image.mimeType);
   return gcs.getPublicUrl(gsUri);
 }
 

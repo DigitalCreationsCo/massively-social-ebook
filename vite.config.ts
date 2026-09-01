@@ -37,6 +37,10 @@ export default defineConfig({
       manifest: false,
       workbox: {
         globPatterns: ["**/*.{js,css,html,png,svg,ico}"],
+        // The existing channel hero artwork is just over Workbox's 2 MiB
+        // default. Keep it available offline instead of failing production
+        // builds after the client bundle has already completed.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
     }),
   ],

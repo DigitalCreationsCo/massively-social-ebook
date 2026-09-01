@@ -15,8 +15,6 @@ ENV VITE_APP_BUILD_TAG=$APP_BUILD_TAG
 ARG VITE_MIXPANEL_TOKEN
 ENV VITE_MIXPANEL_TOKEN=$VITE_MIXPANEL_TOKEN
 
-# Build narrative engine dependency
-RUN cd packages/narrative-engine && npm run build
 # Build client and server
 RUN npm run build
 
@@ -32,7 +30,6 @@ RUN npm install --omit=dev --ignore-scripts
 # Copy built server and client and dependency
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/admin/dist ./admin/dist
-COPY --from=builder /app/packages/narrative-engine/dist ./packages/narrative-engine/dist
 
 # Expose port
 EXPOSE 5001

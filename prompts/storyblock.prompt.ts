@@ -1,3 +1,5 @@
+import { createDecisionInstructions } from "./decision.prompt";
+
 const GENRE_RULES: Record<string, string[]> = {
   politics: [
     "The narrative them is politics and power struggles",
@@ -47,7 +49,7 @@ const GENRE_RULES: Record<string, string[]> = {
 
 const BASE_RULES = [
   // "Here is a description of the world and humanity to inform your world-building: ",
-  "Your story readers are humans, not machines. Write interesting stories that involve people. Humans are rational - they display emotions for a reason. 50% of the time they try to subdue or hide their emotions, 25% of time they use emotional appeal to get what they want, and the other 25% they express emotions openly and honestly. Humans never feel emotions for no reason. They also do not rapidly change their current emotion. All humans are autonomous and have agency over their actions.",
+  "Characters and readers are humans, not machines. Write interesting stories that involve people and appeal to them. All people are autonomous and have agency over their actions. Humans are rational - they display emotions for a reason. Their emotional expression varies: half the time they suppress their feelings, while the rest is split between strategic emotional appeals and complete openness. These shifts are gradual, as human emotions always serve a specific purpose.",
   "Human drama is character development. The story is a forcing function that builds, develops and shifts characters' relationships and internal states. A character from 100 blocks ago is the same person with the same memory of events.",
   "Characters don't make stupid decisions — they make understandable ones given the current circumstances.",
   "Significant revelations take DAYS, or even entire seasons to unravel - do not trivially divulge arc-defining information. Tease out 1% of a truth undiscernably, instead. The truth must be revealed implicitly, bit-by-bit.",
@@ -110,42 +112,45 @@ const examples = [
   `4. "The lighthouse keeper had not answered his radio in three days. Coast guard blamed the storm -- the worst November squall in forty years -- but Helen knew better. She had seen the light go dark from the cliff road, a sudden extinguishing. Now, standing at the harbour wall with salt spray stinging her face, she watched the black Atlantic heave its dark mass."`,
 ];
 
-export const createStoryBlockInstructions = ({
-  previousBlock,
-  ragContext,
-  isResolving,
-  genre = "crime",
-  lore,
-  summary,
-}: {
+type StoryBlockPromptOptions = {
   previousBlock: string;
   ragContext?: string;
-  isResolving: boolean;
   genre?: keyof typeof GENRE_RULES;
   lore?: string[];
   summary?: string;
-}) => {
+};
+
+type StoryBlockSystemInstructionOptions = Pick<StoryBlockPromptOptions, "genre"> & {
+  isResolving: boolean;
+};
+
+/** The live story state sent as the user prompt for each generated block. */
+export const createStoryBlockContextPrompt = ({
+  previousBlock,
+  ragContext,
+  lore,
+  summary,
+}: StoryBlockPromptOptions) => {
   const previousContext = ragContext ? ragContext : previousBlock;
 
+  return [
+    summary ? `Story summary:\n${summary}` : undefined,
+    lore?.length ? `Established lore:\n${lore.join("\n")}` : undefined,
+    `Current story context:\n${previousContext}`,
+  ]
+    .filter((section): section is string => Boolean(section))
+    .join("\n\n");
+};
+
+/** Stable authoring rules sent as the model's system-level instructions. */
+export const createStoryBlockSystemInstructions = ({
+  isResolving,
+  genre = "mystery",
+}: StoryBlockSystemInstructionOptions) => {
   const storyRules = GENRE_RULES[genre] ?? GENRE_RULES.adventure;
 
-  // Build the chronicle/summary section if available
-  const loreSection: string[] = [];
-  if (lore && lore.length > 0) {
-    lore.forEach((event) => {
-      loreSection.push(`${event}`);
-    });
-  }
-
-  const loreText =
-    loreSection.length > 0 ? loreSection.join("\n") + "\n\n" : "";
-
-  const instructions = [
-    `Produce the next moment. ${summary}
-You are a best-selling author writing an intriguing, continuous story. Your goal is to author a 1,000 block masterpiece, one block at a time. Give each block the pacing of a Tolkien sentence. Keep the reader interested to continue reading.`,
-
-    loreText,
-    previousContext,
+  return [
+    "Produce the next moment from the supplied story context. You are a best-selling author writing an intriguing, continuous story. Your goal is to author a suspenseful drama -- a huge sprawling novel with multitudes and commonalities, one block at a time. Give each block the deliberate pacing of a Tolkien paragraph. Keep the reader interested to continue.",
 
     ...storyRules,
     ...BASE_RULES,
@@ -159,8 +164,6 @@ You are a best-selling author writing an intriguing, continuous story. Your goal
     "Max 35 words.",
     ...examples,
     ...contentBlacklist,
-
+    createDecisionInstructions(),
   ].join("\n");
-
-  return instructions;
 };

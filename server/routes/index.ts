@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage";
@@ -15,7 +15,7 @@ import { CalendarService } from "../calendar";
 import { isAdmin, isDevOnly } from "../middleware/auth";
 import { logger } from "../logger";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db } from "server/db";
+import { db } from "../db";
 import {
   type ChannelId,
   READING_SEGMENT_MS,
@@ -23,11 +23,11 @@ import {
   START_BEFORE_MS,
   PHASE_INITIAL_MS,
   clearChannelCache,
-  stateCache,
   startSessionForChannelId,
   handleChannelTick,
 } from "../game-loop/channel-tick";
-import { RealtimeEngine, type ActivationResult, type TickResult } from "@portalshq/runtime-core";
+import { BroadcastRuntime } from "../broadcast/runtime";
+import { getChatIdentity, registerBroadcastRoutes } from "../broadcast/routes";
 
 // Re-export for tests
 export { READING_SEGMENT_MS, LOBBY_DELAY_MS, START_BEFORE_MS, clearChannelCache } from "../game-loop/channel-tick";
@@ -64,7 +64,7 @@ export function getChannelIdForWs(
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
-  sessionStoreParam?: any,
+  sessionMiddleware?: RequestHandler,
 ): Promise<Server> {
   // ── ChannelId Endpoints ───────────────────────────────────────────────────
 
@@ -279,7 +279,7 @@ export async function registerRoutes(
 
   // ── Admin Endpoints ──────────────────────────────────────────────────────
 
-  app.get(api.admin.sessions.list.path, isAdmin, async (req, res) => {
+  app.get(api.admin.sessions.list.path, isAdmin, async (_, res) => {
     const sessions = await storage.listSessions();
     res.json(sessions);
   });
@@ -473,18 +473,12 @@ export async function registerRoutes(
         .status(400)
         .json({ message: "channelId query parameter is required" });
 
-    const dbState = await storage.getChannelState(channelId);
-    let sessionId = dbState?.activeSessionId ?? undefined;
-    if (!sessionId) {
-      const nextSession = await storage.getNextSession(channelId);
-      sessionId = nextSession?.id;
-    }
-
-    const messages = await storage.getRecentChat(channelId, sessionId, 50);
+    const messages = await storage.getRecentChat(channelId, undefined, 50);
     res.json(
       messages.reverse().map((m) => ({
         ...m,
         createdAt: m.createdAt?.toISOString() ?? new Date().toISOString(),
+        sentAt: m.sentAt?.toISOString() ?? m.createdAt?.toISOString() ?? new Date().toISOString(),
       })),
     );
   });
@@ -504,25 +498,20 @@ export async function registerRoutes(
     ).pathname;
     if (pathname !== "/ws") return;
 
-    // Parse session cookie from the upgrade request
-    // express-session doesn't automatically apply to WebSocket upgrades
-    const cookieHeader = request.headers.cookie;
-    if (cookieHeader) {
-      const cookies = cookieHeader.split(';').reduce((acc: Record<string, string>, cookie) => {
-        const [key, value] = cookie.trim().split('=');
-        acc[key] = value;
-        return acc;
-      }, {});
-      const sessionId = cookies['connect.sid'];
-      if (sessionId) {
-        // Attach session ID to socket for later lookup
-        (socket as any).sessionId = sessionId;
-      }
-    }
-
-    wss.handleUpgrade(request, socket, head, (ws) => {
+    const upgrade = () => wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
     });
+    if (sessionMiddleware) {
+      const response = {
+        getHeader: () => undefined,
+        setHeader: () => undefined,
+        writeHead: () => undefined,
+        end: () => socket.destroy(),
+      } as any;
+      sessionMiddleware(request as Request, response, upgrade);
+    } else {
+      upgrade();
+    }
   });
 
   // Map of WS connection → channel.  This is intentionally process-local:
@@ -543,311 +532,82 @@ export async function registerRoutes(
     });
   }
 
+  const broadcastRuntime = new BroadcastRuntime(broadcast);
+  registerBroadcastRoutes(app, broadcastRuntime);
+  await broadcastRuntime.initialize();
+
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const channelId = url.searchParams.get("channelId");
-    const debug = url.searchParams.get("debug") === "true";
-    const token = url.searchParams.get("token");
-
     if (!channelId) {
       logger.warn("WebSocket connection without channelId", "ws");
       ws.close(4000, "channelId required");
       return;
     }
 
-    if (debug) {
-      if (
-        token !== process.env.ADMIN_TOKEN &&
-        (process.env.NODE_ENV === "production" || token !== "dev-token")
-      ) {
-        logger.warn(
-          `Unauthorized debug access attempt for channel ${channelId}`,
-          "ws",
-        );
-        ws.close(4001, "Unauthorized focus");
-        return;
-      }
-    }
-
     clientChannelIds.set(ws, channelId);
+    const connectionId = crypto.randomUUID();
+    void broadcastRuntime.addViewer(channelId, connectionId).catch((cause) => {
+      logger.error(
+        `Failed to register viewer for ${channelId}`,
+        "ws",
+        cause instanceof Error ? cause : new Error(String(cause)),
+      );
+    });
 
-    // Send initial state from DB — no in-memory dependency.
-    (async () => {
-      const dbState = await storage.getChannelState(channelId);
-      const block = dbState?.currentBlockId
-        ? await storage.getBlockById(dbState.currentBlockId)
-        : null;
-
-      const connectNow = Date.now();
-      if (dbState?.activeSessionId) {
-        const activeSession = await storage.getSessionById(
-          dbState.activeSessionId,
-        );
-        if (
-          activeSession &&
-          activeSession.scheduledEnd.getTime() > connectNow
-        ) {
-          if (block) {
-            ws.send(
-              JSON.stringify({
-                type: "SYNC_STATE",
-                  payload: {
-                    ...block,
-                    createdAt:
-                      block.createdAt?.toISOString() ?? new Date().toISOString(),
-                    phase: dbState.currentPhase,
-                    timeRemaining: Math.max(
-                      0,
-                      dbState.phaseEndsAt.getTime() - connectNow,
-                    ),
-                    timeToNextDecision: Math.max(
-                      0,
-                      dbState.decisionEndsAt.getTime() - connectNow,
-                    ),
-                    initialTimeToNextDecision: dbState.initialTimeToDecision,
-                    turnsToNextChoice: dbState.turnsToNextChoice,
-phaseInitialMs: PHASE_INITIAL_MS[dbState.currentPhase] ?? READING_SEGMENT_MS,
-                  },
-                }),
-              );
-            }
-            ws.send(
-            JSON.stringify({
-              type: "SESSION_STATUS",
-              payload: { status: activeSession.status, session: activeSession },
-            }),
-          );
-        }
-      } else {
-        const next = await storage.getNextSession(channelId);
-        ws.send(
-          JSON.stringify({
-            type: "SESSION_STATUS",
-            payload: { status: "scheduled", session: next || null },
-          }),
-        );
-      }
+    void (async () => {
+      const active = await storage.getActiveSession(channelId);
+      const next = active ? undefined : await storage.getNextSession(channelId);
+      ws.send(JSON.stringify({
+        type: "SESSION_STATUS",
+        payload: { status: active?.status ?? "scheduled", session: active ?? next ?? null },
+      }));
     })();
 
     ws.on("message", async (data) => {
+      let clientId: string | undefined;
       try {
         const message = JSON.parse(data.toString()) as WsMessage;
-
         const currentChannelId = getChannelIdForWs(ws, clientChannelIds);
         if (!currentChannelId) return;
+        if (message.type !== "SUBMIT_CHAT") return;
 
-        if (message.type === "SUBMIT_CHAT") {
-          const { username, text, clientId } = message.payload as {
-            username: string;
-            text: string;
-            clientId?: string;
-          };
-          
-          // Require authentication - check session from the WebSocket upgrade request
-          const wsSocket = (ws as any)._socket;
-          const sessionId = wsSocket?.sessionId as string | undefined;
-          
-          if (!sessionId) {
-            ws.send(JSON.stringify({
-              type: "ERROR",
-              payload: { message: "Authentication required to send chat messages" },
-            }));
-            return;
-          }
-
-          // Look up session from the session store
-          const sessionData = await new Promise((resolve) => {
-            sessionStoreParam?.get(sessionId, (err: any, session: any) => {
-              if (err || !session) {
-                resolve(null);
-              } else {
-                resolve(session);
-              }
-            });
-          });
-
-          const sessionUsername = (sessionData as any)?.data?.username || (sessionData as any)?.username;
-          if (!sessionUsername) {
-            ws.send(JSON.stringify({
-              type: "ERROR",
-              payload: { message: "Authentication required to send chat messages" },
-            }));
-            return;
-          }
-          
-          if (username && text) {
-            const dbState = await storage.getChannelState(currentChannelId);
-            let sessionIdDb = dbState?.activeSessionId ?? undefined;
-            if (!sessionIdDb) {
-              const nextSession =
-                await storage.getNextSession(currentChannelId);
-              sessionIdDb = nextSession?.id;
-            }
-            const newMsg = await storage.createChat({
-              channelId: currentChannelId,
-              username: sessionUsername, // Use authenticated username from session
-              text,
-              sessionId: sessionIdDb,
-            });
-            broadcast(currentChannelId, {
-              type: "CHAT_MESSAGE",
-              payload: {
-                ...newMsg,
-                createdAt:
-                  newMsg.createdAt?.toISOString() ?? new Date().toISOString(),
-                ...(clientId ? { clientId } : {}),
-              },
-            });
-          }
-        } else if (message.type === "SUBMIT_REACTION") {
-          const { blockId, emoji, userId, paragraphIndex } =
-            message.payload as {
-              blockId: number;
-              emoji: string;
-              userId: string;
-              paragraphIndex: number;
-            };
-          if (blockId && emoji) {
-            const dbState = await storage.getChannelState(currentChannelId);
-            const reaction = await storage.addReaction({
-              channelId: currentChannelId,
-              sessionId: dbState?.activeSessionId || 0,
-              blockId,
-              userId: userId || "anon",
-              emoji,
-              paragraphIndex: paragraphIndex || 0,
-            });
-            broadcast(currentChannelId, {
-              type: "REACTION_RECEIVED",
-              payload: reaction,
-            });
-          }
-          // Note: SUBMIT_VOTE handler was removed as part of the Phase 2j
-          // cleanup — the old live-voting model no longer exists.
-        }
-      } catch (err) {
-        logger.error(
-          "WS message error",
-          "ws",
-          err instanceof Error ? err : new Error(String(err)),
+        const payload = message.payload as { text?: string; clientId?: string };
+        clientId = payload.clientId;
+        const identity = getChatIdentity(req as Request);
+        if (!identity) throw new Error("Chat identity is missing; reconnect to create a guest session");
+        const stored = await broadcastRuntime.chatGateway.sendAppMessage(
+          currentChannelId,
+          identity,
+          payload.text ?? "",
+          clientId,
         );
+        ws.send(JSON.stringify({
+          type: "CHAT_ACK",
+          payload: { clientId, messageId: stored.messageId },
+        }));
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        logger.warn("WebSocket chat rejected", "chat", error);
+        ws.send(JSON.stringify({
+          type: "CHAT_REJECTED",
+          payload: { clientId, message: error.message },
+        }));
       }
     });
 
     ws.on("close", () => {
       clientChannelIds.delete(ws);
+      broadcastRuntime.removeViewer(channelId, connectionId);
     });
   });
 
-  // ── Game Loop ────────────────────────────────────────────────────────────
-  // Replaces the old global `setInterval(1000)` that polled ALL channels
-  // every second with:
-  //   1. A RealtimeEngine that runs per-channel timers only while viewers
-  //      are connected (presence-triggered).
-  //   2. A lightweight 30-second watcher that catches channels whose
-  //      sessions are due but have zero viewers (bridging the gap between
-  //      the scheduler creating a session record and the engine activating
-  //      it when the first viewer arrives).
-  // -------------------------------------------------------------------------
+  (httpServer as any).__broadcastRuntime = broadcastRuntime;
+  (httpServer as any).__cleanupGameLoop = () => broadcastRuntime.shutdown();
 
-  const engine = new RealtimeEngine({
-    tickIntervalMs: 1000,
-    onActivate: async (cid: ChannelId): Promise<ActivationResult> => {
-      // Check if there's an active session already in progress.
-      const cachedState = stateCache.get(cid);
-      if (cachedState?.activeSessionId) {
-        return true; // start ticking immediately
-      }
-
-      // Check if there's a scheduled session due or coming soon.
-      const next = await storage.getNextSession(cid);
-      if (!next) return false; // nothing scheduled at all
-
-      const isDue =
-        Date.now() >= next.scheduledStart.getTime() - START_BEFORE_MS;
-      if (isDue) {
-        // Session is due — start it (lock via the tick's internal mechanism).
-        return true;
-      }
-
-      // Scheduled for the future — set a recheck timer.
-      return {
-        scheduleRecheckAt: next.scheduledStart.getTime() - START_BEFORE_MS,
-      };
-    },
-    onTick: async (cid: ChannelId): Promise<TickResult> => {
-      const result = await handleChannelTick(
-        cid,
-        Date.now(),
-        broadcast,
-        startSessionForChannelId,
-      );
-      return { continue: result.continue };
-    },
-    onDeactivate: async (cid: ChannelId) => {
-      logger.info(`Channel ${cid}: tick engine stopped`, "game-loop");
-    },
-    logger,
+  logger.info("Live broadcast runtime initialized", "broadcast", {
+    channels: [...broadcastRuntime.configs.keys()],
   });
-
-  // Expose so the debug endpoint can check / control the engine.
-  (httpServer as any).__realtimeEngine = engine;
-
-  // Wire WS connections to the engine for presence tracking.
-  const originalConnectionHandler = wss.listeners("connection").pop();
-  wss.removeAllListeners("connection");
-  wss.on("connection", (ws, req) => {
-    // Call original handler first (sets up clientChannelIds, etc.).
-    if (originalConnectionHandler) {
-      originalConnectionHandler(ws, req);
-    }
-
-    const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const channelId = url.searchParams.get("channelId");
-    if (!channelId) return;
-
-    const connectionId = crypto.randomUUID();
-    (ws as any).__connectionId = connectionId;
-
-    engine.addViewer(channelId, connectionId).catch((err) => {
-      logger.error(`Failed to add viewer for ${channelId}`, "ws", err);
-    });
-
-    // Override close to also remove viewer from engine.
-    const originalCloseHandler = ws.listeners("close").pop();
-    ws.removeListener("close", originalCloseHandler as any);
-    ws.on("close", () => {
-      if (originalCloseHandler) (originalCloseHandler as any).call(ws);
-      engine.removeViewer(channelId, connectionId);
-    });
-  });
-
-  // Lightweight 30-second watcher for channels without viewers.
-  // This catches the case where a session is due but no one has connected
-  // yet — it calls handleGameLoopTick which starts the session via the
-  // normal lock-and-start flow, and handleChannelTick will mark it as
-  // continue=true, so the next viewer that arrives will trigger onActivate
-  // and the engine will start ticking the channel.
-  const WATCHER_INTERVAL_MS = 30_000;
-  const watcherTimer = setInterval(async () => {
-    try {
-      await handleGameLoopTick(Date.now(), broadcast);
-    } catch (err) {
-      logger.error(
-        "Game loop watcher failed",
-        "game-loop",
-        err instanceof Error ? err : new Error(String(err)),
-      );
-    }
-  }, WATCHER_INTERVAL_MS);
-
-  // For graceful shutdown.
-  (httpServer as any).__cleanupGameLoop = () => {
-    engine.stopAll();
-    clearInterval(watcherTimer);
-  };
-
-  logger.info("Game loop: RealtimeEngine (per-channel, presence-triggered) + 30s watcher", "game-loop");
 
   return httpServer;
 }

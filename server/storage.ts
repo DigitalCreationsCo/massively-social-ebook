@@ -85,6 +85,9 @@ export interface IStorage {
     limit?: number,
   ): Promise<ChatMessage[]>;
   createChat(msg: InsertChat): Promise<ChatMessage>;
+  createChatIfAbsent(
+    msg: InsertChat & { messageId: string },
+  ): Promise<{ message: ChatMessage; inserted: boolean }>;
 
   addReaction(reaction: InsertReaction): Promise<Reaction>;
   getReactionsForBlock(blockId: number): Promise<Reaction[]>;
@@ -358,22 +361,45 @@ export class DatabaseStorage implements IStorage {
     sessionId: number | undefined,
     limit: number = 50,
   ): Promise<ChatMessage[]> {
-    if (sessionId !== undefined) {
-      return await db
-        .select()
-        .from(chat)
-        .where(
-          and(eq(chat.channelId, channelId), eq(chat.sessionId, sessionId)),
-        )
-        .orderBy(desc(chat.id))
-        .limit(limit);
-    }
-    return [];
+    return await db
+      .select()
+      .from(chat)
+      .where(
+        sessionId === undefined
+          ? eq(chat.channelId, channelId)
+          : and(eq(chat.channelId, channelId), eq(chat.sessionId, sessionId)),
+      )
+      .orderBy(desc(chat.id))
+      .limit(limit);
   }
 
   async createChat(msg: InsertChat): Promise<ChatMessage> {
-    const [newMsg] = await db.insert(chat).values(msg).returning();
+    if (msg.messageId) {
+      return (await this.createChatIfAbsent(msg as InsertChat & { messageId: string })).message;
+    }
+    const [newMsg] = await db
+      .insert(chat)
+      .values(msg)
+      .returning();
     return newMsg;
+  }
+
+  async createChatIfAbsent(
+    msg: InsertChat & { messageId: string },
+  ): Promise<{ message: ChatMessage; inserted: boolean }> {
+    const [newMsg] = await db
+      .insert(chat)
+      .values(msg)
+      .onConflictDoNothing({ target: chat.messageId })
+      .returning();
+    if (newMsg) return { message: newMsg, inserted: true };
+    const [existing] = await db
+      .select()
+      .from(chat)
+      .where(eq(chat.messageId, msg.messageId))
+      .limit(1);
+    if (!existing) throw new Error(`Chat message ${msg.messageId} was not persisted`);
+    return { message: existing, inserted: false };
   }
 
   async addReaction(reaction: InsertReaction): Promise<Reaction> {

@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowUp, ChevronDown, MessageCircle } from "lucide-react";
-import type { ChatMessage } from "@/hooks/use-live-state";
+import { ArrowUp, ChevronDown, MessageCircle, Users } from "lucide-react";
+import type { ChatMessage } from "@/hooks/use-live-channel";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 interface LiveChatProps {
+  numUsers: string;
   history: ChatMessage[];
   mostRecentMessage: ChatMessage | null;
   username: string;
@@ -26,6 +27,7 @@ function getUserColor(username: string): string {
 }
 
 export function LiveChat({
+  numUsers,
   history,
   mostRecentMessage,
   username,
@@ -91,7 +93,7 @@ export function LiveChat({
 
   return (
     // ── Chat wrapper ────────────────────────────────────────────────────
-    // This element is a flex child inside the bottom zone (see LiveEbook).
+    // This element is a flex child inside the bottom zone (see LiveBroadcastSection).
     //
     // Closed → fixed peek-bar height (44px, flex-shrink: 0).
     // Open   → flex: 1, min-height: 0 so it fills all remaining space
@@ -133,19 +135,23 @@ export function LiveChat({
         aria-expanded={isEffectivelyOpen}
       >
         {/* Live pulse dot */}
-        <span
+        {/* <span
           className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-primary"
           style={{
             animation: "livePulse 2.4s ease-in-out infinite",
           }}
           aria-hidden="true"
-        />
+        /> */}
 
         {isEffectivelyOpen ? (
           // Open state: label
           <>
-            <span className="flex-1 text-[11px] font-medium tracking-[0.12em] uppercase text-white/50">
-              Live Chat
+            <span className="flex-1">
+              <div className="self-end text-white/90 flex shrink-0 items-center gap-1.5 text-xs" aria-label={`${numUsers} viewers`}>
+                <Users className="size-3.5" />
+                <span className="font-mono tabular-nums">{numUsers}</span>
+                {/* <span className="hidden sm:inline">{numUsers === '1' ? 'person' : 'people'}</span> */}
+              </div>
               {isClosable && (
                 <span className="text-white/20 font-normal normal-case tracking-normal">
                   {" "}
@@ -228,9 +234,9 @@ export function LiveChat({
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="text-center text-white/50 text-sm py-8"
+                    className="text-center text-white/75 text-sm py-8"
                   >
-                    Be the first to speak.
+                    Be the first to speak
                   </motion.p>
                 ) : (
                   history.map((msg) => {
@@ -269,7 +275,7 @@ export function LiveChat({
 
           {/* ── Input bar ──────────────────────────────────────────────────
               flex-shrink-0 keeps it pinned to the bottom of the chat panel.
-              The bottom zone's `bottom: keyboardHeight` (set in LiveEbook)
+              The bottom zone's `bottom: keyboardHeight` (set in LiveBroadcastSection)
               ensures this sits precisely above the software keyboard with
               zero extra calculations needed here.
              ────────────────────────────────────────────────────────────── */}
@@ -295,10 +301,10 @@ export function LiveChat({
               size="icon"
               disabled={!inputText.trim()}
               className={cn(
-                "flex-shrink-0 h-12 w-12 p-0! m-0!",
-                "bg-primary/10 text-white",
+                "rounded-full flex-shrink-0 h-12 w-12 p-0! m-0!",
+                "bg-primary/20 text-white",
                 "disabled:opacity-20 disabled:bg-transparent disabled:border border-none",
-                "transition-all duration-150",
+                "transition-all duration-20",
               )}
               aria-label="Send message"
             >

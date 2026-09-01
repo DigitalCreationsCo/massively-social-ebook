@@ -427,7 +427,12 @@ export function useLiveState(channelId: string) {
         sessionId: activeSession?.id || null,
         blockId: currentBlock?.id || null,
         username,
+        messageId: `legacy-pending:${clientId}`,
+        authorId: `legacy:${username}`,
+        authorDisplayName: username,
         text,
+        sentAt: new Date(),
+        provenance: { kind: "portals" },
         createdAt: new Date(),
       };
 

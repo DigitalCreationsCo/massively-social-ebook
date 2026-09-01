@@ -27,7 +27,7 @@ export function PushToggle() {
     <button
       onClick={subscribeUser}
       disabled={isLoading}
-      className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium py-1.5 border-primary/20 hover:bg-primary/5 rounded-full transition-colors"
+      className="flex self-end items-center gap-2 text-sm font-medium py-1.5 border-primary/20 rounded-full transition-colors"
     >
       {isLoading ? (
         <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />

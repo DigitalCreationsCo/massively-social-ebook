@@ -279,6 +279,24 @@ export type BlockWithSession = Block & {
   session: Session;
 };
 
+export interface DeliverySegment {
+  audioUrl: string;
+  durationSeconds: number;
+  ordinal: number;
+  /** Remote queue pair receipt, persisted after canonical pre-roll staging. */
+  queuePairId?: string;
+  /** Stable pair key used to reconcile a retry after an ebook process restart. */
+  queueIdempotencyKey?: string;
+}
+
+const deliverySegmentSchema = z.object({
+  audioUrl: z.string().url(),
+  durationSeconds: z.number().positive(),
+  ordinal: z.number().int().nonnegative(),
+  queuePairId: z.string().min(1).optional(),
+  queueIdempotencyKey: z.string().min(1).optional(),
+});
+
 // ─── Pending Blocks table ─────────────────────────────────────────────────────
 //
 // Stores AI-pre-generated story continuations so they survive a restart.
@@ -352,6 +370,7 @@ export const blocks = pgTable(
     optionB: jsonb("option_b"),
     ttsEnabled: boolean("tts_enabled").default(true).notNull(),
     audioUrl: text("audio_url"),
+    deliverySegments: jsonb("delivery_segments").$type<DeliverySegment[]>(),
     isNotable: boolean("is_notable").default(false).notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
     searchVector: tsvector("search_vector").generatedAlwaysAs(
@@ -382,12 +401,16 @@ export const blocks = pgTable(
   },
 );
 
-export const insertBlockSchema = createInsertSchema(blocks).omit({
+export const insertBlockSchema = createInsertSchema(blocks, {
+  deliverySegments: z.array(deliverySegmentSchema).nullable().optional(),
+}).omit({
   id: true,
   createdAt: true,
   embedding: true,
 });
-export const Block = createSelectSchema(blocks);
+export const Block = createSelectSchema(blocks, {
+  deliverySegments: z.array(deliverySegmentSchema).nullable(),
+});
 export type Block = z.infer<typeof Block>;
 export type InsertBlock = z.infer<typeof insertBlockSchema>;
 
@@ -474,12 +497,25 @@ export const chat = pgTable(
       onDelete: "set null",
     }), // nullable - chat may exist outside sessions
     username: text("username").notNull().default(''),
+    messageId: text("message_id")
+      .notNull()
+      .default(sql`'legacy:' || md5(random()::text || clock_timestamp()::text)`),
+    authorId: text("author_id").notNull().default("legacy:anonymous"),
+    authorDisplayName: text("author_display_name"),
     text: text("text").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    provenance: jsonb("provenance")
+      .$type<{ kind: "portals" | "external"; provider?: string; providerMessageId?: string }>()
+      .notNull()
+      .default({ kind: "portals" }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => ({
+    unqChatMessageId: unique("unq_chat_message_id").on(table.messageId),
     idxChatBlock: index("idx_chat_block").on(table.blockId, table.createdAt),
     idxChatSession: index("idx_chat_session").on(
       table.sessionId,
@@ -623,6 +659,9 @@ export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
 export const WS_EVENTS = {
   SYNC_STATE: "sync_state",
   CHAT_MESSAGE: "chat_message",
+  CHAT_ACK: "chat_ack",
+  CHAT_REJECTED: "chat_rejected",
+  VIEWER_COUNT: "viewer_count",
   VOTE_UPDATE: "vote_update",
   SUBMIT_CHAT: "submit_chat",
   SUBMIT_VOTE: "submit_vote",

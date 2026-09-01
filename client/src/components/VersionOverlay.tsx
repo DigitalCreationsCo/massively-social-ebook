@@ -17,7 +17,7 @@ export function VersionOverlay() {
       : `${pkg.version}-dev.local`;
 
   return (
-    <div className="relative">
+    <div className="relative hidden">
       <span
         data-testid="version-overlay"
         className="absolute bottom-0 w-full text-center text-[10px] font-mono text-white/20 z-0 pointer-events-none select-none"

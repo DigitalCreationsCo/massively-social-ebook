@@ -1,4 +1,7 @@
-import { createStoryBlockInstructions } from "../prompts/storyblock.prompt";
+import {
+    createStoryBlockContextPrompt,
+    createStoryBlockSystemInstructions,
+} from "../prompts/storyblock.prompt";
 
 
 
@@ -19,13 +22,16 @@ A drone hummed in the ventilation shaft. Lily froze, her fingers tightening on t
 const previousBlock = "";
 
 
-const adSetBlock = createStoryBlockInstructions({
+const adSetBlockPrompt = createStoryBlockContextPrompt({
     previousBlock,
     ragContext,
-    isResolving: false,
     genre: "mystery",
     lore,
     summary: "",
 });
+const adSetBlockInstructions = createStoryBlockSystemInstructions({
+    isResolving: false,
+    genre: "mystery",
+});
 
-console.log(adSetBlock);
+console.log({ instructions: adSetBlockInstructions, prompt: adSetBlockPrompt });

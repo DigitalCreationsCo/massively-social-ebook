@@ -1,4 +1,184 @@
-# 25th Chapter Product Specification
+# 25th Chapter — Continuous Live Broadcast
+
+The primary experience is now a continuous, AI-generated HLS broadcast. The
+application composes Portals capabilities rather than advancing a story in the
+browser:
+
+```text
+NarrativeEngine -> finished image + bounded TTS bytes --authenticated multipart--> queue-broadcast -> HLS
+                                                                  -> IndustryMediaPlayer
+YouTube/Twitch/app chat -> realtime-fanout -> persisted chat -> existing WebSocket
+schedule/operator state -> runtime-core -> BroadcastCoordinator
+```
+
+`/watch` is always available. A channel produces ambient, non-canonical material
+between scheduled episodes. Three minutes before an episode it stages at least
+two canonical image/audio pairs in the remote streamer without making them
+eligible for playout. At the scheduled start, it drains the current ambient
+pair, releases staged canonical pairs sequentially,
+and returns to ambient generation after the scheduled end.
+
+The old replay APIs, data, and routes remain available for a future archive
+experience, but they are not part of the primary navigation.
+
+## Live broadcast configuration
+
+Install the Portals capabilities from the npm registry; the application does not
+use sibling `file:` packages:
+
+- `@portalshq/capability-queue-broadcast` (server only)
+- `@portalshq/capability-video-delivery`
+- `@portalshq/capability-realtime-fanout`
+- `@portalshq/runtime-core`
+
+`BROADCAST_CHANNELS_JSON` is validated during startup and keyed by the existing
+application channel ID. Tokens and OAuth credentials are referenced by variable
+name, never embedded in the registry:
+
+```json
+{
+  "your-channel-id": {
+    "controlEndpoint": "https://streamer.example.com",
+    "queueTokenEnv": "BROADCAST_QUEUE_TOKEN",
+    "youtube": {
+      "liveChatId": "youtube-live-chat-id",
+      "clientIdEnv": "YOUTUBE_CLIENT_ID",
+      "clientSecretEnv": "YOUTUBE_CLIENT_SECRET",
+      "refreshTokenEnv": "YOUTUBE_REFRESH_TOKEN"
+    },
+    "twitch": {
+      "broadcasterUserId": "123",
+      "userId": "456",
+      "clientIdEnv": "TWITCH_CLIENT_ID",
+      "clientSecretEnv": "TWITCH_CLIENT_SECRET",
+      "refreshTokenEnv": "TWITCH_REFRESH_TOKEN"
+    }
+  }
+}
+```
+
+Each control endpoint must be unique and must not contain credentials, a query,
+or a fragment. It is the Streamer's authenticated FastAPI base URL—typically
+`http://localhost:8000` in development—not the public HLS URL on port `8888`.
+`GET /v1/stream` on the control endpoint returns that HLS manifest separately.
+The legacy `endpoint` field is accepted only for configuration migration.
+Production control endpoints and returned playback manifests must use HTTPS.
+Set every referenced secret, `SESSION_SECRET`, `GOOGLE_CLOUD_BUCKET` (or
+`PUBLIC_BASE_URL` for local archive media), the selected AI provider variables,
+and the TTS variables before startup. GCS/object storage remains the canonical archive and
+replay store; the streamer does not fetch it for normal playout, so its URL
+ingest allowlist does not need the archive host for this application.
+
+The queue bearer token and `QueueBroadcastClient` are constructed only in server
+modules. The public playback endpoint returns the token-free HLS descriptor,
+delivery health, broadcast state, and real process-local viewer count:
+
+```text
+GET /api/channels/:channelId/playback
+```
+
+Authenticated operators can inspect, stop, or restart a configured channel:
+
+```text
+GET  /api/admin/broadcasts/:channelId
+POST /api/admin/broadcasts/:channelId/stop
+POST /api/admin/broadcasts/:channelId/restart
+```
+
+Desired `running`/`stopped` state and canonical session cursors are persisted in
+system settings. A restart creates a new ambient run identity while canonical
+work reconciles from persisted delivery segments and deterministic queue keys.
+Canonical delivery segments also persist the remote staged pair receipt. If the
+application stops after archival but before that receipt is saved, recovery
+downloads the archive into the application process once and directly re-uploads
+it to the streamer; the streamer itself never performs that download.
+
+### Streamer availability gate
+
+Before it creates any image/TTS media, downloads a canonical archive for
+recovery, or sends a direct pair upload, a running channel requires both
+`GET /health` to report `ok: true` and its authenticated `GET /v1/stream`
+request to succeed. This validates the control API, queue token, and MediaMTX
+readiness without exposing credentials to the browser.
+
+If either probe fails, the channel remains desired `running` but reports
+`mode: "waiting_for_streamer"` in its admin and playback status. Its
+`broadcast.streamer` object contains only `state`, last-check/last-success/retry
+timestamps, and a safe failure reason. It retries after 2, 5, 10, then 30 seconds (capped at 30
+seconds); stop, restart, and process shutdown cancel the in-flight wait. A
+scheduled or active episode is reported as `preparing` until both probes pass,
+then resumes without advancing its canonical cursor while unavailable. This
+producer gate is distinct from the public HLS delivery health reported to the
+player.
+
+## Direct queue ingestion contract
+
+`massively-social-ebook` and the Streamer are separate services. The ebook
+backend holds generated image/WAV bytes only long enough to send one authenticated
+multipart `image + audio` request through `QueueBroadcastClient`. The streamer
+reserves two slots, streams both files to its own durable volume, checks their
+SHA-256 values, and only then exposes the atomic pair to its normalizer/playout
+queue. The queue bearer token, client, jobs, and endpoint configuration never
+enter the browser bundle.
+
+Ambient material is directly queued immediately. Canonical material is archived
+for replay, directly staged during pre-roll, then released at the scheduled
+start. This is intentionally a completed-media protocol, not raw-frame piping:
+it preserves durable backpressure, HLS continuity, and remote-process failure
+isolation without a shared filesystem.
+
+`BROADCAST_FETCH_TIMEOUT_MS` bounds normal queue control requests. Keep
+`BROADCAST_UPLOAD_TIMEOUT_MS` high enough for the largest permitted direct pair
+on the network path; it defaults to 120 seconds.
+
+The v1 deployment is intentionally single-instance: fan-out and provider
+connector leadership are process-local. Horizontal scaling requires an external
+fan-out adapter and one elected provider-connector leader.
+
+## Database migration
+
+Apply `server/migrations/004_live_broadcast.sql`. It adds canonical delivery
+segments and stable, deduplicated chat identity/provenance fields while retaining
+the compatibility image/audio and username columns.
+
+## Media Player
+
+The application uses an industry-standard media player built on hls.js with advanced analytics capabilities:
+
+- **Format Support**: HLS live streams (`.m3u8`) and MP4 on-demand content
+- **Advanced Analytics**: Tracks engagement metrics, watch time, buffer events, quality changes, and completion rates
+- **Custom Controls**: Maintains the existing beautiful custom UI while leveraging hls.js's robust streaming engine
+- **Error Recovery**: Automatic reconnection with exponential backoff for network issues
+- **Performance**: Optimized streaming with adaptive bitrate support
+- **Native Fallback**: Uses native HLS support on Safari (hls.js only when needed)
+
+### Analytics Events
+
+The media player tracks the following events via Mixpanel:
+
+- `media_session_start` - Session initialization with channel and media type
+- `media_session_end` - Session completion with duration and completion rate
+- `media_play` - Playback start events
+- `media_pause` - Playback pause events
+- `media_buffer_start` - Buffer start events
+- `media_buffer_end` - Buffer end events with duration
+- `media_quality_change` - Quality level changes
+- `media_error` - Error events with error messages
+- `media_seek` - Seek events with from/to positions
+- `media_complete` - Content completion events
+
+### Player Configuration
+
+The player is configured with industry-standard settings:
+
+- **HLS Configuration**: Low-latency mode enabled, live sync duration count of 3, max playback rate of 1.25x
+- **Buffer Management**: Smart buffer handling with automatic recovery
+- **Format Detection**: Automatic detection of HLS vs MP4 content
+- **Performance**: Web Worker enabled for HLS processing
+
+---
+
+# Previous product specification (archive context)
 
 ## Overview
 

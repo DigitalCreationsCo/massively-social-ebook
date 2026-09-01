@@ -1,19 +1,16 @@
 import fs from "fs/promises";
 import path from "path";
-import { fileURLToPath } from "url";
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { createStoryBlockInstructions } from "../../prompts/storyblock.prompt";
-import { createDecisionInstructions } from "../../prompts/decision.prompt";
+import { generateImage, generateText, Output } from "ai";
+import { z } from "zod";
+import {
+  createStoryBlockContextPrompt,
+  createStoryBlockSystemInstructions,
+} from "../../prompts/storyblock.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
-import { NarrativeEngine, configureLabEngine } from "narrative-engine";
+import { NarrativeEngine, configureLabEngine } from "@portalshq/narrativeengine";
 import { RagProvider } from './rag';
-
-export const ai = new GoogleGenAI({});
-
-const lmParamsGoogle = {
-  model: 'gemini-3.1-flash-lite',
-  imageModel: 'gemini-2.5-flash-image',
-};
+import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
+import { getAiConfiguration, getImageModel, getLanguageModel } from "./ai-provider";
 
 const TIMEOUT_CONTEXT_MS = 8000;
 
@@ -63,27 +60,27 @@ configureLabEngine(engine);
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
 // Guard with try-catch to prevent production issues if import fails.
-if (process.env.NODE_ENV === "development" && !(global as any)["__NARRATIVE_LAB_STARTED__"]) {
-  (global as any)["__NARRATIVE_LAB_STARTED__"] = "pending";
+// if (process.env.NODE_ENV === "development" && !(global as any)["__NARRATIVE_LAB_STARTED__"]) {
+//   (global as any)["__NARRATIVE_LAB_STARTED__"] = "pending";
 
-  process.nextTick(async () => {
-    // Guard against double-initialization
-    if ((global as any)["__NARRATIVE_LAB_STARTED__"] !== "pending") return;
+//   process.nextTick(async () => {
+//     // Guard against double-initialization
+//     if ((global as any)["__NARRATIVE_LAB_STARTED__"] !== "pending") return;
 
-    try {
-      const { startLabServer } = await import("narrative-engine-lab");
-      await startLabServer();
-      (global as any)["__NARRATIVE_LAB_STARTED__"] = true;
-      console.log("[Lab] NarrativeEngine Lab ready");
-    } catch (err) {
-      (global as any)["__NARRATIVE_LAB_STARTED__"] = false;
-      console.error("[Lab] Boot failed (non-fatal):", err);
-    }
-  });
-} else if (process.env.NODE_ENV === "production") {
-  // Mark as skipped in production to prevent any attempt to load lab
-  (global as any)["__NARRATIVE_LAB_STARTED__"] = "skipped";
-}
+//     try {
+//       const { startLabServer } = await import("narrative-engine-lab");
+//       await startLabServer();
+//       (global as any)["__NARRATIVE_LAB_STARTED__"] = true;
+//       console.log("[Lab] NarrativeEngine Lab ready");
+//     } catch (err) {
+//       (global as any)["__NARRATIVE_LAB_STARTED__"] = false;
+//       console.error("[Lab] Boot failed (non-fatal):", err);
+//     }
+//   });
+// } else if (process.env.NODE_ENV === "production") {
+//   // Mark as skipped in production to prevent any attempt to load lab
+//   (global as any)["__NARRATIVE_LAB_STARTED__"] = "skipped";
+// }
 
 export interface StoryBlockResult {
   title: string;
@@ -93,6 +90,29 @@ export interface StoryBlockResult {
   optionB?: { label: string; description: string; };
   newNotableEvent?: string;
 }
+
+const storyBlockSchema = z.object({
+  title: z.string().describe("A short, engaging title for this block."),
+  content: z.string().describe("The story content, max 3 sentences."),
+  dialogue: z.string().optional().describe("Any spoken dialogue in the story content."),
+  optionA: z
+    .object({
+      label: z.string().describe("Short label for the first choice."),
+      description: z.string().describe("Description of the first choice."),
+    })
+    .optional(),
+  optionB: z
+    .object({
+      label: z.string().describe("Short label for the second choice."),
+      description: z.string().describe("Description of the second choice."),
+    })
+    .optional(),
+  isNotable: z
+    .boolean()
+    .describe(
+      "Whether this block is notable. Only include for major plot points, discoveries, character changes, or significant story developments.",
+    ),
+});
 
 async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<string> {
   // Check cache — same inputs produce the same result within a short window.
@@ -120,59 +140,57 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   }
 
   // const  = createNextNarrativeIncrementPrompt({ })
-  const prompt = createStoryBlockInstructions({
+  const contextPrompt = createStoryBlockContextPrompt({
     previousBlock: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
-    isResolving,
   });
+  const systemInstructions = createStoryBlockSystemInstructions({ isResolving });
 
-  const responseSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-      title: { type: Type.STRING, description: "A short, engaging title for this block." },
-      content: { type: Type.STRING, description: "The story content, max 3 sentences." },
-      dialogue: { type: Type.STRING, description: "Any spoken dialogue in the story content." },
-      optionA: {
-        type: Type.OBJECT,
-        properties: {
-          label: { type: Type.STRING, description: "Short label for the first choice." },
-          description: { type: Type.STRING, description: "Description of the first choice." }
-        },
-        required: ["label", "description"]
-      },
-      optionB: {
-        type: Type.OBJECT,
-        properties: {
-          label: { type: Type.STRING, description: "Short label for the second choice." },
-          description: { type: Type.STRING, description: "Description of the second choice." }
-        },
-        required: ["label", "description"]
-      },
-      isNotable: {
-        type: Type.BOOLEAN,
-        description: "Whether this block is notable. Only include for major plot points, discoveries, character changes, or significant story developments. Omit if nothing notable happened."
-      }
+  const { provider, model } = getAiConfiguration().text;
+  const aiCall = logAiCall({
+    method: "generateText",
+    provider,
+    model,
+    parameters: {
+      channelId,
+      isResolving,
+      instructions: "story_block system instructions",
+      output: { format: "object", name: "story_block" },
     },
-    required: ["title", "content", "isNotable"]
-  };
-
-  const response = await ai.models.generateContent({
-    model: lmParamsGoogle.model,
-    contents: [
-      prompt,
-      createDecisionInstructions()
-    ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchema,
-    }
+    instructions: systemInstructions,
+    prompt: contextPrompt,
   });
 
-  if (!response.text) {
-    throw new Error("Failed to generate story block: No text returned.");
+  let response;
+  try {
+    response = await generateText({
+      model: getLanguageModel(),
+      instructions: systemInstructions,
+      prompt: contextPrompt,
+      output: Output.object({
+        schema: storyBlockSchema,
+        name: "story_block",
+        description: "The next block in the interactive story.",
+      }),
+    });
+    if (response.output) {
+      logAiCallComplete("generateText", aiCall, {
+        output: "structured",
+        response: response.output,
+      });
+    }
+  } catch (error) {
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
   }
 
-  const result = JSON.parse(response.text) as StoryBlockResult;
+  if (!response.output) {
+    const error = new Error("Failed to generate story block: No structured output returned.");
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
+  }
+
+  const result: StoryBlockResult = response.output;
 
   if (isResolving) {
     delete result.optionA;
@@ -194,7 +212,8 @@ export async function generateStoryBlock(channelId: string, previousContext: str
       isResolving,
       previousContext,
       enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
-      prompt,
+      systemInstructions,
+      prompt: contextPrompt,
       response: result
     };
     await fs.writeFile(logFile, JSON.stringify(logEntry, null, 2) + '\n');
@@ -206,7 +225,7 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 }
 
 /**
- * Generates an image via Google Gemini and returns the raw base64 payload.
+ * Generates an image via the configured AI SDK image provider and returns raw base64.
  *
  * IMPORTANT: This function returns ONLY the base64-encoded bytes, NOT a
  * `data:` URI.  It is the caller's responsibility (via image-uploader.ts)
@@ -216,59 +235,39 @@ export async function generateStoryBlock(channelId: string, previousContext: str
  * On failure the function **throws** — the caller should handle fallback
  * (e.g., `getRandomImage()` or a static fallback URL).
  */
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 export async function generateStoryImage(description: string): Promise<string> {
-
-  const blocksDir = __dirname;
-
-  const baseInlineData = {
-    // displayName: 'base image',
-    data: await fs.readFile(path.join(blocksDir, 'base.png'), 'base64'),
-    mimeType: "image/png"
-  };
-  const subject1InlineData = {
-    // displayName: 'subject 1 image',
-    data: await fs.readFile(path.join(blocksDir, 'subject1.png'), 'base64'),
-    mimeType: "image/png"
-  };
-  const subject2InlineData = {
-    // displayName: 'subject 2 image',
-    data: await fs.readFile(path.join(blocksDir, 'subject2.png'), 'base64'),
-    mimeType: "image/png"
-  };
-  const subject3InlineData = {
-    // displayName: 'subject 3 image',
-    data: await fs.readFile(path.join(blocksDir, 'subject3.png'), 'base64'),
-    mimeType: "image/png"
-  };
-
   const prompt = createImageInstructions({ description });
-
-  const response = await ai.models.generateContent({
-    model: lmParamsGoogle.imageModel,
-    contents: [
-      // { inlineData: baseInlineData },
-      // { inlineData: subject1InlineData },
-      // { inlineData: subject2InlineData },
-      // { inlineData: subject3InlineData },
-      prompt
-    ],
-    config: {
-      responseModalities: ["image"],
-      candidateCount: 1,
-      imageConfig: {
-        aspectRatio: "16:9",
-      },
-    },
+  const { provider, model } = getAiConfiguration().image;
+  const aiCall = logAiCall({
+    method: "generateImage",
+    provider,
+    model,
+    parameters: { n: 1, aspectRatio: "16:9" },
+    prompt,
   });
 
-  const base64Image =
-    response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  let response;
+  try {
+    response = await generateImage({
+      model: getImageModel(),
+      prompt,
+      n: 1,
+      aspectRatio: "16:9",
+    });
+    if (response.image?.base64) {
+      logAiCallComplete("generateImage", aiCall, { image: "returned" });
+    }
+  } catch (error) {
+    logAiCallFailure("generateImage", aiCall, error);
+    throw error;
+  }
+
+  const base64Image = response.image?.base64;
 
   if (!base64Image) {
-    throw new Error("No image data returned from Gemini.");
+    const error = new Error("No image data returned from the configured AI provider.");
+    logAiCallFailure("generateImage", aiCall, error);
+    throw error;
   }
 
   return base64Image; // raw base64 — NO `data:` prefix

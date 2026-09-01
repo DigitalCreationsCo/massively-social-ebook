@@ -9,7 +9,7 @@ All AI-assisted commits must include attribution for the agent app and model use
 Add the following footer to every commit message when AI assistance was used:
 
 ```
-AI-Assisted-By: <agent-app> (<model>)
+Co-Authored-By: <agent-app> (<model>)
 ```
 
 ### Examples
@@ -17,19 +17,19 @@ AI-Assisted-By: <agent-app> (<model>)
 ```
 feat: add user authentication flow
 
-AI-Assisted-By: opencode (nemotron-3-ultra-free)
+Co-Authored-By: opencode (nemotron-3-ultra-free)
 ```
 
 ```
 fix: resolve race condition in data sync
 
-AI-Assisted-By: codex (gpt-4o)
+Co-Authored-By: codex (gpt-4o)
 ```
 
 ```
 refactor: extract shared validation logic
 
-AI-Assisted-By: devin (devin-1.0)
+Co-Authored-By: devin (devin-1.0)
 ```
 
 ### Agent App Values

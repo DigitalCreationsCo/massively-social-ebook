@@ -7,12 +7,14 @@ import { registerAuthRoutes } from "./routes/auth-routes";
 import { registerNotesRoutes } from "./routes/notes-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { startRecurringScheduler } from "./sessions/scheduler";
+import { scheduler, startRecurringScheduler } from "./sessions/scheduler";
 import { logger, createRequestLogger } from "./logger";
 import { createAdminStaticMiddleware } from "./middleware/admin-static";
 import session from "express-session";
 import pgSession from "connect-pg-simple";
 import { pool } from "./db";
+import { logAiConfiguration } from "./ai-call-logger";
+import { getAiConfiguration } from "./blocks/ai-provider";
 
 const app = express();
 const httpServer = createServer(app);
@@ -77,8 +79,7 @@ const sessionStore = new PgStore({
   tableName: "user_sessions",
   createTableIfMissing: true,
 });
-app.use(
-  session({
+const sessionMiddleware = session({
     store: sessionStore,
     secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
     resave: false,
@@ -89,8 +90,8 @@ app.use(
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       sameSite: "lax",
     },
-  }),
-);
+  });
+app.use(sessionMiddleware);
 
 // Export session store for WebSocket authentication
 export { sessionStore };
@@ -100,6 +101,8 @@ declare module "express-session" {
   interface SessionData {
     userId?: number;
     username?: string;
+    guestId?: string;
+    guestDisplayName?: string;
   }
 }
 
@@ -122,7 +125,7 @@ declare module "express-session" {
     res.json({ ok: true, pool: poolStatus, ts: Date.now() });
   });
 
-  await registerRoutes(httpServer, app, sessionStore);
+  await registerRoutes(httpServer, app, sessionMiddleware);
   registerAdminRoutes(app);
   registerReplayRoutes(app);
   registerTtsRoutes(app);
@@ -166,15 +169,42 @@ declare module "express-session" {
   // Other ports are firewalled. Default to 5001 if not specified.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5001", 10);
+  const host = process.env.HOST || "0.0.0.0";
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host,
       // reusePort: true,
     },
     () => {
-      logger.info(`Server starting on port ${port}`, "server");
-      logger.info(`🚀 serving on port ${port}`, "server");
+      logger.info(`Server started on http://${host}:${port}`, "server");
+      try {
+        logAiConfiguration(getAiConfiguration());
+      } catch (error) {
+        logger.warn("Could not resolve AI configuration at startup", "server", error);
+      }
     },
   );
+
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`Received ${signal}; draining live broadcast runtime`, "server");
+    try {
+      scheduler.stop();
+      await (httpServer as any).__cleanupGameLoop?.();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      await pool.end();
+    } catch (cause) {
+      logger.error(
+        "Graceful shutdown failed",
+        "server",
+        cause instanceof Error ? cause : new Error(String(cause)),
+      );
+      process.exitCode = 1;
+    }
+  };
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
 })();

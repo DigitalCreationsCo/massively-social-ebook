@@ -10,7 +10,7 @@ export const SocialFeatures = () => {
             Social Features
           </h2>
           <p className="text-white/50 max-w-2xl mx-auto font-sans text-lg">
-            The reading experience includes community features designed
+            The watch experience includes community features designed
             to enhance story engagement.
           </p>
         </div>
@@ -18,15 +18,15 @@ export const SocialFeatures = () => {
         <div className="grid md:grid-cols-3 gap-8">
           {[
             {
-              title: "Reader Notes",
+              title: "Watch Notes",
               description:
-                "Leave notes attached to specific moments in the story while reading. React to other readers' notes with likes.",
+                "Leave notes attached to specific moments in the story. React to other viewers' notes.",
               status: "LIVE" as const,
             },
             {
               title: "Episode Discussions",
               description:
-                "Join the discussion room after finishing each episode. Share theories, favorite moments, and reactions with fellow readers in real-time.",
+                "Join the discussion room after finishing each episode. Share theories, favorite moments, and reactions with fellow viewers in real-time.",
               status: "LIVE" as const,
             },
             {
