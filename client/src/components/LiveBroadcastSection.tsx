@@ -31,7 +31,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
   const waitingForStreamer = broadcast?.mode === "waiting_for_streamer";
 
   return (
-    <div className="live-broadcast-section relative z-10 mx-auto flex h-[100dvh] min-h-[100dvh] flex-col px-0 pb-0 pt-0 sm:h-auto sm:min-h-[100dvh] md:px-6 md:pb-7 md:pt-6">
+    <div className="live-broadcast-section relative z-10 mx-auto flex h-[100dvh] min-h-[100dvh] flex-col px-0 pb-0 pt-0 sm:h-auto sm:min-h-[100dvh] md:px-6 md:pb-7 md:pt-6 overflow-hidden">
       {!liveState.wsConnected && !liveState.isLoading && (
         <div className="mb-4 flex items-center justify-center gap-2 rounded-lg border bg-amber-300/[0.06] px-4 py-2 text-xs text-amber-100/65">
           <WifiOff className="size-3.5" />
@@ -39,7 +39,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
         </div>
       )}
 
-      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[auto_1fr] lg:gap-6 lg:items-stretch">
+      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[auto_1fr] lg:gap-6 lg:items-stretch h-full min-h-0">
        {/* <div className="flex min-w-0 flex-col gap-4"> */}
          {/*
           <button type="button" onClick={() => setLocation("/")} className="group inline-flex items-center gap-2 text-xs text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary p-2" aria-label="Back to home">
