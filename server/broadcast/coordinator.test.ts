@@ -12,26 +12,27 @@ const storageMock = vi.hoisted(() => ({
 }));
 
 const mediaMock = vi.hoisted(() => ({
-  pairsFromBlock: vi.fn(),
-  hydrateCanonicalPair: vi.fn(),
-  prepareAmbientPair: vi.fn(),
-  prepareCanonicalBlock: vi.fn(),
+  slotsFromBlock: vi.fn(),
+  hydrateCanonicalSlot: vi.fn(),
+  prepareAmbientSlots: vi.fn(),
+  prepareCanonicalSlot: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
-vi.mock("./media", () => mediaMock);
+vi.mock("./media-slots", () => mediaMock);
 
 import { BroadcastCoordinator } from "./coordinator";
 
-const pair = {
+const slot = {
   durationSeconds: 12.2,
   idempotencyPrefix: "channel:main:session:3:block:8:segment:0",
+  slotKey: "channel:main:session:3:block:8:segment:0:slot",
   segmentOrdinal: 0,
   image: { data: new Blob(["image"]), filename: "image.jpg", sha256: "a".repeat(64) },
   audio: { data: new Blob(["audio"]), filename: "audio.wav", sha256: "b".repeat(64) },
 };
 
-function job(id: string, status: "done" | "failed") {
+function job(id: string, status: "staged" | "queued" | "done" | "failed") {
   return { id, status, media_type: id.startsWith("image") ? "image" : "audio", updated_at: "now" };
 }
 
@@ -48,37 +49,47 @@ describe("BroadcastCoordinator", () => {
     vi.useRealTimers();
   });
 
-  it("uploads one atomic direct pair with a deterministic key", async () => {
+  it("stages independent assets then releases their deterministic slot", async () => {
     const client = {
       health: vi.fn().mockResolvedValue({ ok: true }),
       getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
-      enqueuePairUpload: vi.fn(async () => ({ image: job("image-job", "done"), audio: job("audio-job", "done") })),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async () => ({ jobs: [job("image-job", "done"), job("audio-job", "done")] })),
       watchJob: vi.fn(async function* (jobId: string) { yield job(jobId, "done"); }),
     };
     const coordinator = new BroadcastCoordinator("main", client as any);
 
-    await (coordinator as any).submitPair(pair, new AbortController().signal);
+    await (coordinator as any).submitSlot(slot, new AbortController().signal);
 
-    expect(client.enqueuePairUpload).toHaveBeenCalledWith(expect.objectContaining({
-      image: pair.image,
-      audio: pair.audio,
+    expect(client.stageUpload).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      mediaType: "image",
+      asset: slot.image,
       imageDuration: 13,
-      idempotencyKey: pair.idempotencyPrefix,
+      idempotencyKey: `${slot.idempotencyPrefix}:image`,
+      slotKey: slot.slotKey,
     }));
+    expect(client.stageUpload).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      mediaType: "audio",
+      asset: slot.audio,
+      idempotencyKey: `${slot.idempotencyPrefix}:audio`,
+      slotKey: slot.slotKey,
+    }));
+    expect(client.releaseSlot).toHaveBeenCalledWith(slot.slotKey, expect.anything());
     expect(client.watchJob).toHaveBeenCalledTimes(2);
   });
 
-  it("advances the persisted canonical cursor after a terminal pair failure", async () => {
-    const firstPair = { ...pair, queuePairId: "pair-0" };
-    const secondPair = { ...pair, idempotencyPrefix: pair.idempotencyPrefix.replace(/:0$/, ":1"), segmentOrdinal: 1, queuePairId: "pair-1" };
-    const block = { id: 8, deliverySegments: [{}, {}] };
+  it("advances the persisted canonical cursor after a terminal slot failure", async () => {
+    const firstSlot = { ...slot, imageJobId: "image-job", audioJobId: "audio-job" };
+    const secondSlot = { ...slot, idempotencyPrefix: slot.idempotencyPrefix.replace(/:0$/, ":1"), slotKey: `${slot.slotKey}:next`, segmentOrdinal: 1, imageJobId: "image-job-2", audioJobId: "audio-job-2" };
+    const block = { id: 8, deliverySegments: [{ audioUrl: "https://assets.example/one.wav" }, { audioUrl: "https://assets.example/two.wav" }] };
     storageMock.getSystemSetting.mockResolvedValue("0");
     storageMock.getBlocksBySessionOrdered.mockResolvedValue([block]);
-    mediaMock.pairsFromBlock.mockReturnValue([firstPair, secondPair]);
+    mediaMock.slotsFromBlock.mockReturnValue([firstSlot, secondSlot]);
     const client = {
       health: vi.fn().mockResolvedValue({ ok: true }),
       getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
-      releasePair: vi.fn(async () => ({ image: job("image-job", "done"), audio: job("audio-job", "done") })),
+      stageUpload: vi.fn(),
+      releaseSlot: vi.fn(async () => ({ jobs: [job("image-job", "done"), job("audio-job", "done")] })),
       watchJob: vi.fn(async function* (jobId: string) {
         yield job(jobId, jobId.startsWith("image") ? "failed" : "done");
       }),
@@ -96,15 +107,15 @@ describe("BroadcastCoordinator", () => {
       "broadcast:main:session:3:cursor",
       "1",
     );
-    expect(client.releasePair).toHaveBeenCalledWith("pair-0", expect.anything());
+    expect(client.releaseSlot).toHaveBeenCalledWith(firstSlot.slotKey, expect.anything());
   });
 
   it("waits for an unavailable Streamer before any media or queue work", async () => {
     const client = {
       health: vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:8000")),
       getPlayback: vi.fn(),
-      enqueuePairUpload: vi.fn(),
-      stagePair: vi.fn(),
+      stageUpload: vi.fn(),
+      releaseSlot: vi.fn(),
     };
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
@@ -116,11 +127,11 @@ describe("BroadcastCoordinator", () => {
     await flushMicrotasks();
     expect(client.health).toHaveBeenCalledOnce();
     expect(client.getPlayback).not.toHaveBeenCalled();
-    expect(mediaMock.prepareAmbientPair).not.toHaveBeenCalled();
-    expect(mediaMock.prepareCanonicalBlock).not.toHaveBeenCalled();
-    expect(mediaMock.hydrateCanonicalPair).not.toHaveBeenCalled();
-    expect(client.enqueuePairUpload).not.toHaveBeenCalled();
-    expect(client.stagePair).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(mediaMock.prepareCanonicalSlot).not.toHaveBeenCalled();
+    expect(mediaMock.hydrateCanonicalSlot).not.toHaveBeenCalled();
+    expect(client.stageUpload).not.toHaveBeenCalled();
+    expect(client.releaseSlot).not.toHaveBeenCalled();
     expect(coordinator.getStatus()).toMatchObject({
       mode: "waiting_for_streamer",
       streamer: {
@@ -129,6 +140,31 @@ describe("BroadcastCoordinator", () => {
       },
     });
 
+    controller.abort(new Error("test complete"));
+    await producing;
+  });
+
+  it("does not generate when the installed queue client lacks staged-slot support", async () => {
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+    };
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    (coordinator as any).desiredState = "running";
+    const controller = new AbortController();
+    const producing = (coordinator as any).produce(controller.signal);
+
+    await flushMicrotasks();
+    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(coordinator.getStatus()).toMatchObject({
+      mode: "waiting_for_streamer",
+      streamer: {
+        state: "unavailable",
+          reason: "Installed queue-broadcast package does not support independent staged slots; install @portalshq/capability-queue-broadcast@^0.1.5",
+      },
+    });
     controller.abort(new Error("test complete"));
     await producing;
   });
@@ -167,7 +203,7 @@ describe("BroadcastCoordinator", () => {
     const client = {
       health: vi.fn().mockRejectedValue(new Error("offline")),
       getPlayback: vi.fn(),
-      stagePair: vi.fn(),
+      stageUpload: vi.fn(),
     };
     const scheduled = {
       id: 9,
@@ -193,8 +229,8 @@ describe("BroadcastCoordinator", () => {
       "broadcast:main:session:9:cursor",
       expect.anything(),
     );
-    expect(mediaMock.prepareCanonicalBlock).not.toHaveBeenCalled();
-    expect(client.stagePair).not.toHaveBeenCalled();
+    expect(mediaMock.prepareCanonicalSlot).not.toHaveBeenCalled();
+    expect(client.stageUpload).not.toHaveBeenCalled();
 
     controller.abort(new Error("test complete"));
     await producing;
@@ -229,6 +265,8 @@ describe("BroadcastCoordinator", () => {
         .mockRejectedValueOnce(new Error("offline"))
         .mockResolvedValue({ ok: true }),
       getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(),
+      releaseSlot: vi.fn(),
     };
     const coordinator = new BroadcastCoordinator("main", client as any);
     const expectedDelays = [2_000, 5_000, 10_000, 30_000, 30_000];
@@ -267,7 +305,7 @@ describe("BroadcastCoordinator", () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(client.health).toHaveBeenCalledOnce();
-    expect(mediaMock.prepareAmbientPair).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
     expect(coordinator.getStatus()).toMatchObject({ desiredState: "stopped", mode: "stopped" });
   });
 
@@ -305,11 +343,13 @@ describe("BroadcastCoordinator", () => {
         .mockRejectedValueOnce(new Error("offline"))
         .mockResolvedValue({ ok: true }),
       getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(),
+      releaseSlot: vi.fn(),
     };
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
-    mediaMock.prepareAmbientPair.mockImplementation(async () => {
+    mediaMock.prepareAmbientSlots.mockImplementation(async () => {
       controller.abort(new Error("one ambient iteration is enough for this test"));
       return [];
     });
@@ -319,14 +359,14 @@ describe("BroadcastCoordinator", () => {
 
     await flushMicrotasks();
     expect(client.health).toHaveBeenCalledOnce();
-    expect(mediaMock.prepareAmbientPair).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2_000);
     await flushMicrotasks();
     await producing;
 
     expect(client.health).toHaveBeenCalledTimes(3);
     expect(client.getPlayback).toHaveBeenCalledTimes(2);
-    expect(mediaMock.prepareAmbientPair).toHaveBeenCalledOnce();
+    expect(mediaMock.prepareAmbientSlots).toHaveBeenCalledOnce();
     expect(coordinator.getStatus().streamer.state).toBe("available");
   });
 });

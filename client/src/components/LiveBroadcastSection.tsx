@@ -59,13 +59,12 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
 
       <section className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-6">
         <div className="flex min-w-0 flex-col 2xl:pl-[23rem]">
-          <VideoDeliveryPlayer manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
-
-          {waitingForStreamer && <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 text-sm text-amber-100/75">
+          {waitingForStreamer && <div className="mb-3 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 text-sm text-amber-100/75">
             Service reconnecting{broadcast?.streamer?.reason ? `: ${broadcast.streamer.reason}` : "."}
           </div>}
-          {deliveryIssue && <div className="mt-3 rounded-lg px-4 py-3 text-sm"><span className="font-medium text-white/75">{delivery?.lastError || "We are reconnecting the signal."}</span></div>}
-          {playbackQuery.isError && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-white/65">We could not check the broadcast right now. Try refreshing in a moment.</div>}
+          {deliveryIssue && <div className="mb-3 rounded-lg px-4 py-3 text-sm"><span className="font-medium text-white/75">{delivery?.lastError || "We are reconnecting the signal."}</span></div>}
+          {playbackQuery.isError && <div className="mb-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-white/65">We could not check the broadcast right now. Try refreshing in a moment.</div>}
+          <VideoDeliveryPlayer manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
         </div>
 
         <aside className="flex min-h-[20rem] rounded-[2rem] overflow-hidden border border-white/20 bg-black/35 shadow-[0_20px_80px_rgba(0,0,0,0.28)] backdrop-blur-sm lg:min-h-0">

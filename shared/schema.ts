@@ -280,21 +280,30 @@ export type BlockWithSession = Block & {
 };
 
 export interface DeliverySegment {
-  audioUrl: string;
+  /** Optional because an image-only broadcast turn remains a valid delivery segment. */
+  audioUrl?: string;
   durationSeconds: number;
   ordinal: number;
   /** Remote queue pair receipt, persisted after canonical pre-roll staging. */
   queuePairId?: string;
   /** Stable pair key used to reconcile a retry after an ebook process restart. */
   queueIdempotencyKey?: string;
+  /** Staged-slot key used by the independent Streamer upload API. */
+  queueSlotKey?: string;
+  /** Individual Streamer receipts, persisted as each staged upload succeeds. */
+  queueImageJobId?: string;
+  queueAudioJobId?: string;
 }
 
 const deliverySegmentSchema = z.object({
-  audioUrl: z.string().url(),
+  audioUrl: z.string().url().optional(),
   durationSeconds: z.number().positive(),
   ordinal: z.number().int().nonnegative(),
   queuePairId: z.string().min(1).optional(),
   queueIdempotencyKey: z.string().min(1).optional(),
+  queueSlotKey: z.string().min(1).optional(),
+  queueImageJobId: z.string().min(1).optional(),
+  queueAudioJobId: z.string().min(1).optional(),
 });
 
 // ─── Pending Blocks table ─────────────────────────────────────────────────────

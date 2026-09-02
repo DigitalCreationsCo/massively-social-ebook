@@ -35,22 +35,39 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
 export function parseTtsEventStream(payload: string): GradioFile[] {
   const files: GradioFile[] = [];
+  let event = "";
+  const errors: string[] = [];
   for (const line of payload.split("\n")) {
+    if (line.startsWith("event: ")) {
+      event = line.slice(7).trim();
+      continue;
+    }
     if (!line.startsWith("data: ")) continue;
     const raw = line.slice(6).trim();
     if (!raw) continue;
     try {
       const parsed = JSON.parse(raw);
       const items = parsed?.data ?? parsed;
+      if (event === "error" || parsed?.error) {
+        const detail = typeof items === "string"
+          ? items
+          : typeof parsed?.error === "string"
+            ? parsed.error
+            : JSON.stringify(items);
+        errors.push(detail);
+        continue;
+      }
       if (Array.isArray(items)) {
         for (const item of items) if (item?.path) files.push(item as GradioFile);
       } else if (items?.path) {
         files.push(items as GradioFile);
       }
-    } catch {
+    } catch (cause) {
+      if (event === "error") errors.push(raw || String(cause));
       // Upstream progress events are not all JSON file descriptors.
     }
   }
+  if (errors.length > 0) throw new Error(`TTS provider error: ${errors[0]}`);
   return files;
 }
 
@@ -157,24 +174,30 @@ export async function generateSpeechBuffer(text: string, signal?: AbortSignal): 
   });
 
   try {
-    const createResponse = await fetchWithTimeout(`${apiUrl}/v2/gen_tts`, {
+    const historyPrompt = (process.env.TTS_HISTORY_PROMPT || "Speaker 1 (en)").trim();
+    if (!historyPrompt) throw new Error("TTS_HISTORY_PROMPT cannot be blank");
+    const callUrl = gradioCallUrl(apiUrl);
+    const createResponse = await fetchWithTimeout(`${callUrl}/gen_tts`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text: normalizedText }),
+      body: JSON.stringify({ data: [normalizedText, historyPrompt] }),
     }, signal);
     if (!createResponse.ok) throw new Error(`TTS upstream create failed (${createResponse.status})`);
     const body = await createResponse.json() as { event_id?: string };
     if (!body.event_id) throw new Error("TTS upstream did not return an event id");
 
-    const pollResponse = await fetchWithTimeout(`${apiUrl}/gen_tts/${encodeURIComponent(body.event_id)}`, {
+    const pollResponse = await fetchWithTimeout(`${callUrl}/gen_tts/${encodeURIComponent(body.event_id)}`, {
       headers: { Authorization: `Bearer ${token}` },
     }, signal);
     if (!pollResponse.ok) throw new Error(`TTS upstream poll failed (${pollResponse.status})`);
     const payload = await pollResponse.text();
-    const audio = parseTtsEventStream(payload)[0];
+    const files = parseTtsEventStream(payload);
+    const audio = [...files].reverse()
+      .find((candidate) => /\.wav(?:$|[?#])/i.test(candidate.url || candidate.path))
+      ?? files.at(-1);
     if (!audio) throw new Error("No audio generated");
 
-    const audioUrl = new URL(audio.url || audio.path, apiUrl).toString();
+    const audioUrl = new URL(audio.url || audio.path, callUrl).toString();
     const audioResponse = await fetchWithTimeout(audioUrl, {
       headers: { Authorization: `Bearer ${token}` },
     }, signal);
@@ -192,6 +215,18 @@ export async function generateSpeechBuffer(text: string, signal?: AbortSignal): 
     logAiCallFailure("generateSpeechBuffer", aiCall, error);
     throw error;
   }
+}
+
+/** Normalize the configured Hugging Face Space URL to Gradio's call endpoint. */
+function gradioCallUrl(value: string): string {
+  const url = new URL(value);
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  if (!url.pathname.endsWith("/gradio_api/call")) {
+    url.pathname = `${url.pathname}/gradio_api/call`.replace(/\/{2,}/g, "/");
+  }
+  return url.toString().replace(/\/$/, "");
 }
 
 async function storeAudio(buffer: Buffer, objectName: string, mimeType: string): Promise<string> {

@@ -179,7 +179,7 @@ export async function hydrateCanonicalPair(
   if (!block.imageUrl) throw new Error(`Canonical block ${block.id} has no archived image`);
   const segment = block.deliverySegments?.find((item) => item.ordinal === pair.segmentOrdinal)
     ?? (block.audioUrl ? { audioUrl: block.audioUrl, durationSeconds: pair.durationSeconds, ordinal: pair.segmentOrdinal } : undefined);
-  if (!segment) throw new Error(`Canonical block ${block.id} has no archived audio segment`);
+  if (!segment?.audioUrl) throw new Error(`Canonical block ${block.id} has no archived audio segment`);
   const [image, audio] = await Promise.all([
     fetchArchiveAsset(assertArchiveMediaUrl(block.imageUrl, "image"), "image", signal),
     fetchArchiveAsset(assertArchiveMediaUrl(segment.audioUrl, "audio"), "audio", signal),

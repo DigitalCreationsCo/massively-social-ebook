@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { parseTtsEventStream, probeWavDuration } from "./tts-service";
+import { generateSpeechBuffer, parseTtsEventStream, probeWavDuration } from "./tts-service";
 
 function makeWav(durationSeconds: number, byteRate = 8_000): Buffer {
   const dataSize = Math.round(durationSeconds * byteRate);
@@ -22,6 +22,14 @@ function makeWav(durationSeconds: number, byteRate = 8_000): Buffer {
 }
 
 describe("TTS media helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.HF_TTS_API_URL;
+    delete process.env.VITE_TTS_API_URL;
+    delete process.env.HF_TOKEN;
+    delete process.env.TTS_HISTORY_PROMPT;
+  });
+
   it("probes the synthesized WAV duration instead of estimating from text", () => {
     expect(probeWavDuration(makeWav(2.75))).toBeCloseTo(2.75, 3);
   });
@@ -38,5 +46,38 @@ describe("TTS media helpers", () => {
     ].join("\n"));
 
     expect(files).toEqual([{ path: "/tmp/result.wav", orig_name: "result.wav" }]);
+  });
+
+  it("surfaces a Gradio SSE provider error instead of reporting missing audio", () => {
+    expect(() => parseTtsEventStream([
+      "event: error",
+      'data: {"error":"history_prompt is invalid"}',
+    ].join("\n"))).toThrow("history_prompt is invalid");
+  });
+
+  it("uses Bark's server-only speaker preset and selects the final WAV event", async () => {
+    process.env.HF_TTS_API_URL = "https://suno-bark.hf.space/gradio_api/call";
+    process.env.HF_TOKEN = "server-token";
+    process.env.TTS_HISTORY_PROMPT = "Speaker 7 (en)";
+    const requestFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ event_id: "event-1" })))
+      .mockResolvedValueOnce(new Response([
+        "event: complete",
+        'data: {"data":[{"path":"/tmp/progress.txt","orig_name":"progress.txt"}]}',
+        'data: {"data":[{"path":"/tmp/final.wav","orig_name":"final.wav"}]}',
+      ].join("\n")))
+      .mockResolvedValueOnce(new Response(makeWav(1.5)));
+    vi.stubGlobal("fetch", requestFetch);
+
+    await expect(generateSpeechBuffer("Hello from the narrator.")).resolves.toMatchObject({
+      durationSeconds: 1.5,
+      extension: "wav",
+    });
+    expect(requestFetch.mock.calls[0][0]).toBe("https://suno-bark.hf.space/gradio_api/call/gen_tts");
+    expect(JSON.parse(requestFetch.mock.calls[0][1].body)).toEqual({
+      data: ["Hello from the narrator.", "Speaker 7 (en)"],
+    });
+    expect(requestFetch.mock.calls[1][0]).toBe("https://suno-bark.hf.space/gradio_api/call/gen_tts/event-1");
+    expect(requestFetch.mock.calls[2][0]).toBe("https://suno-bark.hf.space/tmp/final.wav");
   });
 });

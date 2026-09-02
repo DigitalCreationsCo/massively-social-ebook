@@ -11,12 +11,12 @@ import type { Session } from "@shared/schema";
 import { logger } from "../logger";
 import { storage } from "../storage";
 import {
-  hydrateCanonicalPair,
-  pairsFromBlock,
-  prepareAmbientPair,
-  prepareCanonicalBlock,
-  type PreparedBroadcastPair,
-} from "./media";
+  hydrateCanonicalSlot,
+  prepareAmbientSlots,
+  prepareCanonicalSlot,
+  slotsFromBlock,
+  type PreparedBroadcastSlot,
+} from "./media-slots";
 
 type DesiredState = "running" | "stopped";
 type BroadcastMode = "stopped" | "waiting_for_streamer" | "ambient" | "preparing" | "episode";
@@ -36,7 +36,7 @@ export interface BroadcastCoordinatorStatus {
   sessionStatus: "none" | "scheduled" | "preparing" | "active" | "completed";
   activeSessionId?: number;
   runId?: string;
-  currentJobs?: { imageJobId: string; audioJobId: string };
+  currentJobs?: { jobIds: string[] };
   lastError?: string;
   streamer: StreamerAvailabilityStatus;
 }
@@ -54,6 +54,12 @@ const STREAMER_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000];
 type AbortableQueueProbeClient = {
   health(options?: { signal?: AbortSignal }): ReturnType<QueueBroadcastClient["health"]>;
   getPlayback(options?: { signal?: AbortSignal }): ReturnType<QueueBroadcastClient["getPlayback"]>;
+};
+
+/** Declared locally so an application with an older installed SDK fails safely. */
+type SlotQueueClient = {
+  stageUpload(input: Record<string, unknown>): Promise<QueueBroadcastJob>;
+  releaseSlot(slotKey: string, options?: { signal?: AbortSignal }): Promise<{ jobs: QueueBroadcastJob[] }>;
 };
 
 export class BroadcastCoordinator {
@@ -210,7 +216,7 @@ export class BroadcastCoordinator {
         if (preRollDue && scheduled) {
           this.mode = "preparing";
           this.sessionStatus = "preparing";
-          await this.ensureStagedPairs(scheduled, 2, signal);
+          await this.ensureStagedSlots(scheduled, 2, signal);
         }
 
         this.mode = "ambient";
@@ -218,18 +224,18 @@ export class BroadcastCoordinator {
         const lastCanonical = await storage.getLastBlock(this.channelId);
         const sequence = this.ambientSequence++;
         await this.requireStreamerAvailable(signal);
-        const pairs = await prepareAmbientPair(
+        const slots = await prepareAmbientSlots(
           this.channelId,
           lastCanonical?.content ?? "",
           this.runId!,
           sequence,
           signal,
         );
-        for (const pair of pairs) {
+        for (const slot of slots) {
           signal.throwIfAborted();
           const next = await storage.getNextSession(this.channelId);
           if (next && Date.now() >= next.scheduledStart.getTime()) break;
-          await this.submitPair(pair, signal);
+          await this.submitSlot(slot, signal);
         }
         this.lastError = undefined;
       } catch (cause) {
@@ -254,20 +260,20 @@ export class BroadcastCoordinator {
     this.sessionStatus = session.status === "active" ? "active" : "preparing";
     const cursorKey = this.cursorSettingKey(session.id);
     const cursor = Number(await storage.getSystemSetting(cursorKey) || 0);
-    await this.ensureStagedPairs(session, cursor + 2, signal);
+    await this.ensureStagedSlots(session, cursor + 2, signal);
     if (Date.now() >= session.scheduledEnd.getTime()) {
       await this.finishSession(session);
       return;
     }
 
     const blocks = await storage.getBlocksBySessionOrdered(session.id);
-    const pairs = blocks.flatMap((block) => block.deliverySegments?.length ? pairsFromBlock(block) : []);
-    const pair = pairs[cursor];
-    if (!pair) return;
+    const slots = blocks.flatMap((block) => block.deliverySegments?.length ? slotsFromBlock(block) : []);
+    const slot = slots[cursor];
+    if (!slot) return;
 
     let markedActive = session.status === "active";
     try {
-      await this.submitPair(pair, signal, async () => {
+      await this.submitSlot(slot, signal, async () => {
         if (!markedActive) {
           await storage.updateSessionStatus(session.id, "active");
           markedActive = true;
@@ -277,9 +283,9 @@ export class BroadcastCoordinator {
         this.activeSessionId = session.id;
       });
     } catch (cause) {
-      if (!(cause instanceof TerminalPairError)) throw cause;
+      if (!(cause instanceof TerminalSlotError)) throw cause;
       logger.error(
-        `Skipping terminal canonical pair ${pair.idempotencyPrefix}`,
+        `Skipping terminal canonical slot ${slot.idempotencyPrefix}`,
         "broadcast",
         cause,
       );
@@ -304,6 +310,7 @@ export class BroadcastCoordinator {
         throw new StreamerProbeError("Streamer reports that its media server is unavailable");
       }
       await awaitWithAbort(probeClient.getPlayback({ signal }), signal);
+      this.slotClient();
       signal.throwIfAborted();
 
       const succeededAt = Date.now();
@@ -343,57 +350,100 @@ export class BroadcastCoordinator {
     }
   }
 
-  private async ensureStagedPairs(session: Session, minimumPairs: number, signal: AbortSignal): Promise<void> {
+  private async ensureStagedSlots(session: Session, minimumSlots: number, signal: AbortSignal): Promise<void> {
     await this.requireStreamerAvailable(signal);
     let blocks = await storage.getBlocksBySessionOrdered(session.id);
-    // Recover any canonical archive that was persisted before an interrupted
-    // process could store its remote staged-pair receipt.
+    // Recover canonical assets one receipt at a time. A crash after the image
+    // upload but before audio no longer loses the valid image receipt.
     for (const block of blocks) {
-      for (const pair of pairsFromBlock(block)) {
-        if (!pair.queuePairId) await this.stageCanonicalPair(block, pair, signal);
+      for (const slot of slotsFromBlock(block)) {
+        if (slot.queuePairId || this.slotIsCompletelyStaged(block, slot)) continue;
+        await this.stageCanonicalSlot(block, slot, signal);
       }
     }
     blocks = await storage.getBlocksBySessionOrdered(session.id);
-    let pairCount = blocks.reduce(
+    let slotCount = blocks.reduce(
       (count, block) => count + (block.deliverySegments?.length ?? 0),
       0,
     );
-    while (pairCount < minimumPairs && Date.now() < session.scheduledEnd.getTime()) {
+    while (slotCount < minimumSlots && Date.now() < session.scheduledEnd.getTime()) {
       signal.throwIfAborted();
       const previousContext = blocks.at(-1)?.content
         ?? (await storage.getLastBlock(this.channelId))?.content
         ?? "";
       await this.requireStreamerAvailable(signal);
-      const prepared = await prepareCanonicalBlock(this.channelId, session, previousContext, signal);
-      for (const pair of prepared.pairs) {
-        await this.stageCanonicalPair(prepared.block, pair, signal);
+      const prepared = await prepareCanonicalSlot(this.channelId, session, previousContext, signal);
+      // Generation failures are terminal for this turn, not the channel. Wait
+      // before moving on so a persistent provider failure cannot busy-loop.
+      if (!prepared.block || prepared.slots.length === 0) {
+        await wait(2_000, signal);
+        return;
+      }
+      for (const slot of prepared.slots) {
+        await this.stageCanonicalSlot(prepared.block, slot, signal);
       }
       blocks = [...blocks, prepared.block];
-      pairCount += prepared.pairs.length;
+      slotCount += prepared.slots.length;
     }
   }
 
-  private async stageCanonicalPair(
+  private slotIsCompletelyStaged(
     block: Awaited<ReturnType<typeof storage.getBlocksBySessionOrdered>>[number],
-    pair: PreparedBroadcastPair,
+    slot: PreparedBroadcastSlot,
+  ): boolean {
+    const segment = block.deliverySegments?.find((item) => item.ordinal === slot.segmentOrdinal);
+    return Boolean(slot.imageJobId && (!segment?.audioUrl || slot.audioJobId));
+  }
+
+  private async stageCanonicalSlot(
+    block: Awaited<ReturnType<typeof storage.getBlocksBySessionOrdered>>[number],
+    slot: PreparedBroadcastSlot,
     signal: AbortSignal,
   ): Promise<void> {
-    // This protects both archive hydration and the direct multipart upload.
     await this.requireStreamerAvailable(signal);
-    const upload = pair.image && pair.audio ? pair : await hydrateCanonicalPair(block, pair, signal);
-    if (!upload.image || !upload.audio) throw new Error("Canonical pair has no media bytes to stage");
-    const staged = await this.client.stagePair({
-      image: upload.image,
-      audio: upload.audio,
-      imageDuration: safeImageDuration(upload.durationSeconds),
-      idempotencyKey: upload.idempotencyPrefix,
-    });
+    const upload = slot.image ? slot : await hydrateCanonicalSlot(block, slot, signal);
+    if (!upload.image) throw new Error("Canonical slot has no completed image bytes to stage");
+    let imageJobId = upload.imageJobId;
+    let audioJobId = upload.audioJobId;
+    if (!imageJobId) {
+      const stagedImage = await this.slotClient().stageUpload({
+        mediaType: "image",
+        asset: upload.image,
+        imageDuration: safeImageDuration(upload.durationSeconds),
+        idempotencyKey: `${upload.idempotencyPrefix}:image`,
+        slotKey: upload.slotKey,
+      });
+      if (stagedImage.status === "failed") throw new TerminalSlotError("Streamer rejected staged image");
+      imageJobId = stagedImage.id;
+      await this.persistSlotReceipts(block, upload, imageJobId, audioJobId);
+    }
+    if (upload.audio && !audioJobId) {
+      const stagedAudio = await this.slotClient().stageUpload({
+        mediaType: "audio",
+        asset: upload.audio,
+        idempotencyKey: `${upload.idempotencyPrefix}:audio`,
+        slotKey: upload.slotKey,
+      });
+      if (stagedAudio.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
+      audioJobId = stagedAudio.id;
+      await this.persistSlotReceipts(block, upload, imageJobId, audioJobId);
+    }
+  }
+
+  private async persistSlotReceipts(
+    block: Awaited<ReturnType<typeof storage.getBlocksBySessionOrdered>>[number],
+    slot: PreparedBroadcastSlot,
+    imageJobId: string | undefined,
+    audioJobId: string | undefined,
+  ): Promise<void> {
     const existing = block.deliverySegments ?? [];
-    const nextSegments = existing.map((segment) => segment.ordinal === pair.segmentOrdinal
+    const nextSegments = existing.map((segment) => segment.ordinal === slot.segmentOrdinal
       ? {
           ...segment,
-          queuePairId: staged.pair_id,
-          queueIdempotencyKey: upload.idempotencyPrefix,
+          queueSlotKey: slot.slotKey,
+          queueIdempotencyKey: slot.idempotencyPrefix,
+          ...(imageJobId ? { queueImageJobId: imageJobId } : {}),
+          ...(audioJobId ? { queueAudioJobId: audioJobId } : {}),
         }
       : segment);
     await storage.updateBlock(block.id, { deliverySegments: nextSegments });
@@ -406,37 +456,33 @@ export class BroadcastCoordinator {
     this.mode = "ambient";
   }
 
-  private async submitPair(
-    pair: PreparedBroadcastPair,
+  private async submitSlot(
+    slot: PreparedBroadcastSlot,
     signal: AbortSignal,
     onSubmitted?: () => Promise<void>,
   ): Promise<void> {
-    if (!pair.queuePairId) await this.requireStreamerAvailable(signal);
+    if (slot.queuePairId) {
+      await this.submitLegacyPair(slot.queuePairId, signal, onSubmitted);
+      return;
+    }
+    await this.requireStreamerAvailable(signal);
     let lastError: unknown;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       signal.throwIfAborted();
       try {
-        const queued = pair.queuePairId
-          ? await this.client.releasePair(pair.queuePairId, { signal })
-          : await this.enqueueDirectPair(pair, signal);
-        const imageJob = queued.image;
-        const audioJob = queued.audio;
-        this.currentJobs = { imageJobId: imageJob.id, audioJobId: audioJob.id };
+        const queued = await this.stageAndReleaseSlot(slot, signal);
+        if (queued.jobs.length === 0) throw new TerminalSlotError("Streamer released an empty slot");
+        this.currentJobs = { jobIds: queued.jobs.map((job) => job.id) };
         await onSubmitted?.();
-        const [finalImage, finalAudio] = await Promise.all([
-          this.waitForJob(imageJob.id, signal),
-          this.waitForJob(audioJob.id, signal),
-        ]);
-        if (finalImage.status === "failed" || finalAudio.status === "failed") {
-          throw new TerminalPairError(
-            `Queue pair failed: image=${finalImage.status}, audio=${finalAudio.status}`,
-          );
+        const finalJobs = await Promise.all(queued.jobs.map((job) => this.waitForJob(job.id, signal)));
+        if (finalJobs.some((job) => job.status === "failed")) {
+          throw new TerminalSlotError("A queued slot item failed during normalization or playout");
         }
         this.currentJobs = undefined;
         return;
       } catch (cause) {
         this.currentJobs = undefined;
-        if (cause instanceof TerminalPairError || !isRetryable(cause) || attempt === RETRY_DELAYS_MS.length) {
+        if (cause instanceof TerminalSlotError || !isRetryable(cause) || attempt === RETRY_DELAYS_MS.length) {
           throw cause;
         }
         lastError = cause;
@@ -454,24 +500,64 @@ export class BroadcastCoordinator {
     return final;
   }
 
-  private async enqueueDirectPair(
-    pair: PreparedBroadcastPair,
+  private async stageAndReleaseSlot(
+    slot: PreparedBroadcastSlot,
     signal: AbortSignal,
-  ): Promise<{ image: QueueBroadcastJob; audio: QueueBroadcastJob }> {
-    if (!pair.image || !pair.audio) {
-      throw new Error(`Pair ${pair.idempotencyPrefix} is missing completed media bytes`);
+  ): Promise<{ jobs: QueueBroadcastJob[] }> {
+    if (!slot.imageJobId && !slot.audioJobId) {
+      if (!slot.image) throw new Error(`Slot ${slot.idempotencyPrefix} is missing completed image bytes`);
+      const image = await this.slotClient().stageUpload({
+        mediaType: "image",
+        asset: slot.image,
+        imageDuration: safeImageDuration(slot.durationSeconds),
+        idempotencyKey: `${slot.idempotencyPrefix}:image`,
+        slotKey: slot.slotKey,
+      });
+      if (image.status === "failed") throw new TerminalSlotError("Streamer rejected staged image");
+      if (slot.audio) {
+        const audio = await this.slotClient().stageUpload({
+          mediaType: "audio",
+          asset: slot.audio,
+          idempotencyKey: `${slot.idempotencyPrefix}:audio`,
+          slotKey: slot.slotKey,
+        });
+        if (audio.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
+      }
     }
     signal.throwIfAborted();
-    return this.client.enqueuePairUpload({
-      image: pair.image,
-      audio: pair.audio,
-      imageDuration: safeImageDuration(pair.durationSeconds),
-      idempotencyKey: pair.idempotencyPrefix,
-    });
+    return this.slotClient().releaseSlot(slot.slotKey, { signal });
+  }
+
+  private async submitLegacyPair(
+    pairId: string,
+    signal: AbortSignal,
+    onSubmitted?: () => Promise<void>,
+  ): Promise<void> {
+    const queued = await this.client.releasePair(pairId, { signal });
+    this.currentJobs = { jobIds: [queued.image.id, queued.audio.id] };
+    await onSubmitted?.();
+    const finalJobs = await Promise.all([
+      this.waitForJob(queued.image.id, signal),
+      this.waitForJob(queued.audio.id, signal),
+    ]);
+    this.currentJobs = undefined;
+    if (finalJobs.some((job) => job.status === "failed")) {
+      throw new TerminalSlotError("A legacy queue pair failed during normalization or playout");
+    }
   }
 
   private async requireStreamerAvailable(signal: AbortSignal): Promise<void> {
     if (!await this.ensureStreamerAvailable(signal)) throw new StreamerUnavailableError();
+  }
+
+  private slotClient(): SlotQueueClient {
+    const client = this.client as unknown as Partial<SlotQueueClient>;
+    if (typeof client.stageUpload !== "function" || typeof client.releaseSlot !== "function") {
+      throw new StreamerProbeError(
+        "Installed queue-broadcast package does not support independent staged slots; install @portalshq/capability-queue-broadcast@^0.1.5",
+      );
+    }
+    return client as SlotQueueClient;
   }
 
   private async waitForStreamerRetry(signal: AbortSignal): Promise<void> {
@@ -488,12 +574,14 @@ export class BroadcastCoordinator {
   }
 }
 
-class TerminalPairError extends Error {}
+class TerminalSlotError extends Error {}
 class StreamerUnavailableError extends Error {}
 class StreamerProbeError extends Error {}
 
 function safeImageDuration(durationSeconds: number): number {
-  return Math.max(1, Math.min(30, Math.ceil(durationSeconds)));
+  const defaultDuration = 15;
+  const clamped = Math.max(1, Math.min(30, Math.ceil(durationSeconds)));
+  return Number.isFinite(durationSeconds) ? clamped : defaultDuration;
 }
 
 function isRetryable(cause: unknown): boolean {
