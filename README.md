@@ -149,6 +149,41 @@ Apply `server/migrations/004_live_broadcast.sql`. It adds canonical delivery
 segments and stable, deduplicated chat identity/provenance fields while retaining
 the compatibility image/audio and username columns.
 
+## RAG Provider Configuration
+
+The RAG (Retrieval-Augmented Generation) provider supports optional embedding generation control:
+
+### useEmbeddings Option
+
+The `RagProvider` constructor accepts a `useEmbeddings` boolean option in the `RagProviderOptions` interface:
+
+```typescript
+interface RagProviderOptions {
+  sqlite?: SqliteDatabase;
+  generateEmbedding?: (query: string) => Promise<number[]>;
+  useEmbeddings?: boolean; // When false, skips embedding generation in searchCandidates
+}
+```
+
+**Behavior:**
+- **Default:** `true` - Generates and uses embeddings for vector search (backward compatible)
+- **When `false`:** Skips embedding generation, uses only keyword-based search
+- **Safe default:** The database `embedding` column is nullable, allowing NULL values when embeddings are not generated
+
+**Use cases:**
+- Performance optimization in high-throughput scenarios
+- Cost reduction by avoiding embedding API calls
+- Testing without embedding services
+- Fallback when embedding generation fails
+
+**Example:**
+```typescript
+const provider = new RagProvider({
+  useEmbeddings: false, // Skip embedding generation
+  // ... other options
+});
+```
+
 ## Media Player
 
 The application uses an industry-standard media player built on hls.js with advanced analytics capabilities:
