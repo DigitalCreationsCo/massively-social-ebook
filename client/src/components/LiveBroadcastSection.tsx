@@ -39,7 +39,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
         </div>
       )}
 
-      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[auto_1fr] lg:gap-6">
+      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-6">
        {/* <div className="flex min-w-0 flex-col gap-4"> */}
          {/*
           <button type="button" onClick={() => setLocation("/")} className="group inline-flex items-center gap-2 text-xs text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary p-2" aria-label="Back to home">
@@ -49,7 +49,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
            */}
         {/* </div> */}
 
-        <div className="live-broadcast-player-zone col-span-1 flex min-w-0 flex-col gap-4 w-fit">
+        <div className="live-broadcast-player-zone col-span-1 flex min-w-0 flex-col gap-4">
           <div className="hidden md:flex items-baseline gap-2">
             <h1 className="font-sans font-semibold text-xl leading-tight text-white">25th Chapter</h1>
             <span className="hidden h-5 w-px bg-white/75 self-end md:inline" />
@@ -64,10 +64,10 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
           </div>}
           {deliveryIssue && <div className="mb-3 rounded-lg px-4 py-3 text-sm"><span className="font-medium text-white/75">{delivery?.lastError || "We are reconnecting the signal."}</span></div>}
           {playbackQuery.isError && <div className="mb-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-white/65">We could not check the broadcast right now. Try refreshing in a moment.</div>}
-          <div className="group relative isolate overflow-hidden rounded-none border-0 bg-[#050403] shadow-none md:rounded-[2rem] md:border md:border-white/20 md:shadow-[0_28px_100px_rgba(0,0,0,0.55)] max-h-[calc(100dvh-12rem)]">
+          <div className="group relative isolate overflow-hidden rounded-none border-0 bg-[#050403] shadow-none md:rounded-[2rem] md:border md:border-white/20 md:shadow-[0_28px_100px_rgba(0,0,0,0.55)]">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45" />
-            <VideoDeliveryPlayer className="live-broadcast-player aspect-video w-full" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
+            <VideoDeliveryPlayer className="live-broadcast-player aspect-video max-h-[calc(100dvh-12rem)] w-full" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
             <div className="hidden md:block pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
           </div>
         </div>
