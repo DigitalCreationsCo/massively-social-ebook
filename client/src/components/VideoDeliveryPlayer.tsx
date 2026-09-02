@@ -243,7 +243,7 @@ export function VideoDeliveryPlayer({
   return (
     <div
       ref={containerRef}
-      className={cn("group relative isolate aspect-video w-full", isFullScreen ? "rounded-none border-none" : "", className)}
+      className={cn("group relative isolate w-full", isFullScreen ? "rounded-none border-none" : "", className)}
       role={isUnavailable ? undefined : "group"}
       aria-label={isUnavailable ? undefined : "Video delivery player"}
       tabIndex={isUnavailable ? undefined : 0}
@@ -258,7 +258,7 @@ export function VideoDeliveryPlayer({
           muted 
           autoPlay 
           playsInline 
-          className="relative size-full object-contain transition-opacity duration-700" 
+          className="relative size-full object-cover transition-opacity duration-700" 
           aria-label="Media player video" 
           onPlay={() => {
             setPlayerState("playing");
