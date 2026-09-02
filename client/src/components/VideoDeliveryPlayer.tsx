@@ -243,7 +243,7 @@ export function VideoDeliveryPlayer({
   return (
     <div
       ref={containerRef}
-      className={cn("group relative isolate aspect-video w-full overflow-hidden rounded-[2rem] border border-white/20 bg-[#050403] shadow-[0_28px_100px_rgba(0,0,0,0.55)]", isFullScreen ? "rounded-none border-none" : "", className)}
+      className={cn("group relative isolate aspect-video w-full", isFullScreen ? "rounded-none border-none" : "", className)}
       role={isUnavailable ? undefined : "group"}
       aria-label={isUnavailable ? undefined : "Video delivery player"}
       tabIndex={isUnavailable ? undefined : 0}
@@ -252,14 +252,13 @@ export function VideoDeliveryPlayer({
       onMouseLeave={handleContainerMouseLeave}
       onFocus={handleContainerFocus}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
       {!isUnavailable && (
         <video 
           ref={videoRef} 
           muted 
           autoPlay 
           playsInline 
-          className="relative size-full object-cover transition-opacity duration-700" 
+          className="relative size-full object-contain transition-opacity duration-700" 
           aria-label="Media player video" 
           onPlay={() => {
             setPlayerState("playing");
@@ -290,8 +289,6 @@ export function VideoDeliveryPlayer({
           }}
         />
       )}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
 
       {isUnavailable ? (
         <div className="relative flex size-full flex-col items-center justify-center px-8 text-center">
