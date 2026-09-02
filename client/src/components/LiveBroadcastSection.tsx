@@ -39,7 +39,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
         </div>
       )}
 
-      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[auto_1fr] lg:gap-6">
+      <section className="live-broadcast-layout flex min-h-0 flex-1 flex-col gap-0 lg:grid md:gap-5 lg:grid-cols-[auto_1fr] lg:gap-6 lg:items-stretch">
        {/* <div className="flex min-w-0 flex-col gap-4"> */}
          {/*
           <button type="button" onClick={() => setLocation("/")} className="group inline-flex items-center gap-2 text-xs text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary p-2" aria-label="Back to home">
@@ -49,7 +49,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
            */}
         {/* </div> */}
 
-        <div className="live-broadcast-player-zone col-span-1 flex min-w-0 flex-col gap-4">
+        <div className="live-broadcast-player-zone col-span-1 flex min-w-0 flex-col gap-4 h-full">
           <div className="hidden md:flex items-baseline gap-2">
             <h1 className="font-sans font-semibold text-xl leading-tight text-white">25th Chapter</h1>
             <span className="hidden h-5 w-px bg-white/75 self-end md:inline" />
@@ -72,7 +72,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
           </div>
         </div>
 
-        <aside className="flex flex-col flex-1 col-span-1 gap-4 lg:min-h-0">
+        <aside className="flex flex-col flex-1 col-span-1 gap-4 lg:min-h-0 h-full">
           <PushToggle />
           <div className="live-broadcast-chat flex flex-1 min-h-0 overflow-hidden rounded-none border-0 bg-black/35 shadow-none backdrop-blur-sm md:min-h-[20rem] md:rounded-[2rem] md:border md:border-white/20 md:shadow-[0_20px_80px_rgba(0,0,0,0.28)]">
             <LiveChat numUsers={formatViewerCount(broadcast?.viewerCount)} history={liveState.chatHistory ?? []} mostRecentMessage={liveState.mostRecentMessage} username={liveState.username ?? "Guest"} onSend={liveState.submitChat ?? (() => undefined)} isOpen={chatOpen} keepOpen onToggle={() => setChatOpen((open) => !open)} />
