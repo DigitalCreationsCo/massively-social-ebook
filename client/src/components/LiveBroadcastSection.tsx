@@ -39,7 +39,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
         </div>
       )}
 
-      <section className="grid flex-1 gap-5 lg:grid-cols-[1fr_minmax(0,1fr)_23rem] lg:gap-6">
+      <section className="grid flex-1 gap-5 lg:grid-cols-[23rem_1fr_23rem] lg:gap-6">
         <div className="flex min-w-0 flex-col gap-4">
           <button type="button" onClick={() => setLocation("/")} className="group inline-flex items-center gap-2 text-xs text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary p-2" aria-label="Back to home">
             <ArrowLeft className="size-4 transition-transform" />
