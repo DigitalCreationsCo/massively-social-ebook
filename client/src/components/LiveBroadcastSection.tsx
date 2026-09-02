@@ -67,7 +67,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
           <div className="group relative isolate overflow-hidden rounded-none border-0 bg-[#050403] shadow-none md:rounded-[2rem] md:border md:border-white/20 md:shadow-[0_28px_100px_rgba(0,0,0,0.55)]">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45" />
-            <VideoDeliveryPlayer className="live-broadcast-player aspect-video max-h-[calc(100dvh-12rem)] w-full" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
+            <VideoDeliveryPlayer className="live-broadcast-player aspect-video h-full max-h-[calc(100dvh-12rem)] w-full" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
             <div className="hidden md:block pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
           </div>
         </div>
