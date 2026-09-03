@@ -20,7 +20,7 @@ const DEFAULT_MODELS: Record<AiProvider, Record<AiCapability, string | undefined
   },
   // OpenCode's community AI SDK provider currently exposes language models only.
   opencode: {
-    text: "ling-3.0-flash-fin-free",
+    text: "opencode/ling-3.0-flash-fin-free",
     image: undefined,
     embedding: undefined,
   },
@@ -82,11 +82,13 @@ function openaiProvider() {
 
 function opencodeProvider() {
   const timeout = Number.parseInt(process.env.OPENCODE_SERVER_TIMEOUT_MS ?? "10000", 10);
-  return createOpencode({
-    baseUrl: process.env.OPENCODE_BASE_URL,
-    autoStartServer: process.env.OPENCODE_AUTO_START_SERVER !== "false",
-    serverTimeout: Number.isFinite(timeout) ? timeout : 10_000,
-  });
+  return createOpencode(
+    // {
+    // baseUrl: process.env.OPENCODE_BASE_URL,
+    // autoStartServer: process.env.OPENCODE_AUTO_START_SERVER !== "false",
+    // serverTimeout: Number.isFinite(timeout) ? timeout : 10_000,
+    // }
+  );
 }
 
 /** Returns the language model selected by AI_TEXT_PROVIDER and AI_TEXT_MODEL. */

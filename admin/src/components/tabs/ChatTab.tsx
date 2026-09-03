@@ -62,7 +62,7 @@ export default function ChatTab() {
     if (!channelFilter) return []
     
     const headers = getAuthHeader(token)
-    const res = await fetch(`/api/chat?channelId=${channelFilter}`, {
+    const res = await fetch(`/api/chat?channelId=${encodeURIComponent(channelFilter)}`, {
       headers,
     })
     

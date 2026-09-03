@@ -982,7 +982,7 @@ export default function BlocksTab() {
 
   const fetchSessions = useCallback(async () => {
     if (!channelFilter) return []
-    const sessions = await adminFetch<Session[]>(`/sessions?channelId=${channelFilter}`, token)
+    const sessions = await adminFetch<Session[]>(`/sessions?channelId=${encodeURIComponent(channelFilter)}`, token)
     return sessions.filter(s => s.status === 'active' || s.status === 'scheduled')
   }, [token, channelFilter])
 

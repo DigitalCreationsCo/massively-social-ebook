@@ -32,7 +32,7 @@ export default function LoreTab() {
   }, [channels, createForm.channelId])
 
   const fetchLore = useCallback(async () => {
-    const query = channelFilter ? `?channelId=${channelFilter}` : ''
+    const query = channelFilter ? `?channelId=${encodeURIComponent(channelFilter)}` : ''
     return adminFetch<Lore[]>(`/lore${query}`, token)
   }, [token, channelFilter])
 

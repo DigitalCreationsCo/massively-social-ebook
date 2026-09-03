@@ -37,7 +37,16 @@ export function MediaControls({
           {isBusy ? "Reacquiring the signal" : playerState === "error" ? "Signal could not be restored" : isMuted ? "Tap audio to join in" : ""}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-3">
+        <button
+          type="button"
+          onClick={(event) => onPlaybackToggle(event)}
+          disabled={isBusy}
+          className="grid size-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_0_24px_rgba(251,191,36,0.32)] transition disabled:cursor-wait disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          aria-label={playerState === "playing" ? "Pause broadcast" : "Play broadcast"}
+        >
+          {isBusy ? <RotateCw className="size-4 animate-spin" /> : playerState === "playing" ? <Pause className="size-[1.3rem] fill-black" /> : <Play className="size-[1.3rem] fill-black translate-x-px" />}
+        </button>
         <button
           type="button"
           onClick={onToggleMute}
@@ -53,15 +62,6 @@ export function MediaControls({
           aria-label={isFullScreen ? "Exit full screen" : "Enter full screen"}
         >
           {isFullScreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
-        </button>
-        <button
-          type="button"
-          onClick={(event) => onPlaybackToggle(event)}
-          disabled={isBusy}
-          className="grid size-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_0_24px_rgba(251,191,36,0.32)] transition disabled:cursor-wait disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-          aria-label={playerState === "playing" ? "Pause broadcast" : "Play broadcast"}
-        >
-          {isBusy ? <RotateCw className="size-4 animate-spin" /> : playerState === "playing" ? <Pause className="size-[1.3rem] fill-black" /> : <Play className="size-[1.3rem] fill-black translate-x-px" />}
         </button>
       </div>
     </div>

@@ -33,7 +33,18 @@ export class GCPStorageManager {
     gcpProjectId: string,
     bucketName = process.env.GOOGLE_CLOUD_BUCKET,
   ) {
-    this.storage = new Storage({ projectId: gcpProjectId });
+    const storageOptions: { projectId: string; apiEndpoint?: string } = {
+      projectId: gcpProjectId,
+    };
+    
+    // Use GCS emulator endpoint if configured (safer than hardcoded development check)
+    const gcsEmulatorEndpoint = process.env.GCS_EMULATOR_ENDPOINT;
+    if (gcsEmulatorEndpoint) {
+      storageOptions.apiEndpoint = gcsEmulatorEndpoint;
+      console.log(`GCPStorageManager: Using GCS emulator at ${gcsEmulatorEndpoint}`);
+    }
+    
+    this.storage = new Storage(storageOptions);
     if (!bucketName)
       throw new Error("GCPStorageManager: Bucket name is required.");
 

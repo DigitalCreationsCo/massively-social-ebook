@@ -405,7 +405,7 @@ export default function LandingPage() {
         <div className="max-w-md mx-auto text-center space-y-8 z-10 relative">
           <div className="space-y-4">
             <h2 className="text-4xl font-serif font-semibold text-white tracking-tight">
-              {featuredTitle} is available now.
+              “{featuredTitle}” available now.
             </h2>
             </div>
           <div className="max-w-sm mx-auto">
@@ -416,7 +416,7 @@ export default function LandingPage() {
               }}
               className="w-full bg-primary/90 hover:bg-primary text-primary-foreground font-serif font-semibold tracking-tight text-3xl py-6 shadow-lg transition-all hover:scale-[1.01]"
             >
-              Watch {featuredTitle}
+              Watch Now
             </Button>
             <p className="py-5 text-xs tracking-[0.4em] text-white font-sans uppercase text-center">
               25th Chapter

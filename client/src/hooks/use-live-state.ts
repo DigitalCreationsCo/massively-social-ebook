@@ -90,7 +90,7 @@ export function useLiveState(channelId: string) {
     queryKey: [api.sessions.next.path, channelId],
     queryFn: async () => {
       const res = await fetch(
-        `${api.sessions.next.path}?channelId=${channelId}`,
+        `${api.sessions.next.path}?channelId=${encodeURIComponent(channelId)}`,
       );
       if (!res.ok) return null;
       return res.json() as Promise<{
@@ -192,7 +192,7 @@ export function useLiveState(channelId: string) {
     queryKey: [api.blocks.current.path, channelId],
     queryFn: async () => {
       const res = await fetch(
-        `${api.blocks.current.path}?channelId=${channelId}`,
+        `${api.blocks.current.path}?channelId=${encodeURIComponent(channelId)}`,
       );
       if (res.status === 404) return null;
       if (!res.ok) throw new Error("Failed to fetch current block");
@@ -208,7 +208,7 @@ export function useLiveState(channelId: string) {
     queryKey: [api.chat.history.path, channelId],
     queryFn: async () => {
       const res = await fetch(
-        `${api.chat.history.path}?channelId=${channelId}`,
+        `${api.chat.history.path}?channelId=${encodeURIComponent(channelId)}`,
       );
       if (!res.ok) throw new Error("Failed to fetch chat history");
       return res.json() as Promise<ChatMessage[]>;

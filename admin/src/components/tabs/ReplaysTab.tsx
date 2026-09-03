@@ -29,7 +29,7 @@ export default function ReplaysTab() {
     if (!channelFilter) return [];
     // We can reuse the adminFetch for /sessions and filter for completed
     const sessions = await adminFetch<Session[]>(
-      `/sessions?channelId=${channelFilter}`,
+      `/sessions?channelId=${encodeURIComponent(channelFilter)}`,
       token,
     );
     return sessions.filter((s) => s.status === "completed");

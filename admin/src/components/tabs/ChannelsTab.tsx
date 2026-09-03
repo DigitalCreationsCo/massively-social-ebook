@@ -483,7 +483,7 @@ function ScheduleList({
   onDelete: (scheduleId: number) => void
 }) {
   const fetchSchedules = useCallback(async () => {
-    return adminFetch<Schedule[]>(`/schedules?channelId=${channelId}`, token)
+    return adminFetch<Schedule[]>(`/schedules?channelId=${encodeURIComponent(channelId)}`, token)
   }, [channelId, token])
 
   const { data: schedules } = usePolling(fetchSchedules, 10000, [channelId, token])
