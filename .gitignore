@@ -14,3 +14,4 @@ server/blocks/generated/
 .traces
 
 .credentials.json
+portals-credential.json
