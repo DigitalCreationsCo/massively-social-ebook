@@ -1,6 +1,12 @@
 import crypto from "node:crypto";
 import { GCPStorageManager } from "./storage-manager";
 import { generateStoryImage } from "./blocks/ai";
+import { getAiConfiguration } from "./blocks/ai-provider";
+import {
+  fetchReferenceImages,
+  getImageReferenceLimits,
+  type SelectedImageRepresentation,
+} from "./blocks/image-references";
 
 /**
  * Singleton GCPStorageManager for image uploads.
@@ -37,6 +43,13 @@ export interface GeneratedStoryImage {
   filename: string;
 }
 
+export interface StoryImageAssetOptions {
+  /** Preference-selected references from nested entity representations. */
+  imageRepresentations?: readonly SelectedImageRepresentation[];
+  /** Broadcast abort signal, forwarded through downloads + generation. */
+  signal?: AbortSignal;
+}
+
 /**
  * Builds a deterministic GCS object path for a generated image.
  *
@@ -62,7 +75,8 @@ export function buildImagePath(
 /**
  * Generates a story image through the configured AI SDK provider and uploads it to GCS in one step.
  *
- * 1. Calls `generateStoryImage(description)` which returns raw base64.
+ * 1. Calls `generateStoryImageAsset(description, options)` which resolves
+ *    reference buffers (when provided) and returns raw bytes.
  * 2. Builds a unique GCS path scoped to the channel and image type.
  * 3. Uploads via `GCPStorageManager.uploadBase64Image`.
  * 4. Returns an **HTTPS public URL** suitable for browser consumption.
@@ -77,13 +91,50 @@ export async function generateAndUploadStoryImage(
   description: string,
   channelId: string,
   imageType: ImageType,
+  options: StoryImageAssetOptions = {},
 ): Promise<string> {
-  return archiveStoryImage(await generateStoryImageAsset(description), channelId, imageType);
+  return archiveStoryImage(await generateStoryImageAsset(description, options), channelId, imageType);
 }
 
-/** Generate image bytes without making object storage part of broadcast ingestion. */
-export async function generateStoryImageAsset(description: string): Promise<GeneratedStoryImage> {
-  const base64Data = await generateStoryImage(description);
+/**
+ * Generate image bytes without making object storage part of broadcast ingestion.
+ *
+ * When `imageRepresentations` are provided, they are presigned just-in-time
+ * and downloaded into bounded Buffers, then passed to the image model as
+ * `prompt: { text, images }` (bounded by the active model's input limit).
+ * When no usable reference remains, generation degrades to the current
+ * text-only prompt.
+ */
+export async function generateStoryImageAsset(
+  description: string,
+  options: StoryImageAssetOptions = {},
+): Promise<GeneratedStoryImage> {
+  const selected = options.imageRepresentations ?? [];
+  const { provider, model } = getAiConfiguration().image;
+  const limits = getImageReferenceLimits(provider, model);
+
+  let referenceImages: Buffer[] | undefined;
+  let referenceHashes: string[] | undefined;
+  let candidateCount = 0;
+
+  if (selected.length > 0) {
+    candidateCount = selected.length;
+    const fetched = await fetchReferenceImages(selected, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      maxImages: limits.maxImages,
+      maxBytesPerImage: limits.maxBytesPerImage,
+      allowedMimeTypes: limits.allowedMimeTypes,
+    });
+    if (fetched.length > 0) {
+      referenceImages = fetched.map((f) => f.buffer);
+      referenceHashes = fetched.map((f) => f.hash);
+    }
+  }
+
+  const base64Data = await generateStoryImage(description, {
+    ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
+    ...(options.signal ? { abortSignal: options.signal } : {}),
+  });
   const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
   const buffer = Buffer.from(normalized, "base64");
   if (buffer.length === 0) throw new Error("Image generator returned empty image data");

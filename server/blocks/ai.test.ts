@@ -39,7 +39,7 @@ vi.mock("@portalshq/narrativeengine", () => ({
   },
 }));
 
-import { generateStoryBlock, generateStoryImage } from "./ai";
+import { generateContextWithTimeout, generateStoryBlock, generateStoryImage } from "./ai";
 
 describe("AI Generators", () => {
   beforeEach(() => {
@@ -157,6 +157,117 @@ describe("AI Generators", () => {
       mockGenerateImage.mockRejectedValueOnce(new Error("API Error"));
 
       await expect(generateStoryImage("A test image description")).rejects.toThrow("API Error");
+    });
+
+    it("passes reference buffers as prompt.images", async () => {
+      const base64Image = "YmFzZTY0dGVzdGk=";
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: base64Image } });
+      const refs = [Buffer.from([1, 2, 3])];
+
+      await generateStoryImage("A scene", { referenceImages: refs, referenceHashes: ["hash-1"], candidateCount: 1 });
+
+      expect(mockGenerateImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.objectContaining({ text: expect.any(String), images: expect.any(Array) }),
+        }),
+      );
+      const prompt = mockGenerateImage.mock.calls.at(-1)![0].prompt as { text: string; images: unknown[] };
+      expect(prompt.images).toHaveLength(1);
+      expect(prompt.images[0]).toBe(refs[0]);
+    });
+
+    it("enforces unknown-model limit of one reference", async () => {
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: "eA==" } });
+      const refs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3])];
+
+      await generateStoryImage("A scene", { referenceImages: refs, candidateCount: 3 });
+
+      const prompt = mockGenerateImage.mock.calls.at(-1)![0].prompt as { text: string; images: unknown[] };
+      // test-image-model is unknown -> conservatively one reference
+      expect(prompt.images).toHaveLength(1);
+    });
+
+    it("uses text-only prompt when no usable reference remains", async () => {
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: "eA==" } });
+
+      await generateStoryImage("A scene", { referenceImages: [], candidateCount: 2 });
+
+      expect(mockGenerateImage).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: expect.any(String) }),
+      );
+    });
+
+    it("forwards the broadcast abort signal to generation", async () => {
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: "eA==" } });
+      const controller = new AbortController();
+
+      await generateStoryImage("A scene", { abortSignal: controller.signal });
+
+      expect(mockGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ abortSignal: controller.signal }));
+    });
+  });
+
+  describe("generateContextWithTimeout / StoryBlockResult context", () => {
+    it("returns full context and selected nested references", async () => {
+      mockBuildContext.mockResolvedValueOnce({
+        prompt: "enriched prompt",
+        entities: [
+          {
+            id: "nap://repo/character/hero",
+            name: "Hero",
+            type: "character",
+            representations: {
+              reference_image: { hash: "hash-hero", format: "png", uri: "https://storage.googleapis.com/b/hero.png" },
+            },
+          },
+        ],
+        representations: [{ hash: "deprecated", uri: "https://evil.test/deprecated.png" }],
+      });
+      mockGenerateText.mockResolvedValueOnce({
+        output: { title: "T", content: "C", isNotable: false },
+      });
+
+      const result = await generateStoryBlock("chan", "prev");
+
+      expect(result.narrativeContext).toBeDefined();
+      expect(result.imageRepresentations).toHaveLength(1);
+      expect(result.selectedImageRepresentations).toHaveLength(1);
+      expect(result.imageRepresentations?.[0]).toMatchObject({
+        entityId: "nap://repo/character/hero",
+        representationKey: "reference_image",
+        hash: "hash-hero",
+      });
+      // Deprecated top-level list is never used as the source.
+      expect(result.imageRepresentations?.[0]?.hash).not.toBe("deprecated");
+    });
+
+    it("returns neither context nor references when PX enrichment fails", async () => {
+      mockBuildContext.mockRejectedValueOnce(new Error("PX failed"));
+      mockGenerateText.mockResolvedValueOnce({
+        output: { title: "T", content: "C", isNotable: false },
+      });
+
+      const result = await generateStoryBlock("chan", "prev");
+
+      expect(result.narrativeContext).toBeUndefined();
+      expect(result.imageRepresentations).toBeUndefined();
+      expect(result.selectedImageRepresentations).toBeUndefined();
+    });
+
+    it("rejects with a corrected 8000ms timeout message", async () => {
+      vi.useFakeTimers();
+      try {
+        mockBuildContext.mockImplementationOnce(() => new Promise(() => undefined));
+        const pending = generateContextWithTimeout("chan", "q");
+        const assertion = expect(pending).rejects.toThrow("Context generation timeout (>8000ms)");
+        await vi.advanceTimersByTimeAsync(8000);
+        await assertion;
+      } finally {
+        vi.useRealTimers();
+        mockBuildContext.mockImplementation(({ inputQuery }: { inputQuery: string }) =>
+          Promise.resolve({ prompt: inputQuery }),
+        );
+      }
     });
   });
 });

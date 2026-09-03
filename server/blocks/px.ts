@@ -15,16 +15,23 @@ import { getLanguageModel } from "./ai-provider";
 const sourceSkillPath = path.resolve(process.cwd(), "server/blocks/generated/px-skill.md");
 const deployedSkillPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "px-skill.md");
 
-const enrichmentSchema = z.object({
+export const enrichmentSchema = z.object({
   entities: z.array(z.object({
     id: z.string(),
     name: z.string(),
     type: z.string(),
     description: z.string().optional(),
     properties: z.record(z.string(), z.json()).optional(),
-    representations: z.record(z.string(), z.json()).optional(),
+    // Nested representation map: keys are representation/property names.
+    // Values are validated structurally downstream in
+    // `selectImageRepresentations` (hash + format required, uri optional)
+    // so malformed entries are skipped without failing enrichment.
+    representations: z.record(z.string(), z.unknown()).optional(),
     provenance: z.record(z.string(), z.json()).optional(),
   })).optional(),
+  // Deprecated upstream: prefer `entity.representations`. Retained only for
+  // compatibility with older NarrativeEngine contexts; never used as the
+  // source for canonical image references.
   representations: z.array(z.object({
     hash: z.string(),
     id: z.string(),
@@ -84,12 +91,15 @@ async function loadSavedPxSkill(): Promise<string> {
   );
 }
 
-function createPxPrompt(request: PxProviderRequest<BaseNarrativeBlock, BaseNarrativeLore>): string {
+export function createPxPrompt(request: PxProviderRequest<BaseNarrativeBlock, BaseNarrativeLore>): string {
+  const preference = request.representationProperties.length > 0
+    ? request.representationProperties.join(", ")
+    : "(none configured — return the primary representation per entity)";
   return [
     "Use the nap tool to resolve entities from the repo: " + request.channelId,
     "Resolve the full manifests for entities mentioned in the request data. Do not return manifests for entities that are not mentioned in the request data.",
     "Limit queried entities to "+ request.maxUniqueEntityRepresentations,
-    "Ignore the representationProperties field.",
+    `Return each entity's full nested representations map. Prefer representationProperties in order: ${preference}.`,
     JSON.stringify(request),
   ].join("\n\n");
 }

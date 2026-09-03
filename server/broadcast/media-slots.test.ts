@@ -138,9 +138,74 @@ describe("broadcast media slots", () => {
         segments: [{ segmentOrdinal: 0, durationSeconds: 15 }],
       });
       expect(prepared?.segments[0]?.audio).toBeUndefined();
-      expect(images.generateStoryImageAsset).toHaveBeenCalledWith(expect.stringContaining("Ambient interlude"));
+      expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
+        expect.stringContaining("Ambient interlude"),
+        expect.objectContaining({ imageRepresentations: [], signal: expect.anything() }),
+      );
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("forwards identical selected references through canonical generation", async () => {
+    const refs = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const signal = new AbortController().signal;
+    blocks.generateStoryBlock.mockResolvedValue({
+      title: "T",
+      content: "C",
+      dialogue: "D",
+      imageRepresentations: refs,
+    });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "s.jpg" });
+    images.archiveStoryImage.mockResolvedValue("https://archive.example/s.jpg");
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+    storage.createBlock.mockResolvedValue({ id: 9 });
+
+    await prepareCanonicalSlot("main", { id: 3 } as never, "", signal);
+
+    expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ imageRepresentations: refs, signal }),
+    );
+  });
+
+  it("forwards identical selected references through ambient generation", async () => {
+    const refs = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const signal = new AbortController().signal;
+    blocks.generateStoryBlock.mockResolvedValue({
+      title: "T",
+      content: "C",
+      dialogue: "D",
+      selectedImageRepresentations: refs,
+    });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "s.jpg" });
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+
+    await prepareAmbientSlots("main", "ctx", "run-1", 3, signal);
+
+    expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ imageRepresentations: refs, signal }),
+    );
+  });
+
+  it("preserves archived-image fallback when generation exhausts retries", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
+    images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
+    storage.getRandomImage.mockResolvedValue("https://archive.example/fallback.jpg");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(Buffer.from("fallback-bytes") as unknown as BodyInit, {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }),
+    );
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+    try {
+      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 4, new AbortController().signal);
+      expect(prepared?.image).toBeDefined();
+      expect(storage.getRandomImage).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 });

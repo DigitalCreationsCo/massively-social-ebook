@@ -4,6 +4,7 @@ import type { QueueUploadAsset } from "@portalshq/capability-queue-broadcast";
 import type { Block, DeliverySegment, Session } from "@shared/schema";
 
 import { generateStoryBlock } from "../blocks/ai";
+import type { SelectedImageRepresentation } from "../blocks/image-references";
 import {
   archiveStoryImage,
   generateStoryImageAsset,
@@ -84,7 +85,8 @@ export async function prepareCanonicalSlot(
     () => generateStoryBlock(channelId, previousContext, false, session.id),
     signal,
   );
-  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "block", signal);
+  const imageRepresentations = generated.imageRepresentations ?? generated.selectedImageRepresentations ?? [];
+  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "block", signal, imageRepresentations);
   if (!media.image) return { slots: [] };
 
   const imageUrl = media.image.archiveUrl
@@ -160,7 +162,8 @@ export async function prepareAmbientSlots(
       dialogue: undefined,
     };
   }
-  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "ambient", signal);
+  const ambientReferences = generated.imageRepresentations ?? generated.selectedImageRepresentations ?? [];
+  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "ambient", signal, ambientReferences);
   if (!media.image) return undefined;
   const idempotencyPrefix = `channel:${channelId}:run:${runId}:sequence:${sequence}`;
   const image = toUploadAsset(
@@ -231,10 +234,11 @@ async function generateTurnMedia(
   dialogue: string | null | undefined,
   imageType: "block" | "ambient",
   signal: AbortSignal,
+  imageRepresentations: readonly SelectedImageRepresentation[] = [],
 ): Promise<{ image?: GeneratedImageWithArchive; narration: PreparedNarration[] }> {
   const description = `${title}: ${content.slice(0, 300)}`;
   const [imageResult, narrationResult] = await Promise.allSettled([
-    retryGeneration("story image", () => generateImageWithFallback(description, channelId, imageType, signal), signal),
+    retryGeneration("story image", () => generateImageWithFallback(description, channelId, imageType, signal, imageRepresentations), signal),
     retryGeneration("narration", () => synthesizeNarrationBuffers(dialogue || content, {
       maxDurationSeconds: Number(process.env.BROADCAST_MAX_SEGMENT_SECONDS || 25),
       signal,
@@ -296,9 +300,10 @@ async function generateImageWithFallback(
   channelId: string,
   imageType: "block" | "ambient",
   signal: AbortSignal,
+  imageRepresentations: readonly SelectedImageRepresentation[] = [],
 ): Promise<GeneratedImageWithArchive> {
   try {
-    return { image: await generateStoryImageAsset(description) };
+    return { image: await generateStoryImageAsset(description, { imageRepresentations, signal }) };
   } catch (cause) {
     logger.warn(
       `Generated image failed for ${channelId}; trying an existing channel image`,

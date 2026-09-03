@@ -134,6 +134,10 @@ export async function batchGenerateBlocks(
           imageDescription,
           channelId,
           "block",
+          {
+            imageRepresentations: block.imageRepresentations ?? block.selectedImageRepresentations ?? [],
+            ...(signal ? { signal } : {}),
+          },
         );
       } catch (imgErr) {
         // Image generation is non-fatal — log and continue with no image

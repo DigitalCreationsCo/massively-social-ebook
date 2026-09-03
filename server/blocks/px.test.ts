@@ -12,7 +12,7 @@ vi.mock("ai", () => ({
 
 vi.mock("./ai-provider", () => ({ getLanguageModel: mockGetLanguageModel }));
 
-import { PxProvider } from "./px";
+import { createPxPrompt, PxProvider } from "./px";
 
 describe("PxProvider", () => {
   beforeEach(() => {
@@ -54,5 +54,37 @@ describe("PxProvider", () => {
       representationProperties: [],
       maxUniqueEntityRepresentations: 5,
     })).rejects.toThrow("PX enrichment failed: No structured output returned.");
+  });
+
+  it("does not instruct PX to ignore representationProperties", async () => {
+    mockGenerateText.mockResolvedValueOnce({ output: { entities: [] } });
+    const provider = new PxProvider({ loadSkill: async () => "# PX Skill" });
+
+    await provider.enrichContext({
+      channelId: "test-channel",
+      inputQuery: "q",
+      chronologicalBlocks: [],
+      loreAtoms: [],
+      representationProperties: ["reference_image", "portrait"],
+      maxUniqueEntityRepresentations: 3,
+    });
+
+    const prompt = mockGenerateText.mock.calls[0][0].prompt as string;
+    expect(prompt).not.toContain("Ignore the representationProperties field");
+    expect(prompt).toContain("reference_image");
+    expect(prompt).toContain("nested representations");
+  });
+
+  it("builds preference guidance when no properties are configured", () => {
+    const prompt = createPxPrompt({
+      channelId: "chan",
+      inputQuery: "q",
+      chronologicalBlocks: [],
+      loreAtoms: [],
+      representationProperties: [],
+      maxUniqueEntityRepresentations: 5,
+    });
+    expect(prompt).not.toContain("Ignore the representationProperties");
+    expect(prompt).toContain("nested representations");
   });
 });
