@@ -48,6 +48,12 @@ function ambientTurn(sequence: number) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 async function flushMicrotasks(turns = 20): Promise<void> {
   for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
 }
@@ -90,7 +96,7 @@ describe("BroadcastCoordinator", () => {
     expect(client.watchJob).toHaveBeenCalledTimes(2);
   });
 
-  it("stages and releases ambient lookahead while an earlier turn is still playing", async () => {
+  it("keeps the next ambient slot local while an earlier slot is playing", async () => {
     storageMock.setSystemSetting.mockResolvedValue(undefined);
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
@@ -111,9 +117,110 @@ describe("BroadcastCoordinator", () => {
     await coordinator.restart();
     await flushMicrotasks(80);
 
-    expect(client.releaseSlot.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(client.watchJob.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(client.releaseSlot).toHaveBeenCalledOnce();
+    expect(client.watchJob).toHaveBeenCalledOnce();
     await coordinator.stop();
+  });
+
+  it("releases split ambient narration one segment at a time", async () => {
+    const firstSegmentFinished = deferred<void>();
+    storageMock.setSystemSetting.mockResolvedValue(undefined);
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+    mediaMock.prepareAmbientSlots
+      .mockResolvedValueOnce({
+        ...ambientTurn(0),
+        segments: [
+          { segmentOrdinal: 0, durationSeconds: 10 },
+          { segmentOrdinal: 1, durationSeconds: 8 },
+        ],
+        totalDurationSeconds: 18,
+      })
+      // Keep the test bounded after the two segments under test. Real ambient
+      // generation is expensive and therefore cannot resolve in this loop.
+      .mockResolvedValue(undefined);
+    let monitorCount = 0;
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => ({ jobs: [job(`image-${slotKey}`, "queued")] })),
+      watchJob: vi.fn(async function* () {
+        monitorCount += 1;
+        yield job("image-playing", "queued");
+        if (monitorCount === 1) await firstSegmentFinished.promise;
+        yield job("image-playing", "done");
+      }),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    await coordinator.restart();
+    await flushMicrotasks(80);
+    expect(client.releaseSlot).toHaveBeenCalledTimes(1);
+    expect(client.releaseSlot).toHaveBeenLastCalledWith(
+      "channel:main:run:test:sequence:0:segment:0:slot",
+      expect.anything(),
+    );
+
+    firstSegmentFinished.resolve();
+    await flushMicrotasks(120);
+    expect(client.releaseSlot).toHaveBeenCalledTimes(2);
+    expect(client.releaseSlot).toHaveBeenLastCalledWith(
+      "channel:main:run:test:sequence:0:segment:1:slot",
+      expect.anything(),
+    );
+    await coordinator.stop();
+  });
+
+  it("releases a staged image when its optional audio upload fails", async () => {
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn()
+        .mockResolvedValueOnce(job("image-job", "staged"))
+        .mockRejectedValueOnce(Object.assign(new Error("invalid audio"), { status: 400 })),
+      releaseSlot: vi.fn(async () => ({ jobs: [job("image-job", "done")] })),
+      watchJob: vi.fn(async function* () { yield job("image-job", "done"); }),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    await (coordinator as any).submitSlot(slot, new AbortController().signal);
+
+    expect(client.releaseSlot).toHaveBeenCalledWith(slot.slotKey, expect.anything());
+    expect(client.watchJob).toHaveBeenCalledWith("image-job", expect.anything());
+  });
+
+  it("persists a canonical image-only fallback after a terminal audio rejection", async () => {
+    const canonicalSlot = { ...slot, imageJobId: undefined, audioJobId: undefined };
+    const block = {
+      id: 8,
+      deliverySegments: [{ ordinal: 0, durationSeconds: 12.2, audioUrl: "https://assets.example/narration.wav" }],
+    };
+    mediaMock.hydrateCanonicalSlot.mockResolvedValue(canonicalSlot);
+    storageMock.updateBlock.mockResolvedValue(undefined);
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn()
+        .mockResolvedValueOnce(job("image-job", "staged"))
+        .mockResolvedValueOnce(job("audio-job", "failed")),
+      releaseSlot: vi.fn(),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    await (coordinator as any).stageCanonicalSlot(block, canonicalSlot, new AbortController().signal);
+
+    expect(storageMock.updateBlock).toHaveBeenLastCalledWith(8, {
+      deliverySegments: [expect.objectContaining({
+        queueImageJobId: "image-job",
+        queueAudioUnavailable: true,
+      })],
+    });
+    expect((coordinator as any).slotIsCompletelyStaged(
+      { ...block, deliverySegments: [{ ...block.deliverySegments[0], queueImageJobId: "image-job", queueAudioUnavailable: true }] },
+      { ...canonicalSlot, imageJobId: "image-job" },
+    )).toBe(true);
   });
 
   it("advances the persisted canonical cursor after a terminal slot failure", async () => {
@@ -406,5 +513,33 @@ describe("BroadcastCoordinator", () => {
     expect(client.getPlayback).toHaveBeenCalledTimes(2);
     expect(mediaMock.prepareAmbientSlots).toHaveBeenCalledOnce();
     expect(coordinator.getStatus().streamer.state).toBe("available");
+  });
+
+  it("disposes ambient pipeline when streamer becomes unavailable", async () => {
+    const client = {
+      health: vi.fn()
+        .mockResolvedValueOnce({ ok: true })
+        .mockRejectedValueOnce(new Error("offline")),
+      getPlayback: vi.fn()
+        .mockResolvedValueOnce({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" })
+        .mockRejectedValue(new Error("offline")),
+      stageUpload: vi.fn(),
+      releaseSlot: vi.fn(),
+    };
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    
+    // First, verify streamer is available
+    await expect((coordinator as any).ensureStreamerAvailable(new AbortController().signal)).resolves.toBe(true);
+    expect(coordinator.getStatus().streamer.state).toBe("available");
+
+    // Then, trigger streamer unavailability
+    await expect((coordinator as any).ensureStreamerAvailable(new AbortController().signal)).resolves.toBe(false);
+    
+    // Verify that ambient pipeline was disposed when streamer became unavailable
+    expect(coordinator.getStatus().streamer.state).toBe("unavailable");
+    // Verify that the mode changed to waiting_for_streamer
+    expect(coordinator.getStatus().mode).toBe("waiting_for_streamer");
   });
 });

@@ -272,37 +272,56 @@ export class BroadcastCoordinator {
 
   private ensureAmbientPipeline(previousCanonicalContext: string, signal: AbortSignal): AmbientPipeline {
     if (this.ambientPipeline) return this.ambientPipeline;
+    // A generated narration may have multiple TTS segments.  The pipeline's
+    // sequence is deliberately a *delivery-slot* sequence, while this counter
+    // remains the idempotency sequence for a single AI generation turn.
+    // Keeping the remaining segments locally means each one gets independent
+    // staging, release, monitoring, and failure handling.
+    const pendingSegments: PreparedAmbientTurn[] = [];
     const pipeline = new AmbientPipeline({
       initialSequence: this.ambientSequence,
       generateTurn: async (sequence, workerSignal) => {
         await this.requireStreamerAvailable(workerSignal);
-        const turn = await prepareAmbientSlots(
-          this.channelId,
-          previousCanonicalContext,
-          this.runId!,
-          sequence,
-          workerSignal,
-        );
-        this.ambientSequence = Math.max(this.ambientSequence, sequence + 1);
-        return turn;
+        let next = pendingSegments.shift();
+        if (!next) {
+          const generationSequence = this.ambientSequence;
+          const turn = await prepareAmbientSlots(
+            this.channelId,
+            previousCanonicalContext,
+            this.runId!,
+            generationSequence,
+            workerSignal,
+          );
+          this.ambientSequence = generationSequence + 1;
+          if (!turn) return undefined;
+          pendingSegments.push(...this.splitAmbientTurn(turn));
+          next = pendingSegments.shift();
+        }
+        return next ? { ...next, sequence } : undefined;
       },
       stageTurn: async (turn, workerSignal) => {
         await this.requireStreamerAvailable(workerSignal);
-        for (const slot of this.ambientTurnSlots(turn)) {
+        const slot = this.ambientTurnSlot(turn);
+        try {
           await this.retrySlotOperation(() => this.stageSlot(slot, workerSignal), workerSignal);
+        } catch (cause) {
+          if (!(cause instanceof PartialSlotStageError)) throw cause;
+          logger.warn(
+            `Ambient narration upload failed; releasing its staged image without audio for ${this.channelId}`,
+            "broadcast",
+            cause,
+            { sequence: turn.sequence, segmentOrdinal: slot.segmentOrdinal },
+          );
         }
       },
       releaseTurn: async (turn, workerSignal) => {
         await this.requireStreamerAvailable(workerSignal);
-        const releases: QueueBroadcastJob[] = [];
-        for (const slot of this.ambientTurnSlots(turn)) {
-          const released = await this.retrySlotOperation(
-            () => this.releaseStagedSlot(slot.slotKey, workerSignal),
-            workerSignal,
-          );
-          releases.push(...released.jobs);
-        }
-        return releases;
+        const slot = this.ambientTurnSlot(turn);
+        const released = await this.retrySlotOperation(
+          () => this.releaseStagedSlot(slot.slotKey, workerSignal),
+          workerSignal,
+        );
+        return released.jobs;
       },
       monitorJobs: (jobs, workerSignal, onJobUpdate) => this.monitorSlotJobs(jobs, workerSignal, onJobUpdate),
       onError: (cause, phase, sequence) => this.reportAmbientPipelineError(cause, phase, sequence),
@@ -331,18 +350,32 @@ export class BroadcastCoordinator {
     await pipeline?.abortAndAwaitAll(reason);
   }
 
-  private ambientTurnSlots(turn: PreparedAmbientTurn): PreparedBroadcastSlot[] {
-    return turn.segments.map((segment) => {
-      const idempotencyPrefix = `${turn.idempotencyPrefix}:segment:${segment.segmentOrdinal}`;
-      return {
-        durationSeconds: segment.durationSeconds,
-        idempotencyPrefix,
-        slotKey: `${idempotencyPrefix}:slot`,
-        segmentOrdinal: segment.segmentOrdinal,
-        image: turn.image,
-        ...(segment.audio ? { audio: segment.audio } : {}),
-      };
-    });
+  private splitAmbientTurn(turn: PreparedAmbientTurn): PreparedAmbientTurn[] {
+    return turn.segments.map((segment) => ({
+      ...turn,
+      segments: [segment],
+      totalDurationSeconds: segment.durationSeconds,
+      // The same image is intentionally sent with each segment so the
+      // Streamer can make an independent image+audio composition. Count its
+      // bytes for every remote slot; it is not a shared remote upload.
+      totalBytes: turn.image.data.size + (segment.audio?.data.size ?? 0),
+    }));
+  }
+
+  private ambientTurnSlot(turn: PreparedAmbientTurn): PreparedBroadcastSlot {
+    const [segment] = turn.segments;
+    if (!segment || turn.segments.length !== 1) {
+      throw new Error(`Ambient pipeline turn ${turn.sequence} must contain exactly one segment`);
+    }
+    const idempotencyPrefix = `${turn.idempotencyPrefix}:segment:${segment.segmentOrdinal}`;
+    return {
+      durationSeconds: segment.durationSeconds,
+      idempotencyPrefix,
+      slotKey: `${idempotencyPrefix}:slot`,
+      segmentOrdinal: segment.segmentOrdinal,
+      image: turn.image,
+      ...(segment.audio ? { audio: segment.audio } : {}),
+    };
   }
 
   private reportAmbientPipelineError(
@@ -447,6 +480,8 @@ export class BroadcastCoordinator {
         `Broadcast production is waiting for Streamer on ${this.channelId}: ${reason}`,
         "broadcast",
       );
+      // Stop all ongoing generation, staging, and release operations when streamer is unavailable
+      await this.disposeAmbientPipeline(new Error(`Streamer unavailable: ${reason}`));
       return false;
     }
   }
@@ -493,7 +528,7 @@ export class BroadcastCoordinator {
     slot: PreparedBroadcastSlot,
   ): boolean {
     const segment = block.deliverySegments?.find((item) => item.ordinal === slot.segmentOrdinal);
-    return Boolean(slot.imageJobId && (!segment?.audioUrl || slot.audioJobId));
+    return Boolean(slot.imageJobId && (!segment?.audioUrl || segment.queueAudioUnavailable || slot.audioJobId));
   }
 
   private async stageCanonicalSlot(
@@ -519,15 +554,35 @@ export class BroadcastCoordinator {
       await this.persistSlotReceipts(block, upload, imageJobId, audioJobId);
     }
     if (upload.audio && !audioJobId) {
-      const stagedAudio = await this.slotClient().stageUpload({
-        mediaType: "audio",
-        asset: upload.audio,
-        idempotencyKey: `${upload.idempotencyPrefix}:audio`,
-        slotKey: upload.slotKey,
-      });
-      if (stagedAudio.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
-      audioJobId = stagedAudio.id;
-      await this.persistSlotReceipts(block, upload, imageJobId, audioJobId);
+      try {
+        const stagedAudio = await this.retrySlotOperation(
+          async () => {
+            const result = await this.slotClient().stageUpload({
+              mediaType: "audio",
+              asset: upload.audio!,
+              idempotencyKey: `${upload.idempotencyPrefix}:audio`,
+              slotKey: upload.slotKey,
+            });
+            if (result.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
+            return result;
+          },
+          signal,
+        );
+        audioJobId = stagedAudio.id;
+        await this.persistSlotReceipts(block, upload, imageJobId, audioJobId);
+      } catch (cause) {
+        // A capacity/transport failure is still a Streamer problem, not an
+        // audio failure.  Let the availability/retry path recover it.  A
+        // terminal media rejection, however, must not strand this image.
+        if (isRetryable(cause)) throw cause;
+        logger.warn(
+          `Canonical narration upload failed; releasing its staged image without audio for ${this.channelId}`,
+          "broadcast",
+          cause instanceof Error ? cause : new Error(String(cause)),
+          { blockId: block.id, segmentOrdinal: upload.segmentOrdinal },
+        );
+        await this.persistSlotReceipts(block, upload, imageJobId, undefined, true);
+      }
     }
   }
 
@@ -536,17 +591,21 @@ export class BroadcastCoordinator {
     slot: PreparedBroadcastSlot,
     imageJobId: string | undefined,
     audioJobId: string | undefined,
+    audioUnavailable = false,
   ): Promise<void> {
     const existing = block.deliverySegments ?? [];
-    const nextSegments = existing.map((segment) => segment.ordinal === slot.segmentOrdinal
-      ? {
-          ...segment,
+    const nextSegments = existing.map((segment) => {
+      if (segment.ordinal !== slot.segmentOrdinal) return segment;
+      const { queueAudioUnavailable: _queueAudioUnavailable, ...rest } = segment;
+      return {
+          ...rest,
           queueSlotKey: slot.slotKey,
           queueIdempotencyKey: slot.idempotencyPrefix,
           ...(imageJobId ? { queueImageJobId: imageJobId } : {}),
           ...(audioJobId ? { queueAudioJobId: audioJobId } : {}),
-        }
-      : segment);
+          ...(audioUnavailable ? { queueAudioUnavailable: true } : {}),
+        };
+    });
     await storage.updateBlock(block.id, { deliverySegments: nextSegments });
   }
 
@@ -620,14 +679,25 @@ export class BroadcastCoordinator {
     slot: PreparedBroadcastSlot,
     signal: AbortSignal,
   ): Promise<{ jobs: QueueBroadcastJob[] }> {
-    await this.stageSlot(slot, signal);
+    try {
+      await this.retrySlotOperation(() => this.stageSlot(slot, signal), signal);
+    } catch (cause) {
+      if (!(cause instanceof PartialSlotStageError)) throw cause;
+      logger.warn(
+        `Narration upload failed; releasing its staged image without audio for ${this.channelId}`,
+        "broadcast",
+        cause,
+        { segmentOrdinal: slot.segmentOrdinal },
+      );
+    }
     signal.throwIfAborted();
     return this.releaseStagedSlot(slot.slotKey, signal);
   }
 
   private async stageSlot(slot: PreparedBroadcastSlot, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    if (!slot.imageJobId && !slot.audioJobId) {
+    let imageJobId = slot.imageJobId;
+    if (!imageJobId) {
       if (!slot.image) throw new Error(`Slot ${slot.idempotencyPrefix} is missing completed image bytes`);
       const image = await this.slotClient().stageUpload({
         mediaType: "image",
@@ -637,18 +707,28 @@ export class BroadcastCoordinator {
         slotKey: slot.slotKey,
       });
       if (image.status === "failed") throw new TerminalSlotError("Streamer rejected staged image");
-      if (slot.audio) {
-        signal.throwIfAborted();
+      imageJobId = image.id;
+    }
+    if (slot.audio && !slot.audioJobId) {
+      signal.throwIfAborted();
+      try {
         const audio = await this.slotClient().stageUpload({
           mediaType: "audio",
           asset: slot.audio,
           idempotencyKey: `${slot.idempotencyPrefix}:audio`,
           slotKey: slot.slotKey,
         });
-        if (audio.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
+        if (audio.status === "failed") {
+          throw new Error("Streamer rejected staged audio");
+        }
+      } catch (cause) {
+        // The image has already been safely staged under an idempotent key.
+        // Preserve it as an image-only item rather than stranding it when the
+        // optional narration upload exhausts its retries.
+        throw new PartialSlotStageError(imageJobId!, cause);
       }
-      signal.throwIfAborted();
     }
+    signal.throwIfAborted();
   }
 
   private async releaseStagedSlot(
@@ -723,6 +803,11 @@ export class BroadcastCoordinator {
 }
 
 class TerminalSlotError extends Error {}
+class PartialSlotStageError extends Error {
+  constructor(readonly imageJobId: string, readonly stageCause: unknown) {
+    super("Image staged but narration upload failed");
+  }
+}
 class StreamerUnavailableError extends Error {}
 class StreamerProbeError extends Error {}
 
@@ -733,6 +818,7 @@ function safeImageDuration(durationSeconds: number): number {
 }
 
 function isRetryable(cause: unknown): boolean {
+  if (cause instanceof PartialSlotStageError) return isRetryable(cause.stageCause);
   return cause instanceof QueueBroadcastError
     && (cause.status === 0 || cause.status === 429 || cause.status >= 500);
 }
