@@ -5,14 +5,14 @@ const {
   mockGenerateImage,
   mockGetLanguageModel,
   mockGetImageModel,
-  mockGenerateContext,
+  mockBuildContext,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockGenerateImage: vi.fn(),
   mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
   mockGetImageModel: vi.fn(() => ({ provider: "test" })),
-  mockGenerateContext: vi.fn((_channelId: string, immediateContext: string) =>
-    Promise.resolve(immediateContext),
+  mockBuildContext: vi.fn(({ inputQuery }: { inputQuery: string }) =>
+    Promise.resolve({ prompt: inputQuery }),
   ),
 }));
 
@@ -35,9 +35,8 @@ vi.mock("./rag", () => ({ RagProvider: class {} }));
 
 vi.mock("@portalshq/narrativeengine", () => ({
   NarrativeEngine: class {
-    generateContext = mockGenerateContext;
+    buildContext = mockBuildContext;
   },
-  configureLabEngine: vi.fn(),
 }));
 
 import { generateStoryBlock, generateStoryImage } from "./ai";
@@ -45,8 +44,8 @@ import { generateStoryBlock, generateStoryImage } from "./ai";
 describe("AI Generators", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGenerateContext.mockImplementation((_channelId: string, immediateContext: string) =>
-      Promise.resolve(immediateContext),
+    mockBuildContext.mockImplementation(({ inputQuery }: { inputQuery: string }) =>
+      Promise.resolve({ prompt: inputQuery }),
     );
   });
 
@@ -84,22 +83,22 @@ describe("AI Generators", () => {
       );
     });
 
-    it("calls NarrativeEngine.generateContext with the channel and previous context", async () => {
+    it("calls NarrativeEngine.buildContext with the channel and previous context", async () => {
       mockGenerateText.mockResolvedValueOnce({
         output: { title: "RAG Title", content: "RAG content", isNotable: false },
       });
 
-      await generateStoryBlock("mystery", "The detective investigated.");
+      await generateStoryBlock("nap://25th-chapter", "The detective investigated.");
 
-      expect(mockGenerateContext).toHaveBeenCalledWith(
-        "mystery",
-        "The detective investigated.",
-      );
+      expect(mockBuildContext).toHaveBeenCalledWith({
+        channelId: "nap://25th-chapter",
+        inputQuery: "The detective investigated.",
+      });
     });
 
     it("includes enriched RAG context in the AI SDK prompt", async () => {
       const enrichedContext = "Story So Far:\\n1. It began.\\n\\nCurrent Situation:\\nThe crew arrived.";
-      mockGenerateContext.mockResolvedValueOnce(enrichedContext);
+      mockBuildContext.mockResolvedValueOnce({ prompt: enrichedContext });
       mockGenerateText.mockResolvedValueOnce({
         output: { title: "Enriched Title", content: "Enriched content", isNotable: false },
       });

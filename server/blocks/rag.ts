@@ -84,7 +84,7 @@ export class RagProvider
 
   constructor(private readonly options: RagProviderOptions = {}) {
     // Default to true for backward compatibility
-    this.useEmbeddings = this.options.useEmbeddings !== false;
+    this.useEmbeddings = this.options.useEmbeddings === true;
   }
 
   getProviderType(): string {

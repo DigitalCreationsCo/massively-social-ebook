@@ -75,7 +75,7 @@ describe('Session REST API', () => {
         it('returns 200 with null session and channel if no session found', async () => {
             mockedStorage.getChannel.mockResolvedValue(mockChannel as any);
             mockedStorage.getNextSession.mockResolvedValue(null as any);
-            const res = await request(app).get('/api/sessions/next?channelId=mystery');
+            const res = await request(app).get('/api/sessions/next?channelId=nap://25th-chapter');
             expect(res.status).toBe(200);
             expect(res.body).toEqual({
                 session: null,

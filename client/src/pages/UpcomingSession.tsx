@@ -196,7 +196,7 @@ export default function LandingPage() {
               <img
                 src="hero1.png"
                 alt="Special Agent Nathan Gunn"
-                className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 md:opacity-80 group-hover:opacity-100"
+                className="absolute inset-0 h-full w-full object-cover opacity-100 transition-opacity duration-700 md:opacity-80 group-hover:opacity-100"
               />
 
               {/* Overlay */}
@@ -224,7 +224,7 @@ export default function LandingPage() {
               <img
                 src="/hero2.png"
                 alt="Claire Cole"
-                className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 opacity-80 group-hover:opacity-100"
+                className="absolute inset-0 h-full w-full object-cover opacity-100 transition-opacity duration-700 md:opacity-80 group-hover:opacity-100"
               />
               {/* Overlay */}
               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/20" />

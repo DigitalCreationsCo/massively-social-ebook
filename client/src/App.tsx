@@ -13,7 +13,7 @@ import Install from "@/pages/Install";
 import About from "@/pages/About";
 import NotFound from "@/pages/not-found";
 
-export const DEFAULT_CHANNEL_ID = "mystery";
+export const DEFAULT_CHANNEL_ID = "nap://25th-chapter";
 
 function useAnalyticsHook() {
   const [location] = useLocation();

@@ -150,4 +150,35 @@
       opacity: 0.5;
     }
   }
+
+  /* Phones keep the broadcast and chat within the visible viewport. */
+  @media (max-width: 639px) {
+    .live-broadcast-section,
+    .live-broadcast-player-zone,
+    .live-broadcast-chat {
+      width: 100%;
+    }
+  }
+
+  /* A horizontal phone is a dedicated viewing mode: no competing chat panel. */
+  @media (max-width: 639px) and (orientation: landscape) {
+    .live-broadcast-layout {
+      display: block;
+      height: 100%;
+    }
+
+    .live-broadcast-chat {
+      display: none;
+    }
+
+    .live-broadcast-player-zone,
+    .live-broadcast-player {
+      height: 100%;
+      width: 100%;
+    }
+
+    .live-broadcast-player {
+      aspect-ratio: auto;
+    }
+  }
 }

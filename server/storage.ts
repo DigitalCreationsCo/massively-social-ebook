@@ -771,19 +771,30 @@ export class DatabaseStorage implements IStorage {
     sessionData: InsertSession,
     scheduleId: number,
   ): Promise<Session> {
-    return await db.transaction(async (tx) => {
-      const [session] = await tx
-        .insert(sessions)
-        .values(sessionData)
-        .returning();
-      await tx
-        .update(schedules)
-        .set({
-          sessionCount: sql`${schedules.sessionCount} + 1`,
-        })
-        .where(eq(schedules.id, scheduleId));
-      return session;
-    });
+    try {
+      return await db.transaction(async (tx) => {
+        const [session] = await tx
+          .insert(sessions)
+          .values(sessionData)
+          .returning();
+        await tx
+          .update(schedules)
+          .set({
+            sessionCount: sql`${schedules.sessionCount} + 1`,
+          })
+          .where(eq(schedules.id, scheduleId));
+        return session;
+      });
+    } catch (error) {
+      console.error("SESSION INSERT FAILED", error);
+
+      if (error instanceof Error) {
+        console.error("message:", error.message);
+        console.error("cause:", error.cause);
+      }
+
+      throw error;
+    }
   }
 
   async updateSessionStatus(

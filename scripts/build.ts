@@ -2,6 +2,7 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "node:fs/promises";
 import { config } from "dotenv";
+import { syncPxSkill } from "./sync-px-skill";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -51,6 +52,9 @@ async function buildAll() {
 
   await rm("dist", { recursive: true, force: true });
 
+  console.log("syncing PX skill...");
+  await syncPxSkill();
+
   console.log("building client...");
   await viteBuild();
 
@@ -80,6 +84,9 @@ async function buildAll() {
     },
     logLevel: "info",
   });
+
+  const { copyFile } = await import("node:fs/promises");
+  await copyFile("server/blocks/generated/px-skill.md", "dist/px-skill.md");
 }
 
 buildAll().catch((err) => {

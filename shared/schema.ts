@@ -182,10 +182,12 @@ export const sessions = pgTable(
         .where(sql`status IN ('active', 'scheduled')`),
       unqChannelScheduledStart: unique("unq_channel_start").on(
         table.channelId,
+        table.sessionNumber,
         table.scheduledStart,
       ),
       sessionHistoryIdx: index("idx_session_history_idx").on(
         table.channelId,
+        table.sessionNumber,
         table.status,
         table.scheduledEnd,
       ),

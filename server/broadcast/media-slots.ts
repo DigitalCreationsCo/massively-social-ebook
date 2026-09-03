@@ -37,6 +37,22 @@ export interface PreparedBroadcastSlot {
   audio?: QueueUploadAsset;
 }
 
+/** Ambient media keeps its shared image once until it is staged for each segment. */
+export interface PreparedAmbientTurn {
+  sequence: number;
+  idempotencyPrefix: string;
+  image: QueueUploadAsset;
+  segments: PreparedAmbientSegment[];
+  totalDurationSeconds: number;
+  totalBytes: number;
+}
+
+export interface PreparedAmbientSegment {
+  segmentOrdinal: number;
+  durationSeconds: number;
+  audio?: QueueUploadAsset;
+}
+
 interface GeneratedImageWithArchive {
   image: GeneratedStoryImage;
   archiveUrl?: string;
@@ -120,22 +136,54 @@ export async function prepareAmbientSlots(
   runId: string,
   sequence: number,
   signal: AbortSignal,
-): Promise<PreparedBroadcastSlot[]> {
+): Promise<PreparedAmbientTurn | undefined> {
   signal.throwIfAborted();
-  const generated = await retryGeneration(
-    "ambient narrative text",
-    () => generateStoryBlock(channelId, previousCanonicalContext, false),
-    signal,
-  );
+  let generated: Awaited<ReturnType<typeof generateStoryBlock>>;
+  try {
+    generated = await retryGeneration(
+      "ambient narrative text",
+      () => generateStoryBlock(channelId, previousCanonicalContext, false),
+      signal,
+    );
+  } catch (cause) {
+    // Ambient is deliberately non-canonical. A provider failure should not
+    // blank the stream when the channel already has an archived image that
+    // generateImageWithFallback can reuse.
+    logger.warn(
+      `Ambient narrative unavailable for ${channelId}; attempting an image-only fallback turn`,
+      "broadcast",
+      asError(cause),
+    );
+    generated = {
+      title: "Ambient interlude",
+      content: previousCanonicalContext.trim().slice(0, 300) || "A quiet ambient scene between chapters.",
+      dialogue: undefined,
+    };
+  }
   const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "ambient", signal);
-  if (!media.image) return [];
-  return slotsWithAssets({
-    channelId,
-    runId,
+  if (!media.image) return undefined;
+  const idempotencyPrefix = `channel:${channelId}:run:${runId}:sequence:${sequence}`;
+  const image = toUploadAsset(
+    media.image.image.buffer,
+    media.image.image.mimeType,
+    media.image.image.filename,
+  );
+  const narration = media.narration.length > 0 ? media.narration : [undefined];
+  const segments = narration.map((item, segmentOrdinal) => ({
+    segmentOrdinal,
+    durationSeconds: item?.speech.durationSeconds ?? imageOnlyDuration(),
+    ...(item ? {
+      audio: toUploadAsset(item.speech.buffer, item.speech.mimeType, `narration-${segmentOrdinal}.${item.speech.extension}`),
+    } : {}),
+  }));
+  return {
     sequence,
-    image: media.image.image,
-    narration: media.narration,
-  });
+    idempotencyPrefix,
+    image,
+    segments,
+    totalDurationSeconds: segments.reduce((total, segment) => total + segment.durationSeconds, 0),
+    totalBytes: image.data.size + segments.reduce((total, segment) => total + (segment.audio?.data.size ?? 0), 0),
+  };
 }
 
 /** Reconstruct staged or recoverable slots from canonical delivery metadata. */

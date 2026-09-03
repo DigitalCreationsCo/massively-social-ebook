@@ -9,11 +9,13 @@ const GENRE_RULES: Record<string, string[]> = {
     "Avoid: characters who deliver political speeches, institutions with no human face, betrayals that serve the plot but have no emotional cause.",
   ],
   mystery: [
-    "The narrative them is mystery and uncovering the unknown.",
-    "This is a story about a question that needs answering — and a person who may not like what they find. Every scene should reveal something and conceal something else. The reader should be slightly behind the detective — close enough to feel engaged, never so lost they feel cheated.",
-    "Clues belong in behavior, not narration. A character who avoids eye contact or straightens something on a shelf tells us more than a paragraph explaining their guilt.",
-    "The external mystery should connect to something the detective is working through internally. What they're investigating outside should reflect something they're avoiding inside.",
-    "Avoid: discoveries that happen by coincidence, characters who explain their own motives, false leads that go nowhere and mean nothing.",
+    "The narrative theme is mystery and uncovering the unknown.",
+    "This is a story about a question that needs answering — and a person who may not like what they find.",
+    // "Every scene should reveal something and conceal something else. ",
+    "The audience should have slightly less information than the detective — close enough to feel engaged, never so lost they feel cheated.",
+    "Clues belong in behavior, not narration. A character who avoids eye contact tells us more than a paragraph explaining their guilt.",
+    "The external mystery should connect to something the detective is working through internally. What they're investigating outside might reflect something they're avoiding inside.",
+    "Avoid: characters who explain their own motives, false leads that go nowhere and mean nothing.",
   ],
   adventure: [
     "The narrative them is adventure and discovery.",

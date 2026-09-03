@@ -259,7 +259,7 @@ Six tables managed by Drizzle ORM with PostgreSQL:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
-| `channel_id` | text | Unique channel identifier (e.g., `scifi`, `mystery`) |
+| `channel_id` | text | Unique channel identifier (e.g., `scifi`, `nap://25th-chapter`) |
 | `name` | text | Display name |
 | `description` | text | Channel description |
 | `created_at` | timestamp | Creation time |

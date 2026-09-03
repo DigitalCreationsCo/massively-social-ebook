@@ -47,7 +47,7 @@ describe('ICS Generator', () => {
     it('escapes characters in components', () => {
       const mockSession: Session = {
         id: 43,
-        channelId: 'mystery',
+        channelId: 'nap://25th-chapter',
         title: 'Rainy Alley; "The Shadow", Part 1',
         description: 'Line 1\nLine 2',
         scheduledStart: new Date(),

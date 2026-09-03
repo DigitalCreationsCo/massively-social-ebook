@@ -106,7 +106,7 @@ export function LiveChat({
       layout
       className={cn(
         "flex flex-col overflow-hidden",
-        "border-t border-white/[0.07]",
+        "border-t-0 sm:border-t border-white/[0.07]",
         isEffectivelyOpen
           ? "flex-1 min-h-0" // fills remaining space in bottom zone
           : "flex-shrink-0", // collapses to peek-bar height
@@ -302,7 +302,7 @@ export function LiveChat({
               disabled={!inputText.trim()}
               className={cn(
                 "rounded-full flex-shrink-0 h-12 w-12 p-0! m-0!",
-                "bg-primary/20 text-white",
+                "bg-white/20 text-white",
                 "disabled:opacity-20 disabled:bg-transparent disabled:border border-none",
                 "transition-all duration-20",
               )}

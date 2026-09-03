@@ -36,6 +36,18 @@ function job(id: string, status: "staged" | "queued" | "done" | "failed") {
   return { id, status, media_type: id.startsWith("image") ? "image" : "audio", updated_at: "now" };
 }
 
+function ambientTurn(sequence: number) {
+  const image = { data: new Blob([`image-${sequence}`]), filename: `image-${sequence}.jpg`, sha256: "a".repeat(64) };
+  return {
+    sequence,
+    idempotencyPrefix: `channel:main:run:test:sequence:${sequence}`,
+    image,
+    segments: [{ segmentOrdinal: 0, durationSeconds: 10 }],
+    totalDurationSeconds: 10,
+    totalBytes: image.data.size,
+  };
+}
+
 async function flushMicrotasks(turns = 20): Promise<void> {
   for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
 }
@@ -76,6 +88,32 @@ describe("BroadcastCoordinator", () => {
     }));
     expect(client.releaseSlot).toHaveBeenCalledWith(slot.slotKey, expect.anything());
     expect(client.watchJob).toHaveBeenCalledTimes(2);
+  });
+
+  it("stages and releases ambient lookahead while an earlier turn is still playing", async () => {
+    storageMock.setSystemSetting.mockResolvedValue(undefined);
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => ambientTurn(sequence));
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => ({ jobs: [job(`image-${slotKey}`, "queued")] })),
+      watchJob: vi.fn(async function* (_jobId: string, options: { signal?: AbortSignal }) {
+        yield job("image-playing", "queued");
+        await new Promise<void>((resolve) => options.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      }),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    await coordinator.restart();
+    await flushMicrotasks(80);
+
+    expect(client.releaseSlot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(client.watchJob.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await coordinator.stop();
   });
 
   it("advances the persisted canonical cursor after a terminal slot failure", async () => {
@@ -351,7 +389,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getLastBlock.mockResolvedValue(undefined);
     mediaMock.prepareAmbientSlots.mockImplementation(async () => {
       controller.abort(new Error("one ambient iteration is enough for this test"));
-      return [];
+      return undefined;
     });
     const coordinator = new BroadcastCoordinator("main", client as any);
     (coordinator as any).desiredState = "running";

@@ -7,55 +7,18 @@ import {
   createStoryBlockSystemInstructions,
 } from "../../prompts/storyblock.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
-import { NarrativeEngine, configureLabEngine } from "@portalshq/narrativeengine";
-import { RagProvider } from './rag';
+import { NarrativeEngine } from "@portalshq/narrativeengine";
+import { RagProvider } from "./rag";
+import { PxProvider } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
 import { getAiConfiguration, getImageModel, getLanguageModel } from "./ai-provider";
 
 const TIMEOUT_CONTEXT_MS = 8000;
 
-// ---------------------------------------------------------------------------
-// Context cache — avoids calling engine.generateContext() more than once for
-// the same (channelId, inputQuery) pair within a short window.
-//
-// Key insight: engine.generateContext() is deterministic for the same inputs
-// (channelId + previousContext).  If AI story block generation fails after
-// context was fetched, the next tick retry will reuse the cached result
-// instead of hitting the engine (and its DB queries) again.
-// ---------------------------------------------------------------------------
-
-interface ContextCacheEntry {
-  result: string;
-  timestamp: number;
-}
-
-const contextCache = new Map<string, ContextCacheEntry>();
-const CONTEXT_CACHE_TTL_MS = 60_000; // 60 seconds — well past any retry window
-
-function getCachedContext(channelId: string, inputQuery: string): string | null {
-  const key = `${channelId}::${inputQuery}`;
-  const entry = contextCache.get(key);
-  if (entry && Date.now() - entry.timestamp < CONTEXT_CACHE_TTL_MS) {
-    return entry.result;
-  }
-  contextCache.delete(key);
-  return null;
-}
-
-function setCachedContext(channelId: string, inputQuery: string, result: string): void {
-  const key = `${channelId}::${inputQuery}`;
-  contextCache.set(key, { result, timestamp: Date.now() });
-}
-
-/**
- * Clears the context cache — exposed for testing.
- */
-export function clearContextCache(): void {
-  contextCache.clear();
-}
-
-const engine = new NarrativeEngine(new RagProvider());
-configureLabEngine(engine);
+const engine = new NarrativeEngine({ 
+  dataProvider: new RagProvider(),
+  pxProvider: new PxProvider()
+ });
 
 // Start the narrative lab server in development without blocking app initialization.
 // Uses process.nextTick to defer execution after the current import cycle completes.
@@ -115,16 +78,13 @@ const storyBlockSchema = z.object({
 });
 
 async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<string> {
-  // Check cache — same inputs produce the same result within a short window.
-  const cached = getCachedContext(channelId, inputQuery);
-  if (cached !== null) return cached;
-
   const timeoutPromise = new Promise<string>((_, reject) => {
     setTimeout(() => reject(new Error("Context generation timeout (>3000ms)")), TIMEOUT_CONTEXT_MS);
   });
-  const result = await Promise.race([engine.generateContext(channelId, inputQuery), timeoutPromise]);
-  setCachedContext(channelId, inputQuery, result);
-  return result;
+  const contextPromise = engine
+    .buildContext({ channelId, inputQuery })
+    .then((context) => context.prompt);
+  return await Promise.race([contextPromise, timeoutPromise]);
 }
 
 export async function generateStoryBlock(channelId: string, previousContext: string, isResolving: boolean = false, sessionId?: number): Promise<StoryBlockResult> {

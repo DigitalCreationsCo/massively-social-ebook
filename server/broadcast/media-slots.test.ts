@@ -11,7 +11,7 @@ vi.mock("../media/tts-service", () => speech);
 vi.mock("../storage", () => ({ storage }));
 vi.mock("../logger", () => ({ logger: { warn: vi.fn(), error: vi.fn() } }));
 
-import { prepareCanonicalSlot, slotsFromBlock } from "./media-slots";
+import { prepareAmbientSlots, prepareCanonicalSlot, slotsFromBlock } from "./media-slots";
 
 describe("broadcast media slots", () => {
   afterEach(() => {
@@ -99,4 +99,48 @@ describe("broadcast media slots", () => {
       deliverySegments: [{ durationSeconds: 15, ordinal: 0 }],
     }));
   }, 5_000);
+
+  it("keeps one in-memory image asset for all ambient narration segments", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "One. Two.", dialogue: "One. Two." });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    speech.synthesizeNarrationBuffers.mockResolvedValue([
+      { speech: { buffer: Buffer.from("audio-one"), durationSeconds: 4, extension: "wav", mimeType: "audio/wav" } },
+      { speech: { buffer: Buffer.from("audio-two"), durationSeconds: 5, extension: "wav", mimeType: "audio/wav" } },
+    ]);
+
+    const prepared = await prepareAmbientSlots("main", "", "run-1", 7, new AbortController().signal);
+
+    expect(prepared).toMatchObject({
+      sequence: 7,
+      idempotencyPrefix: "channel:main:run:run-1:sequence:7",
+      totalDurationSeconds: 9,
+      segments: [{ segmentOrdinal: 0, durationSeconds: 4 }, { segmentOrdinal: 1, durationSeconds: 5 }],
+    });
+    expect(prepared?.image.data.size).toBe(5);
+    expect(prepared?.totalBytes).toBe(5 + 9 + 9);
+  });
+
+  it("uses an image-only ambient turn when narrative generation is unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      blocks.generateStoryBlock.mockRejectedValue(new Error("Structured output unavailable"));
+      images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+      speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("Bark unavailable"));
+
+      const pending = prepareAmbientSlots("main", "Prior scene.", "run-1", 8, new AbortController().signal);
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.runAllTimersAsync();
+      const prepared = await pending;
+
+      expect(prepared).toMatchObject({
+        sequence: 8,
+        segments: [{ segmentOrdinal: 0, durationSeconds: 15 }],
+      });
+      expect(prepared?.segments[0]?.audio).toBeUndefined();
+      expect(images.generateStoryImageAsset).toHaveBeenCalledWith(expect.stringContaining("Ambient interlude"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

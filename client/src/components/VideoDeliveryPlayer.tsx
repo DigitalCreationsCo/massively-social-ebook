@@ -243,7 +243,7 @@ export function VideoDeliveryPlayer({
   return (
     <div
       ref={containerRef}
-      className={cn("group relative isolate w-full", isFullScreen ? "rounded-none border-none" : "", className)}
+      className={cn("group relative isolate aspect-video", isFullScreen ? "rounded-none border-none" : "", className)}
       role={isUnavailable ? undefined : "group"}
       aria-label={isUnavailable ? undefined : "Video delivery player"}
       tabIndex={isUnavailable ? undefined : 0}

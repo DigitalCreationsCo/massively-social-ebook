@@ -87,7 +87,7 @@ export function CenterPlayButton({ playerState, isBusy, onPlaybackToggle }: Cent
       aria-label="Resume live broadcast"
     >
       <span className="grid size-16 place-items-center rounded-full border border-white/55 bg-black/65 text-primary shadow-[0_0_36px_rgba(251,191,36,0.25)] backdrop-blur-md">
-        <Play className="size-6 translate-x-0.5" />
+        <Play className="size-6 fill-primary translate-x-0.5" />
       </span>
     </button>
   );

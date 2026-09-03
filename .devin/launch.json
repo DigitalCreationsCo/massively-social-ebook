@@ -5,32 +5,24 @@
       "type": "node",
       "request": "launch",
       "name": "Debug Server (with breakpoints)",
-
-      "program": "${workspaceFolder}/server/index.ts",
-      "cwd": "${workspaceFolder}",
-
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "--import",
-        "tsx",
+        "--inspect-brk=0.0.0.0:9229",
+        "--loader",
+        "tsx/esm",
         "-r",
-        "dotenv/config"
+        "dotenv/config",
+        "server/index.ts"
       ],
-
       "env": {
         "NODE_ENV": "development",
         "DOTENV_CONFIG_PATH": ".env.local"
       },
-
       "sourceMaps": true,
-
-      "skipFiles": [
-        "<node_internals>/**",
-        "${workspaceFolder}/node_modules/**"
-      ],
-
+      "skipFiles": ["<node_internals>/**"],
       "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
+      "internalConsoleOptions": "neverOpen",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
     },
     {
       "type": "node",
@@ -39,7 +31,7 @@
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--inspect=0.0.0.0:9230",
-        "--import",
+        "--loader",
         "tsx/esm",
         "-r",
         "dotenv/config",

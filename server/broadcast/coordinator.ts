@@ -15,8 +15,10 @@ import {
   prepareAmbientSlots,
   prepareCanonicalSlot,
   slotsFromBlock,
+  type PreparedAmbientTurn,
   type PreparedBroadcastSlot,
 } from "./media-slots";
+import { AmbientPipeline, type AmbientPipelineStatus } from "./ambient-pipeline";
 
 type DesiredState = "running" | "stopped";
 type BroadcastMode = "stopped" | "waiting_for_streamer" | "ambient" | "preparing" | "episode";
@@ -39,6 +41,7 @@ export interface BroadcastCoordinatorStatus {
   currentJobs?: { jobIds: string[] };
   lastError?: string;
   streamer: StreamerAvailabilityStatus;
+  ambient?: AmbientPipelineStatus;
 }
 
 const PRE_ROLL_MS = 3 * 60 * 1000;
@@ -72,6 +75,7 @@ export class BroadcastCoordinator {
   private abortController: AbortController | undefined;
   private producerPromise: Promise<void> | undefined;
   private ambientSequence = 0;
+  private ambientPipeline: AmbientPipeline | undefined;
   private currentJobs: BroadcastCoordinatorStatus["currentJobs"];
   private lastError: string | undefined;
   private streamer: StreamerAvailabilityStatus = { state: "unknown" };
@@ -117,6 +121,7 @@ export class BroadcastCoordinator {
     await storage.setSystemSetting(this.desiredSettingKey(), "stopped");
     this.abortController?.abort(new Error("Broadcast stopped by operator"));
     await this.producerPromise?.catch(() => undefined);
+    await this.disposeAmbientPipeline();
     this.abortController = undefined;
     this.producerPromise = undefined;
     this.currentJobs = undefined;
@@ -125,6 +130,7 @@ export class BroadcastCoordinator {
   async restart(trigger: "operator" | "schedule" = "operator"): Promise<void> {
     this.abortController?.abort(new Error(`Broadcast restarted by ${trigger}`));
     await this.producerPromise?.catch(() => undefined);
+    await this.disposeAmbientPipeline(new Error(`Broadcast restarted by ${trigger}`));
     this.hasStoredDesiredState = true;
     this.desiredState = "running";
     this.runId = crypto.randomUUID();
@@ -140,6 +146,7 @@ export class BroadcastCoordinator {
   async shutdown(): Promise<void> {
     this.abortController?.abort(new Error("Broadcast process shutting down"));
     await this.producerPromise?.catch(() => undefined);
+    await this.disposeAmbientPipeline(new Error("Broadcast process shutting down"));
     this.abortController = undefined;
     this.producerPromise = undefined;
     this.currentJobs = undefined;
@@ -155,6 +162,7 @@ export class BroadcastCoordinator {
       ...(this.currentJobs ? { currentJobs: this.currentJobs } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
       streamer: { ...this.streamer },
+      ...(this.ambientPipeline ? { ambient: this.ambientPipeline.getStatus() } : {}),
     };
   }
 
@@ -183,6 +191,7 @@ export class BroadcastCoordinator {
   private async produce(signal: AbortSignal): Promise<void> {
     while (!signal.aborted && this.desiredState === "running") {
       try {
+
         const scheduled = await storage.getNextSession(this.channelId);
         const active = await storage.getActiveSession(this.channelId);
         const session = active ?? scheduled;
@@ -209,6 +218,7 @@ export class BroadcastCoordinator {
         }
 
         if (episodeDue && session) {
+          await this.disposeAmbientPipeline(new Error("Scheduled episode is due"));
           await this.produceEpisode(session, signal);
           continue;
         }
@@ -222,22 +232,27 @@ export class BroadcastCoordinator {
         this.mode = "ambient";
         this.sessionStatus = scheduled ? "scheduled" : "none";
         const lastCanonical = await storage.getLastBlock(this.channelId);
-        const sequence = this.ambientSequence++;
-        await this.requireStreamerAvailable(signal);
-        const slots = await prepareAmbientSlots(
-          this.channelId,
-          lastCanonical?.content ?? "",
-          this.runId!,
-          sequence,
-          signal,
-        );
-        for (const slot of slots) {
-          signal.throwIfAborted();
-          const next = await storage.getNextSession(this.channelId);
-          if (next && Date.now() >= next.scheduledStart.getTime()) break;
-          await this.submitSlot(slot, signal);
+        const pipeline = this.ensureAmbientPipeline(lastCanonical?.content || session?.description || "", signal);
+        const next = await storage.getNextSession(this.channelId);
+        const revision = pipeline.currentRevision();
+        const released = await pipeline.releaseNextSafe(next?.scheduledStart.getTime() ?? null, signal);
+        if (released.state === "released") {
+          this.lastError = undefined;
+          continue;
         }
-        this.lastError = undefined;
+        if (released.state === "blocked") {
+          await wait(Math.max(0, released.episodeStart - Date.now()), signal);
+          continue;
+        }
+        const progress = pipeline.waitForProgress(revision, signal);
+        if (next) {
+          await Promise.race([
+            progress,
+            wait(Math.max(0, next.scheduledStart.getTime() - Date.now()), signal),
+          ]);
+        } else {
+          await progress;
+        }
       } catch (cause) {
         if (signal.aborted) return;
         if (cause instanceof StreamerUnavailableError) {
@@ -253,6 +268,92 @@ export class BroadcastCoordinator {
         await wait(2_000, signal);
       }
     }
+  }
+
+  private ensureAmbientPipeline(previousCanonicalContext: string, signal: AbortSignal): AmbientPipeline {
+    if (this.ambientPipeline) return this.ambientPipeline;
+    const pipeline = new AmbientPipeline({
+      initialSequence: this.ambientSequence,
+      generateTurn: async (sequence, workerSignal) => {
+        await this.requireStreamerAvailable(workerSignal);
+        const turn = await prepareAmbientSlots(
+          this.channelId,
+          previousCanonicalContext,
+          this.runId!,
+          sequence,
+          workerSignal,
+        );
+        this.ambientSequence = Math.max(this.ambientSequence, sequence + 1);
+        return turn;
+      },
+      stageTurn: async (turn, workerSignal) => {
+        await this.requireStreamerAvailable(workerSignal);
+        for (const slot of this.ambientTurnSlots(turn)) {
+          await this.retrySlotOperation(() => this.stageSlot(slot, workerSignal), workerSignal);
+        }
+      },
+      releaseTurn: async (turn, workerSignal) => {
+        await this.requireStreamerAvailable(workerSignal);
+        const releases: QueueBroadcastJob[] = [];
+        for (const slot of this.ambientTurnSlots(turn)) {
+          const released = await this.retrySlotOperation(
+            () => this.releaseStagedSlot(slot.slotKey, workerSignal),
+            workerSignal,
+          );
+          releases.push(...released.jobs);
+        }
+        return releases;
+      },
+      monitorJobs: (jobs, workerSignal, onJobUpdate) => this.monitorSlotJobs(jobs, workerSignal, onJobUpdate),
+      onError: (cause, phase, sequence) => this.reportAmbientPipelineError(cause, phase, sequence),
+      onActiveJobsChanged: (jobIds) => {
+        this.currentJobs = jobIds.length > 0 ? { jobIds } : undefined;
+      },
+      onMetrics: (metrics) => {
+        if (metrics.monitoringEndedAt === undefined) return;
+        logger.info(`Ambient turn ${metrics.sequence} completed`, "broadcast", {
+          sequence: metrics.sequence,
+          generationMs: metrics.generationMs,
+          stagingMs: metrics.stagingMs,
+          pipelineMs: metrics.pipelineMs,
+          jobStateTransitions: metrics.jobStateTransitions,
+        });
+      },
+    });
+    pipeline.start(signal);
+    this.ambientPipeline = pipeline;
+    return pipeline;
+  }
+
+  private async disposeAmbientPipeline(reason = new Error("Ambient mode stopped")): Promise<void> {
+    const pipeline = this.ambientPipeline;
+    this.ambientPipeline = undefined;
+    await pipeline?.abortAndAwaitAll(reason);
+  }
+
+  private ambientTurnSlots(turn: PreparedAmbientTurn): PreparedBroadcastSlot[] {
+    return turn.segments.map((segment) => {
+      const idempotencyPrefix = `${turn.idempotencyPrefix}:segment:${segment.segmentOrdinal}`;
+      return {
+        durationSeconds: segment.durationSeconds,
+        idempotencyPrefix,
+        slotKey: `${idempotencyPrefix}:slot`,
+        segmentOrdinal: segment.segmentOrdinal,
+        image: turn.image,
+        ...(segment.audio ? { audio: segment.audio } : {}),
+      };
+    });
+  }
+
+  private reportAmbientPipelineError(
+    cause: unknown,
+    phase: "generation" | "staging" | "release" | "monitoring",
+    sequence: number,
+  ): void {
+    if (cause instanceof StreamerUnavailableError) return;
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    this.lastError = error.message;
+    logger.error(`Ambient turn ${sequence} failed during ${phase}`, "broadcast", error, { sequence, phase });
   }
 
   private async produceEpisode(session: Session, signal: AbortSignal): Promise<void> {
@@ -474,10 +575,7 @@ export class BroadcastCoordinator {
         if (queued.jobs.length === 0) throw new TerminalSlotError("Streamer released an empty slot");
         this.currentJobs = { jobIds: queued.jobs.map((job) => job.id) };
         await onSubmitted?.();
-        const finalJobs = await Promise.all(queued.jobs.map((job) => this.waitForJob(job.id, signal)));
-        if (finalJobs.some((job) => job.status === "failed")) {
-          throw new TerminalSlotError("A queued slot item failed during normalization or playout");
-        }
+        await this.monitorSlotJobs(queued.jobs, signal);
         this.currentJobs = undefined;
         return;
       } catch (cause) {
@@ -492,18 +590,43 @@ export class BroadcastCoordinator {
     throw lastError;
   }
 
-  private async waitForJob(jobId: string, signal: AbortSignal): Promise<QueueBroadcastJob> {
+  private async waitForJob(
+    jobId: string,
+    signal: AbortSignal,
+    onJobUpdate?: (job: QueueBroadcastJob) => void,
+  ): Promise<QueueBroadcastJob> {
     let final: QueueBroadcastJob | undefined;
-    for await (const job of this.client.watchJob(jobId, { signal, intervalMs: 1_000 })) final = job;
-    if (!final) signal.throwIfAborted();
+    for await (const job of this.client.watchJob(jobId, { signal, intervalMs: 1_000 })) {
+      onJobUpdate?.(job);
+      final = job;
+    }
+    signal.throwIfAborted();
     if (!final) throw new Error(`Queue job ${jobId} ended without a terminal state`);
     return final;
+  }
+
+  private async monitorSlotJobs(
+    jobs: QueueBroadcastJob[],
+    signal: AbortSignal,
+    onJobUpdate?: (job: QueueBroadcastJob) => void,
+  ): Promise<void> {
+    const finalJobs = await Promise.all(jobs.map((job) => this.waitForJob(job.id, signal, onJobUpdate)));
+    if (finalJobs.some((job) => job.status === "failed")) {
+      throw new TerminalSlotError("A queued slot item failed during normalization or playout");
+    }
   }
 
   private async stageAndReleaseSlot(
     slot: PreparedBroadcastSlot,
     signal: AbortSignal,
   ): Promise<{ jobs: QueueBroadcastJob[] }> {
+    await this.stageSlot(slot, signal);
+    signal.throwIfAborted();
+    return this.releaseStagedSlot(slot.slotKey, signal);
+  }
+
+  private async stageSlot(slot: PreparedBroadcastSlot, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
     if (!slot.imageJobId && !slot.audioJobId) {
       if (!slot.image) throw new Error(`Slot ${slot.idempotencyPrefix} is missing completed image bytes`);
       const image = await this.slotClient().stageUpload({
@@ -515,6 +638,7 @@ export class BroadcastCoordinator {
       });
       if (image.status === "failed") throw new TerminalSlotError("Streamer rejected staged image");
       if (slot.audio) {
+        signal.throwIfAborted();
         const audio = await this.slotClient().stageUpload({
           mediaType: "audio",
           asset: slot.audio,
@@ -523,9 +647,33 @@ export class BroadcastCoordinator {
         });
         if (audio.status === "failed") throw new TerminalSlotError("Streamer rejected staged audio");
       }
+      signal.throwIfAborted();
     }
+  }
+
+  private async releaseStagedSlot(
+    slotKey: string,
+    signal: AbortSignal,
+  ): Promise<{ jobs: QueueBroadcastJob[] }> {
     signal.throwIfAborted();
-    return this.slotClient().releaseSlot(slot.slotKey, { signal });
+    return this.slotClient().releaseSlot(slotKey, { signal });
+  }
+
+  private async retrySlotOperation<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+      signal.throwIfAborted();
+      try {
+        return await operation();
+      } catch (cause) {
+        if (cause instanceof TerminalSlotError || !isRetryable(cause) || attempt === RETRY_DELAYS_MS.length) {
+          throw cause;
+        }
+        lastError = cause;
+        await wait(RETRY_DELAYS_MS[attempt]!, signal);
+      }
+    }
+    throw lastError;
   }
 
   private async submitLegacyPair(

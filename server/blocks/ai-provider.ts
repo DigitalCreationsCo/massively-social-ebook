@@ -1,4 +1,4 @@
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogleVertex } from "@ai-sdk/google-vertex";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpencode } from "ai-sdk-provider-opencode-sdk";
 import type { EmbeddingModel, ImageModel, LanguageModel } from "ai";
@@ -71,8 +71,8 @@ function configuredModel(capability: AiCapability, provider: AiProvider): string
 
 function googleProvider() {
   // GEMINI_API_KEY is retained as a backwards-compatible alias.
-  return createGoogleGenerativeAI({
-    apiKey: requireEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"),
+  return createGoogleVertex({
+    project: requireEnvironmentVariable("GOOGLE_CLOUD_PROJECT_ID"),
   });
 }
 
@@ -136,7 +136,7 @@ export function getEmbeddingModel(): EmbeddingModel {
 
   switch (provider) {
     case "google":
-      return googleProvider().embedding(model);
+      return googleProvider().embeddingModel(model);
     case "openai":
       return openaiProvider().embedding(model);
   }

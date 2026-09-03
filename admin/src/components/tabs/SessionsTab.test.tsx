@@ -264,7 +264,7 @@ describe('Sorting Logic', () => {
 describe('Filter Logic', () => {
   const sessions: Session[] = [
     { id: 1, title: 'Sci-Fi Session', channelId: 'scifi', scheduledStart: '2026-04-05T14:00:00Z', scheduledEnd: '2026-04-05T15:00:00Z', status: 'scheduled', createdAt: '2026-04-01T00:00:00Z', description: 'Space adventure' },
-    { id: 2, title: 'Mystery Session', channelId: 'mystery', scheduledStart: '2026-04-06T14:00:00Z', scheduledEnd: '2026-04-06T15:00:00Z', status: 'active', createdAt: '2026-04-01T00:00:00Z', description: 'Whodunit' },
+    { id: 2, title: 'Mystery Session', channelId: 'nap://25th-chapter', scheduledStart: '2026-04-06T14:00:00Z', scheduledEnd: '2026-04-06T15:00:00Z', status: 'active', createdAt: '2026-04-01T00:00:00Z', description: 'Whodunit' },
     { id: 3, title: 'Fantasy Session', channelId: 'fantasy', scheduledStart: '2026-04-07T14:00:00Z', scheduledEnd: '2026-04-07T15:00:00Z', status: 'completed', createdAt: '2026-04-01T00:00:00Z', description: 'Dragon tale' },
   ]
 
@@ -275,7 +275,7 @@ describe('Filter Logic', () => {
   })
 
   it('should filter by channelId', () => {
-    const filtered = sessions.filter(s => s.channelId === 'mystery')
+    const filtered = sessions.filter(s => s.channelId === 'nap://25th-chapter')
     expect(filtered).toHaveLength(1)
     expect(filtered[0].id).toBe(2)
   })
