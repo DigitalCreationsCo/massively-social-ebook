@@ -68,6 +68,8 @@ type PxSkillLoader = () => Promise<string>;
 
 export interface PxProviderOptions {
   loadSkill?: PxSkillLoader;
+  // Channel-specific required entities for empty context scenarios
+  requiredEntitiesByChannel?: Record<string, string[]>;
 }
 
 async function loadSavedPxSkill(): Promise<string> {
@@ -91,17 +93,34 @@ async function loadSavedPxSkill(): Promise<string> {
   );
 }
 
-export function createPxPrompt(request: PxProviderRequest<BaseNarrativeBlock, BaseNarrativeLore>): string {
+export function createPxPrompt(
+  request: PxProviderRequest<BaseNarrativeBlock, BaseNarrativeLore>,
+  requiredEntities?: string[]
+): string {
   const preference = request.representationProperties.length > 0
     ? request.representationProperties.join(", ")
     : "(none configured — return the primary representation per entity)";
-  return [
+  
+  const promptParts = [
     "Use the nap tool to resolve entities from the repo: " + request.channelId,
+  ];
+  
+  // Add required entities if specified (only used when context is empty)
+  if (requiredEntities && requiredEntities.length > 0) {
+    promptParts.push(
+      `Required entities (always resolve these): ${requiredEntities.join(", ")}`,
+      "Resolve the full manifests for required entities regardless of whether they are mentioned in the request data."
+    );
+  }
+  
+  promptParts.push(
     "Resolve the full manifests for entities mentioned in the request data. Do not return manifests for entities that are not mentioned in the request data.",
     "Limit queried entities to "+ request.maxUniqueEntityRepresentations,
     `Return each entity's full nested representations map. Prefer representationProperties in order: ${preference}.`,
-    JSON.stringify(request),
-  ].join("\n\n");
+    JSON.stringify(request)
+  );
+  
+  return promptParts.join("\n\n");
 }
 
 function createPxInstructions(skill: string): string {
@@ -116,19 +135,34 @@ function createPxInstructions(skill: string): string {
 
 export class PxProvider implements BasePxProvider {
   private readonly loadSkill: PxSkillLoader;
+  private readonly requiredEntitiesByChannel: Record<string, string[]>;
 
   constructor(options: PxProviderOptions = {}) {
     this.loadSkill = options.loadSkill ?? loadSavedPxSkill;
+    this.requiredEntitiesByChannel = options.requiredEntitiesByChannel ?? {};
   }
 
   async enrichContext(
     request: PxProviderRequest<BaseNarrativeBlock, BaseNarrativeLore>,
   ): Promise<PxEnrichment> {
     const skill = await this.loadSkill();
+    
+    // Get channel-specific required entities
+    const channelRequiredEntities = this.requiredEntitiesByChannel[request.channelId] ?? [];
+    
+    // Only use required entities if the request data indicates empty context
+    // (no blocks, lore, or other narrative data to extract entities from)
+    const hasNarrativeData = 
+      (request.blocks && request.blocks.length > 0) ||
+      (request.lore && request.lore.length > 0) ||
+      (request.inputQuery && request.inputQuery.trim().length > 0);
+    
+    const requiredEntities = hasNarrativeData ? [] : channelRequiredEntities;
+    
     const response = await generateText({
       model: getLanguageModel(),
       instructions: createPxInstructions(skill),
-      prompt: createPxPrompt(request),
+      prompt: createPxPrompt(request, requiredEntities),
       output: Output.object({
         schema: enrichmentSchema,
         name: "nap_resolve",
@@ -138,6 +172,18 @@ export class PxProvider implements BasePxProvider {
 
     if (!response.output) {
       throw new Error("PX enrichment failed: No structured output returned.");
+    }
+
+    // Deduplicate entities in the response
+    if (response.output.entities) {
+      const seenIds = new Set<string>();
+      response.output.entities = response.output.entities.filter(entity => {
+        if (seenIds.has(entity.id)) {
+          return false; // Skip duplicate
+        }
+        seenIds.add(entity.id);
+        return true;
+      });
     }
 
     return response.output;

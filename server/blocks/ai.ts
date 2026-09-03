@@ -23,9 +23,28 @@ export type { SelectedImageRepresentation };
 
 const TIMEOUT_CONTEXT_MS = 8000;
 
+// Channel-specific required entities for empty context scenarios
+const channelRequiredEntities: Record<string, string[]> = {
+  "scifi": [
+    "nap://scifi/character/protagonist", 
+    "nap://scifi/location/primary-setting"
+  ],
+  "mystery": [
+    "nap://mystery/character/detective",
+    "nap://mystery/location/crime-scene"
+  ],
+  "25th-chapter": [
+    "nap://25th-chapter/character/hero",
+    "nap://25th-chapter/location/setting"
+  ],
+  // Add other channels as needed
+};
+
 const engine = new NarrativeEngine({
   dataProvider: new RagProvider(),
-  pxProvider: new PxProvider()
+  pxProvider: new PxProvider({
+    requiredEntitiesByChannel: channelRequiredEntities
+  })
  });
 
 // Start the narrative lab server in development without blocking app initialization.
