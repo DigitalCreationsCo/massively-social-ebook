@@ -462,8 +462,8 @@ describe("validateServerConfiguration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.NAP_LORE_URL_BASE;
     delete process.env.NAP_LORE_HTTP_URL;
-    delete process.env.NAP_HTTP_URL;
     delete process.env.NAP_REPO_PATH;
     delete process.env.NAP_DIR;
   });
@@ -473,7 +473,7 @@ describe("validateServerConfiguration", () => {
     try {
       validateServerConfiguration();
       expect(warn).toHaveBeenCalledWith(
-        "[ImageRefs] No NAP server configuration found. Set NAP_LORE_HTTP_URL or NAP_REPO_PATH.",
+        "[ImageRefs] No NAP server configuration found. Set NAP_LORE_URL_BASE or NAP_LORE_HTTP_URL.",
         "broadcast",
       );
     } finally {
@@ -489,11 +489,11 @@ describe("validateServerConfiguration", () => {
       process.env.NAP_REPO_PATH = "/tmp/nap";
       validateServerConfiguration();
       expect(warn).toHaveBeenCalledWith(
-        "[ImageRefs] Both NAP_REPO_PATH and NAP_LORE_HTTP_URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.",
+        "[ImageRefs] Both NAP_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.",
         "broadcast",
         expect.objectContaining({
           repoPath: "/tmp/nap",
-          httpUrl: "http://remote.example.com:41339",
+          loreUrlBase: "http://remote.example.com:41339",
         }),
       );
     } finally {
@@ -502,13 +502,28 @@ describe("validateServerConfiguration", () => {
     }
   });
 
-  it("logs when using remote Lore server", () => {
+  it("logs when using Lore URL base", () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      process.env.NAP_LORE_URL_BASE = "lore://100.105.14.118:41337";
+      validateServerConfiguration();
+      expect(info).toHaveBeenCalledWith(
+        "[ImageRefs] NAP server configuration: using Lore URL base",
+        "broadcast",
+        { loreUrlBase: "lore://100.105.14.118:41337" },
+      );
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("logs when using Lore HTTP URL", () => {
     const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     try {
       process.env.NAP_LORE_HTTP_URL = "http://remote.example.com:41339";
       validateServerConfiguration();
       expect(info).toHaveBeenCalledWith(
-        "[ImageRefs] NAP server configuration: using remote Lore server",
+        "[ImageRefs] NAP server configuration: using Lore HTTP URL",
         "broadcast",
         { httpUrl: "http://remote.example.com:41339" },
       );
@@ -526,22 +541,6 @@ describe("validateServerConfiguration", () => {
         "[ImageRefs] NAP server configuration: using local repository",
         "broadcast",
         { repoPath: "/tmp/nap" },
-      );
-    } finally {
-      info.mockRestore();
-    }
-  });
-
-  it("prefers NAP_LORE_HTTP_URL over NAP_HTTP_URL", () => {
-    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
-    try {
-      process.env.NAP_LORE_HTTP_URL = "http://lore.example.com:41339";
-      process.env.NAP_HTTP_URL = "http://alternative.example.com:41339";
-      validateServerConfiguration();
-      expect(info).toHaveBeenCalledWith(
-        "[ImageRefs] NAP server configuration: using remote Lore server",
-        "broadcast",
-        { httpUrl: "http://lore.example.com:41339" },
       );
     } finally {
       info.mockRestore();

@@ -285,7 +285,7 @@ export function resolveAllowedHosts(): string[] {
     hosts.add("storage.cloud.google.com");
   }
 
-  const loreHost = hostFromUrl(process.env["NAP_LORE_HTTP_URL"] || process.env["NAP_HTTP_URL"]);
+  const loreHost = hostFromUrl(process.env["NAP_LORE_HTTP_URL"]);
   if (loreHost) hosts.add(loreHost);
 
   // Loopback for local Lore and unit tests only.
@@ -330,8 +330,7 @@ function resolveBearerToken(explicit: PresignOptions = {}): string | undefined {
     if (fromNamed) return fromNamed;
   }
   const direct = process.env["NAP_LORE_HTTP_TOKEN"]?.trim()
-    || process.env["NAP_LORE_GRPC_TOKEN"]?.trim()
-    || process.env["NAP_BEARER_TOKEN"]?.trim();
+    || process.env["NAP_LORE_GRPC_TOKEN"]?.trim();
   if (direct) return direct;
   return undefined;
 }
@@ -339,13 +338,13 @@ function resolveBearerToken(explicit: PresignOptions = {}): string | undefined {
 export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOptions {
   const repoPath = overrides.repoPath ?? process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
   const hasExplicitRevision = overrides.branch !== undefined || overrides.commit !== undefined;
-  const branch = hasExplicitRevision ? overrides.branch : process.env["NAP_BRANCH"]?.trim();
-  const commit = hasExplicitRevision ? overrides.commit : process.env["NAP_COMMIT"]?.trim();
-  const ttlRaw = overrides.ttlSeconds ?? (process.env["NAP_PRESIGN_TTL_SECONDS"]?.trim() ? Number(process.env["NAP_PRESIGN_TTL_SECONDS"]?.trim()) : undefined);
+  const branch = hasExplicitRevision ? overrides.branch : undefined;
+  const commit = hasExplicitRevision ? overrides.commit : undefined;
+  const ttlRaw = overrides.ttlSeconds;
   const ttlSeconds = typeof ttlRaw === "number" && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.floor(ttlRaw) : undefined;
-  const httpUrl = overrides.httpUrl ?? process.env["NAP_LORE_HTTP_URL"]?.trim() ?? process.env["NAP_HTTP_URL"]?.trim() ?? undefined;
+  const httpUrl = overrides.httpUrl ?? process.env["NAP_LORE_HTTP_URL"]?.trim() ?? undefined;
   const bearerToken = resolveBearerToken(overrides);
-  const tokenEnv = overrides.tokenEnv ?? process.env["NAP_TOKEN_ENV"]?.trim() ?? undefined;
+  const tokenEnv = overrides.tokenEnv ?? undefined;
   return {
     ...(repoPath ? { repoPath } : {}),
     ...(branch ? { branch } : {}),
@@ -363,26 +362,29 @@ export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOp
  * to hash mismatches between SDK and CLI operations.
  */
 export function validateServerConfiguration(): void {
-  const sdkHttpUrl = process.env["NAP_LORE_HTTP_URL"]?.trim() ?? process.env["NAP_HTTP_URL"]?.trim() ?? undefined;
+  const loreUrlBase = process.env["NAP_LORE_URL_BASE"]?.trim() ?? undefined;
+  const sdkHttpUrl = process.env["NAP_LORE_HTTP_URL"]?.trim() ?? undefined;
   const repoPath = process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
 
   // If no server URL is configured, we can't validate
-  if (!sdkHttpUrl && !repoPath) {
-    logger.warn("[ImageRefs] No NAP server configuration found. Set NAP_LORE_HTTP_URL or NAP_REPO_PATH.", "broadcast");
+  if (!loreUrlBase && !sdkHttpUrl && !repoPath) {
+    logger.warn("[ImageRefs] No NAP server configuration found. Set NAP_LORE_URL_BASE or NAP_LORE_HTTP_URL.", "broadcast");
     return;
   }
 
   // If both local repo and remote server are configured, CLI may prefer local
-  if (repoPath && sdkHttpUrl) {
-    logger.warn("[ImageRefs] Both NAP_REPO_PATH and NAP_LORE_HTTP_URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.", "broadcast", {
+  if (repoPath && (loreUrlBase || sdkHttpUrl)) {
+    logger.warn("[ImageRefs] Both NAP_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.", "broadcast", {
       repoPath,
-      httpUrl: sdkHttpUrl,
+      loreUrlBase: loreUrlBase ?? sdkHttpUrl,
     });
   }
 
   // Log the effective configuration for debugging
-  if (sdkHttpUrl) {
-    logger.info("[ImageRefs] NAP server configuration: using remote Lore server", "broadcast", { httpUrl: sdkHttpUrl });
+  if (loreUrlBase) {
+    logger.info("[ImageRefs] NAP server configuration: using Lore URL base", "broadcast", { loreUrlBase });
+  } else if (sdkHttpUrl) {
+    logger.info("[ImageRefs] NAP server configuration: using Lore HTTP URL", "broadcast", { httpUrl: sdkHttpUrl });
   } else if (repoPath) {
     logger.info("[ImageRefs] NAP server configuration: using local repository", "broadcast", { repoPath });
   }

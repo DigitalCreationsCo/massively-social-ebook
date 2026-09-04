@@ -238,6 +238,9 @@ export class PxProvider implements BasePxProvider {
     const transport = new StdioClientTransport({
       command: "/bin/sh",
       args: ["-lc", "exec nap-mcp-server"],
+      env: {
+        ...process.env,
+      },
     });
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(new Error("PX enrichment timeout (>45000ms)")), 45_000);
