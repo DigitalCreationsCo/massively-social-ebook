@@ -8,15 +8,26 @@ import {
   resolveAllowedHosts,
   selectImageRepresentations,
   __setPresignFunctionForTests,
+  __testables,
+  loadPresignFunction,
+  resolvePresignOptions,
   type SelectedImageRepresentation,
 } from "./image-references";
 import { logger } from "../logger";
+import { presignRepresentation } from "@portalshq/nap-sdk";
+
+vi.mock("@portalshq/nap-sdk", () => ({ presignRepresentation: vi.fn() }));
+
+function signedResult(url = "https://storage.googleapis.com/bucket/portrait.png?token=x") {
+  return { url, expires_at: 999, revision: "r", repository_id: "repo",
+    address: "addr", representation: "portrait", format: "png" };
+}
 
 function entity(id: string, representations: Record<string, unknown>, name = id) {
   return { id, name, type: "character", representations };
 }
 
-function validRep(hash: string, format = "png", uri = "https://storage.googleapis.com/bucket/a.png") {
+function validRep(hash: string, format = "png", uri = "portrait.png") {
   return { hash, format, uri };
 }
 
@@ -196,9 +207,11 @@ describe("resolveAllowedHosts / isAllowedImageUrl", () => {
 describe("fetchReferenceImages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __testables.sharedReferenceCache.clear();
     __setPresignFunctionForTests(undefined);
   });
   afterEach(() => {
+    vi.unstubAllEnvs();
     __setPresignFunctionForTests(undefined);
   });
 
@@ -225,15 +238,86 @@ describe("fetchReferenceImages", () => {
     expect(result[0]?.mimeType).toBe("image/png");
   });
 
-  it("falls back to stored URI when presign is unavailable (pre-release path)", async () => {
-    const bytes = new Uint8Array([9, 9]);
-    const fetchFn = vi.fn(async () => imageResponse(bytes));
-    const result = await fetchReferenceImages(
-      [selected("nap://repo/character/hero", "k", "hash-uri", "https://storage.googleapis.com/bucket/a.png")],
-      { presignFn: null, fetchFn, allowedHosts: ["storage.googleapis.com"], maxImages: 3 },
-    );
-    expect(fetchFn).toHaveBeenCalled();
-    expect(result).toHaveLength(1);
+  it.each(["nap://25th-chapter/character/nathan-gunn", "25th-chapter/character/nathan-gunn"])(
+    "presigns entity %s and its manifest key through the SDK with filename metadata",
+    async (entityId) => {
+      vi.mocked(presignRepresentation).mockResolvedValue(signedResult());
+      vi.stubEnv("REFERENCE_TOKEN", "test-token");
+      const fetchFn = vi.fn(async () => imageResponse(new Uint8Array([9, 9])));
+      const references = selectImageRepresentations([
+        entity(entityId, { item: validRep("item-hash", "jpg", "item.jpg"),
+          portrait: validRep("portrait-hash", "png", "portrait.png") }),
+      ], ["portrait"], 1);
+      const presignOptions = { repoPath: "/tmp/nap", branch: "main", ttlSeconds: 900,
+        httpUrl: "https://lore.example.test", tokenEnv: "REFERENCE_TOKEN" };
+      const result = await fetchReferenceImages(references, {
+        presignOptions, fetchFn, allowedHosts: ["storage.googleapis.com"],
+      });
+      expect(await loadPresignFunction()).toBe(presignRepresentation);
+      expect(presignRepresentation).toHaveBeenCalledWith(entityId, "portrait", {
+        repoPath: "/tmp/nap", branch: "main", ttlSeconds: 900,
+        httpUrl: "https://lore.example.test", bearerToken: "test-token",
+      });
+      expect(fetchFn).toHaveBeenCalledWith(signedResult().url, expect.anything());
+      expect(result).toHaveLength(1);
+    },
+  );
+
+  it.each(["portrait.png", "https://storage.googleapis.com/bucket/a.png"])(
+    "never downloads stored URI %s when presign is unavailable or fails",
+    async (uri) => {
+      const fetchFn = vi.fn();
+      for (const presignFn of [null, vi.fn(async () => { throw new Error("unavailable"); }),
+        vi.fn(async () => signedResult(""))]) {
+        const result = await fetchReferenceImages([
+          selected("nap://repo/character/hero", "portrait", "hash-uri", uri),
+        ], { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] });
+        expect(result).toEqual([]);
+      }
+      expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [{ commit: "pinned" }, "main", "old", { commit: "pinned" }],
+    [{ branch: "feature" }, "main", "old", { branch: "feature" }],
+  ])("explicit revision overrides environment defaults", (overrides, branch, commit, expected) => {
+    vi.stubEnv("NAP_BRANCH", branch);
+    vi.stubEnv("NAP_COMMIT", commit);
+    const resolved = resolvePresignOptions(overrides);
+    expect({ branch: resolved.branch, commit: resolved.commit }).toEqual(expected);
+  });
+
+  it("logs a safe authentication failure category", async () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      await fetchReferenceImages([selected("repo/character/hero", "portrait", "auth-hash")], {
+        presignFn: async () => { throw new Error("unauthenticated https://example.test/?token=private-token"); },
+      });
+      const logged = JSON.stringify(info.mock.calls);
+      expect(logged).toContain("presign_auth_failed");
+      expect(logged).not.toContain("private-token");
+      expect(logged).not.toContain("example.test");
+    } finally { info.mockRestore(); }
+  });
+
+  it("rejects conflicting revisions before requesting a URL", async () => {
+    const presignFn = vi.fn(async () => signedResult());
+    const result = await fetchReferenceImages([
+      selected("nap://repo/character/hero", "portrait", "hash-revision", "portrait.png"),
+    ], { presignFn, presignOptions: { branch: "main", commit: "abc123" } });
+    expect(result).toEqual([]);
+    expect(presignFn).not.toHaveBeenCalled();
+  });
+
+  it("uses the documented Lore token environment variables", () => {
+    vi.stubEnv("NAP_TOKEN_ENV", "");
+    vi.stubEnv("NAP_LORE_HTTP_TOKEN", "http-token");
+    vi.stubEnv("NAP_LORE_GRPC_TOKEN", "grpc-token");
+    expect(resolvePresignOptions().bearerToken).toBe("http-token");
+    vi.stubEnv("NAP_LORE_HTTP_TOKEN", "");
+    expect(resolvePresignOptions().bearerToken).toBe("grpc-token");
+    expect(resolvePresignOptions({ bearerToken: "explicit" }).bearerToken).toBe("explicit");
   });
 
   it("backfills provider capacity after failed downloads", async () => {
@@ -366,8 +450,101 @@ describe("fetchReferenceImages", () => {
     const fetchFn = vi.fn(async () => imageResponse(big));
     const result = await fetchReferenceImages(
       [selected("nap://r/character/a", "k", "h-cap", "https://storage.googleapis.com/b/a.png")],
-      { presignFn: null, fetchFn, allowedHosts: ["storage.googleapis.com"], maxBytesPerImage: 10 },
+      { presignFn: async () => signedResult(), fetchFn, allowedHosts: ["storage.googleapis.com"], maxBytesPerImage: 10 },
     );
     expect(result).toEqual([]);
+    expect(fetchFn).toHaveBeenCalled();
+  });
+});
+
+describe("validateServerConfiguration", () => {
+  const { validateServerConfiguration } = __testables;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.NAP_LORE_HTTP_URL;
+    delete process.env.NAP_HTTP_URL;
+    delete process.env.NAP_REPO_PATH;
+    delete process.env.NAP_DIR;
+  });
+
+  it("warns when no server configuration is found", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      validateServerConfiguration();
+      expect(warn).toHaveBeenCalledWith(
+        "[ImageRefs] No NAP server configuration found. Set NAP_LORE_HTTP_URL or NAP_REPO_PATH.",
+        "broadcast",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("warns when both local repo and remote server are configured", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      process.env.NAP_LORE_HTTP_URL = "http://remote.example.com:41339";
+      process.env.NAP_REPO_PATH = "/tmp/nap";
+      validateServerConfiguration();
+      expect(warn).toHaveBeenCalledWith(
+        "[ImageRefs] Both NAP_REPO_PATH and NAP_LORE_HTTP_URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.",
+        "broadcast",
+        expect.objectContaining({
+          repoPath: "/tmp/nap",
+          httpUrl: "http://remote.example.com:41339",
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("logs when using remote Lore server", () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      process.env.NAP_LORE_HTTP_URL = "http://remote.example.com:41339";
+      validateServerConfiguration();
+      expect(info).toHaveBeenCalledWith(
+        "[ImageRefs] NAP server configuration: using remote Lore server",
+        "broadcast",
+        { httpUrl: "http://remote.example.com:41339" },
+      );
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("logs when using local repository", () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      process.env.NAP_REPO_PATH = "/tmp/nap";
+      validateServerConfiguration();
+      expect(info).toHaveBeenCalledWith(
+        "[ImageRefs] NAP server configuration: using local repository",
+        "broadcast",
+        { repoPath: "/tmp/nap" },
+      );
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("prefers NAP_LORE_HTTP_URL over NAP_HTTP_URL", () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      process.env.NAP_LORE_HTTP_URL = "http://lore.example.com:41339";
+      process.env.NAP_HTTP_URL = "http://alternative.example.com:41339";
+      validateServerConfiguration();
+      expect(info).toHaveBeenCalledWith(
+        "[ImageRefs] NAP server configuration: using remote Lore server",
+        "broadcast",
+        { httpUrl: "http://lore.example.com:41339" },
+      );
+    } finally {
+      info.mockRestore();
+    }
   });
 });

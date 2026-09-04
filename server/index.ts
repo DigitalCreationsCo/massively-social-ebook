@@ -15,6 +15,7 @@ import pgSession from "connect-pg-simple";
 import { pool } from "./db";
 import { logAiConfiguration } from "./ai-call-logger";
 import { getAiConfiguration } from "./blocks/ai-provider";
+import { validateServerConfiguration } from "./blocks/image-references";
 
 const app = express();
 const httpServer = createServer(app);
@@ -182,6 +183,11 @@ declare module "express-session" {
         logAiConfiguration(getAiConfiguration());
       } catch (error) {
         logger.warn("Could not resolve AI configuration at startup", "server", error);
+      }
+      try {
+        validateServerConfiguration();
+      } catch (error) {
+        logger.warn("Could not validate NAP server configuration at startup", "server", error);
       }
     },
   );

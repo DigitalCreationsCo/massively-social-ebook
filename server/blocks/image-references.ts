@@ -3,12 +3,16 @@
  *
  * - Selection is exclusively from nested `entity.representations` maps.
  * - Downloads are just-in-time: presign (entity NAP URI, representation key)
- *   via the NAP SDK when available, then fetch the temporary HTTP URL
+ *   via the NAP SDK, then fetch the temporary HTTP URL
  *   server-side into a bounded Buffer for AI SDK `generateImage`.
  * - Never forwards signed URLs to the image provider and never logs them.
  */
 
+import type { PresignOptions as SdkPresignOptions, presignRepresentation } from "@portalshq/nap-sdk";
+export type { PresignedRepresentation } from "@portalshq/nap-sdk";
+
 import { logger } from "../logger";
+import { presignFailureReason, presignWithCli } from "./nap-presign";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -16,6 +20,7 @@ import { logger } from "../logger";
 export interface NestedRepresentationValue {
   hash: string;
   format: string;
+  /** Filename relative to the entity asset directory; never a download URL. */
   uri?: string;
   description?: string;
   name?: string;
@@ -33,6 +38,7 @@ export interface SelectedImageRepresentation {
   representationKey: string;
   hash: string;
   format: string;
+  /** Filename relative to the entity asset directory; never a download URL. */
   uri?: string;
   description?: string;
   entityName?: string;
@@ -48,32 +54,12 @@ interface SelectableEntity {
   representations?: unknown;
 }
 
-export interface PresignOptions {
-  repoPath?: string;
-  branch?: string;
-  commit?: string;
-  ttlSeconds?: number;
-  httpUrl?: string;
-  bearerToken?: string;
+export interface PresignOptions extends SdkPresignOptions {
   /** Env var name holding the bearer token (CLI `--token-env` parity). */
   tokenEnv?: string;
 }
 
-export interface PresignedRepresentation {
-  url: string;
-  expires_at: number;
-  revision: string;
-  repository_id: string;
-  address: string;
-  representation: string;
-  format: string;
-}
-
-export type PresignFunction = (
-  uri: string,
-  representation: string,
-  options?: PresignOptions,
-) => Promise<PresignedRepresentation>;
+export type PresignFunction = typeof presignRepresentation;
 
 export interface FetchedReferenceImage {
   buffer: Buffer;
@@ -338,15 +324,18 @@ function resolveBearerToken(explicit: PresignOptions = {}): string | undefined {
     const fromNamed = process.env[tokenEnvName]?.trim();
     if (fromNamed) return fromNamed;
   }
-  const direct = process.env["NAP_BEARER_TOKEN"]?.trim();
+  const direct = process.env["NAP_LORE_HTTP_TOKEN"]?.trim()
+    || process.env["NAP_LORE_GRPC_TOKEN"]?.trim()
+    || process.env["NAP_BEARER_TOKEN"]?.trim();
   if (direct) return direct;
   return undefined;
 }
 
 export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOptions {
   const repoPath = overrides.repoPath ?? process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
-  const branch = overrides.branch ?? process.env["NAP_BRANCH"]?.trim() ?? undefined;
-  const commit = overrides.commit ?? process.env["NAP_COMMIT"]?.trim() ?? undefined;
+  const hasExplicitRevision = overrides.branch !== undefined || overrides.commit !== undefined;
+  const branch = hasExplicitRevision ? overrides.branch : process.env["NAP_BRANCH"]?.trim();
+  const commit = hasExplicitRevision ? overrides.commit : process.env["NAP_COMMIT"]?.trim();
   const ttlRaw = overrides.ttlSeconds ?? (process.env["NAP_PRESIGN_TTL_SECONDS"]?.trim() ? Number(process.env["NAP_PRESIGN_TTL_SECONDS"]?.trim()) : undefined);
   const ttlSeconds = typeof ttlRaw === "number" && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.floor(ttlRaw) : undefined;
   const httpUrl = overrides.httpUrl ?? process.env["NAP_LORE_HTTP_URL"]?.trim() ?? process.env["NAP_HTTP_URL"]?.trim() ?? undefined;
@@ -364,25 +353,50 @@ export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOp
 }
 
 /**
- * Load `presignRepresentation` from the installed NAP SDK when present.
- * The installed `@portalshq/nap-sdk@0.8.0` does not expose it yet; after the
- * NAP release the same import resolves without a code change. Returns null
- * when unavailable so callers can fall back to the stored `uri`.
+ * Validate that SDK and CLI are configured to use the same Lore server.
+ * Logs warnings if configuration inconsistencies are detected that could lead
+ * to hash mismatches between SDK and CLI operations.
  */
+export function validateServerConfiguration(): void {
+  const sdkHttpUrl = process.env["NAP_LORE_HTTP_URL"]?.trim() ?? process.env["NAP_HTTP_URL"]?.trim() ?? undefined;
+  const repoPath = process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
+
+  // If no server URL is configured, we can't validate
+  if (!sdkHttpUrl && !repoPath) {
+    logger.warn("[ImageRefs] No NAP server configuration found. Set NAP_LORE_HTTP_URL or NAP_REPO_PATH.", "broadcast");
+    return;
+  }
+
+  // If both local repo and remote server are configured, CLI may prefer local
+  if (repoPath && sdkHttpUrl) {
+    logger.warn("[ImageRefs] Both NAP_REPO_PATH and NAP_LORE_HTTP_URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.", "broadcast", {
+      repoPath,
+      httpUrl: sdkHttpUrl,
+    });
+  }
+
+  // Log the effective configuration for debugging
+  if (sdkHttpUrl) {
+    logger.info("[ImageRefs] NAP server configuration: using remote Lore server", "broadcast", { httpUrl: sdkHttpUrl });
+  } else if (repoPath) {
+    logger.info("[ImageRefs] NAP server configuration: using local repository", "broadcast", { repoPath });
+  }
+}
+
+/** Load the SDK entry point, which resolves the entity manifest and representation. */
 export async function loadPresignFunction(): Promise<PresignFunction | null> {
   if (cachedPresignFn !== undefined) return cachedPresignFn;
   try {
-    const sdk = (await import("@portalshq/nap-sdk")) as Record<string, unknown>;
-    const fn = sdk["presignRepresentation"];
-    if (typeof fn === "function") {
-      cachedPresignFn = fn as PresignFunction;
-      return cachedPresignFn;
-    }
+    const sdk = await import("@portalshq/nap-sdk");
+    if (typeof sdk.presignRepresentation !== "function") throw new Error("Missing presign export");
+    cachedPresignFn = sdk.presignRepresentation;
   } catch {
-    // Intentionally ignored: presign is optional until the SDK release.
+    logger.warn("[ImageRefs] SDK unavailable; using nap CLI for presigning", "broadcast", {
+      reason: "presign_sdk_unavailable",
+    });
+    cachedPresignFn = presignWithCli;
   }
-  cachedPresignFn = null;
-  return null;
+  return cachedPresignFn;
 }
 
 /** Test hook: override the cached presign lookup. */
@@ -394,20 +408,20 @@ async function presignUrl(
   selected: SelectedImageRepresentation,
   presignOptions: PresignOptions,
   presignFn: PresignFunction | null | undefined,
-): Promise<{ url: string; via: "presign" | "uri" }> {
-  if (presignFn) {
-    const resolved = resolvePresignOptions(presignOptions);
-    const { tokenEnv: _tokenEnv, ...sdkOptions } = resolved;
-    const presigned = await presignFn(selected.entityId, selected.representationKey, sdkOptions);
-    if (presigned && typeof presigned.url === "string" && presigned.url.length > 0) {
-      return { url: presigned.url, via: "presign" };
-    }
-    throw new Error("presign returned an empty URL");
+): Promise<string> {
+  if (!presignFn) throw Object.assign(new Error("NAP presign unavailable"), { code: "sdk_unavailable" });
+  const resolved = resolvePresignOptions(presignOptions);
+  const { tokenEnv: _tokenEnv, ...sdkOptions } = resolved;
+  if (sdkOptions.branch && sdkOptions.commit) {
+    throw Object.assign(new Error("NAP presign accepts either branch or commit, not both"), { code: "invalid_revision" });
   }
-  if (selected.uri && selected.uri.length > 0) {
-    return { url: selected.uri, via: "uri" };
+  // NAP resolves the manifest at the selected revision using this entity ID,
+  // then looks up the exact map key. The representation URI is only a filename.
+  const presigned = await presignFn(selected.entityId, selected.representationKey, sdkOptions);
+  if (presigned && typeof presigned.url === "string" && presigned.url.trim().length > 0) {
+    return presigned.url;
   }
-  throw new Error("presign unavailable and no stored URI fallback");
+  throw Object.assign(new Error("presign returned an empty URL"), { code: "invalid_response" });
 }
 
 // ── Download ───────────────────────────────────────────────────────────────
@@ -585,7 +599,7 @@ async function downloadOneUrl(
 }
 
 /**
- * Presign (when available) then download each selected reference into a
+ * Presign through NAP then download each selected reference into a
  * bounded Buffer. Skips failed/invalid candidates and continues filling the
  * provider's capacity from later candidates. Deduplicates by hash and caches
  * successes in memory. Never logs URLs or bytes.
@@ -650,31 +664,23 @@ export async function fetchReferenceImages(
       continue;
     }
 
-    let downloadUrl: string | undefined;
+    let downloadUrl: string;
     try {
-      const presigned = await presignUrl(candidate, options.presignOptions ?? {}, presignFn ?? null);
-      downloadUrl = presigned.url;
-    } catch {
-      // Pre-release fallback: when presign is unavailable or fails but a
-      // stored URI exists, try the URI directly. Otherwise skip.
-      // Note: a successful URI fallback is NOT counted as skipped — only
-      // candidates that yield no buffer are recorded in `skips`.
-      if (candidate.uri && candidate.uri.length > 0) {
-        downloadUrl = candidate.uri;
-      } else {
-        skips.push({
-          entityId: candidate.entityId,
-          representationKey: candidate.representationKey,
-          hash,
-          reason: "presign_failed",
-        });
-        continue;
-      }
+      downloadUrl = await presignUrl(candidate, options.presignOptions ?? {}, presignFn ?? null);
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      skips.push({
+        entityId: candidate.entityId,
+        representationKey: candidate.representationKey,
+        hash,
+        reason: presignFailureReason(error),
+      });
+      continue;
     }
 
     try {
       const { buffer, mimeType } = await downloadOneUrl(
-        downloadUrl!,
+        downloadUrl,
         allowedHosts,
         allowedMimeTypes,
         maxBytes,
@@ -718,4 +724,5 @@ export const __testables = {
   hostFromUrl,
   isLoopback,
   sharedReferenceCache,
+  validateServerConfiguration,
 };
