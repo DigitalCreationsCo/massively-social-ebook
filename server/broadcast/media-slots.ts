@@ -222,6 +222,7 @@ export async function hydrateCanonicalSlot(
   if (!segment) throw new Error(`Canonical block ${block.id} has no delivery segment`);
   const image = await fetchArchiveAsset(assertArchiveMediaUrl(block.imageUrl, "image"), "image", signal);
   const audio = segment.audioUrl
+    && !segment.queueAudioUnavailable
     ? await fetchArchiveAsset(assertArchiveMediaUrl(segment.audioUrl, "audio"), "audio", signal)
     : undefined;
   return { ...slot, image, ...(audio ? { audio } : {}) };

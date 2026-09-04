@@ -1,6 +1,6 @@
 # The 25th Chapter
 
-A real-time, interactive, AI-driven fictional story platform where readers vote on choices to progress the story. Content is generated through a provider-neutral AI SDK layer (text and 16:9 accompanying images).
+A real-time fictional story platform where viewers watch a live story unfold. Content is generated through a provider-neutral AI SDK layer (text and 16:9 accompanying images).
 
 ## Table of Contents
 
@@ -259,7 +259,7 @@ Six tables managed by Drizzle ORM with PostgreSQL:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | serial PK | Auto-incrementing ID |
-| `channel_id` | text | Unique channel identifier (e.g., `scifi`, `nap://25th-chapter`) |
+| `channel_id` | text | Unique URL-path-safe channel identifier (e.g., `scifi`, `25th-chapter`) |
 | `name` | text | Display name |
 | `description` | text | Channel description |
 | `created_at` | timestamp | Creation time |

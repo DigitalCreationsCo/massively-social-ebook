@@ -13,14 +13,14 @@
  *   --help        Show this help message.
  *
  * Examples:
- *   # Generate 20 blocks for the next scheduled session in "nap://25th-chapter" channel
- *   npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter
+ *   # Generate 20 blocks for the next scheduled session in "25th-chapter" channel
+ *   npx tsx server/scripts/generate-episode.ts --channel 25th-chapter
  *
  *   # Generate 15 blocks for session 42 (dry run)
- *   npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter --session 42 --count 15 --dry-run
+ *   npx tsx server/scripts/generate-episode.ts --channel 25th-chapter --session 42 --count 15 --dry-run
  *
  *   # Generate blocks for a specific session and persist them
- *   npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter --session 42
+ *   npx tsx server/scripts/generate-episode.ts --channel 25th-chapter --session 42
  */
 
 import { storage } from "../storage";
@@ -40,9 +40,9 @@ Options:
   --help          Show this help message
 
 Examples:
-  npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter
-  npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter --session 42 --count 15
-  npx tsx server/scripts/generate-episode.ts --channel nap://25th-chapter --session 42 --dry-run
+  npx tsx server/scripts/generate-episode.ts --channel 25th-chapter
+  npx tsx server/scripts/generate-episode.ts --channel 25th-chapter --session 42 --count 15
+  npx tsx server/scripts/generate-episode.ts --channel 25th-chapter --session 42 --dry-run
   `);
 }
 

@@ -49,7 +49,7 @@ describe('Data Abstraction Layer: Core Storage', () => {
     it('acquires all active schedules natively without channel constraints', async () => {
       const arrSchedulesMock = [
         { id: 1, channelId: 'scifi', intervalEnabled: true },
-        { id: 2, channelId: 'nap://25th-chapter', intervalEnabled: true }
+        { id: 2, channelId: '25th-chapter', intervalEnabled: true }
       ];
 
       (db.where as any).mockResolvedValue(arrSchedulesMock);

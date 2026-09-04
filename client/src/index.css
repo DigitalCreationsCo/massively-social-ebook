@@ -151,6 +151,22 @@
     }
   }
 
+  /* Preserve 16:9 at the height limit; chat takes any remaining width. */
+  @media (min-width: 1024px) {
+    .live-broadcast-layout {
+      --broadcast-chat-min-width: 23rem;
+      grid-template-columns:
+        minmax(0, min(var(--broadcast-player-max-width, 100vw), calc(100% - var(--broadcast-chat-min-width) - 1.5rem)))
+        minmax(0, 1fr);
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .live-broadcast-layout {
+      --broadcast-chat-min-width: 32rem;
+    }
+  }
+
   /* Phones keep the broadcast and chat within the visible viewport. */
   @media (max-width: 639px) {
     .live-broadcast-section,

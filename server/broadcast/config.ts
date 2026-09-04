@@ -1,4 +1,5 @@
 import { normalizeBroadcastEndpoint } from "@portalshq/capability-queue-broadcast";
+import { isSafeChannelId } from "@shared/channel-id";
 import { z } from "zod";
 
 const secretReference = z.string().trim().regex(/^[A-Z][A-Z0-9_]*$/, "must name an environment variable");
@@ -36,7 +37,10 @@ const channelConfigSchema = z.object({
   }
 });
 
-const registrySchema = z.record(z.string().trim().min(1), channelConfigSchema);
+const channelIdSchema = z.string().trim().refine(isSafeChannelId, {
+  message: "must be a URL-path-safe identifier (letters, digits, dots, underscores, and hyphens only)",
+});
+const registrySchema = z.record(channelIdSchema, channelConfigSchema);
 
 export type YoutubeBroadcastConfig = z.infer<typeof youtubeConfigSchema>;
 export type TwitchBroadcastConfig = z.infer<typeof twitchConfigSchema>;

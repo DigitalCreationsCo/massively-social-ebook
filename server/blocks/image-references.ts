@@ -288,10 +288,12 @@ export function resolveAllowedHosts(): string[] {
   const loreHost = hostFromUrl(process.env["NAP_LORE_HTTP_URL"] || process.env["NAP_HTTP_URL"]);
   if (loreHost) hosts.add(loreHost);
 
-  // Loopback for local Lore (`http://127.0.0.1:41339`) and unit tests.
-  hosts.add("localhost");
-  hosts.add("127.0.0.1");
-  hosts.add("::1");
+  // Loopback for local Lore and unit tests only.
+  if (process.env["NODE_ENV"] !== "production") {
+    hosts.add("localhost");
+    hosts.add("127.0.0.1");
+    hosts.add("::1");
+  }
 
   return [...hosts];
 }
@@ -304,6 +306,9 @@ function isLoopback(hostname: string): boolean {
 export function isAllowedImageUrl(url: URL, allowedHosts: readonly string[]): boolean {
   const protocol = url.protocol.toLowerCase();
   const hostname = url.hostname.toLowerCase();
+  // Loopback must never be reachable from a production server, even when
+  // explicitly listed in IMAGE_REFERENCE_ALLOWED_HOSTS.
+  if (isLoopback(hostname) && process.env["NODE_ENV"] === "production") return false;
   if (protocol !== "https:") {
     if (protocol !== "http:") return false;
     if (process.env["NODE_ENV"] === "production") return false;
@@ -492,6 +497,7 @@ async function readBodyWithCap(
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let completed = false;
   try {
     for (;;) {
       signal.throwIfAborted();
@@ -505,7 +511,11 @@ async function readBodyWithCap(
         chunks.push(value);
       }
     }
+    completed = true;
   } finally {
+    if (!completed) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+    }
     try { reader.releaseLock(); } catch { /* ignore */ }
   }
   if (total === 0) throw Object.assign(new Error("reference response was empty"), { code: "empty_body" });

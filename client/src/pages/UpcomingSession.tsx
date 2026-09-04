@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronDown } from "lucide-react";
 import { validateSchemaDates } from "@/lib/validateSchema";
 import { trackEvent } from "@/lib/analytics";
-import { DEFAULT_CHANNEL_ID } from "@/App";
+import { DEFAULT_CHANNEL_ID } from "@shared/channel-id";
 import {
   Collapsible,
   CollapsibleTrigger,

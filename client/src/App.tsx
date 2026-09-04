@@ -12,8 +12,7 @@ import { VersionOverlay } from "@/components/VersionOverlay";
 import Install from "@/pages/Install";
 import About from "@/pages/About";
 import NotFound from "@/pages/not-found";
-
-export const DEFAULT_CHANNEL_ID = "nap://25th-chapter";
+export { DEFAULT_CHANNEL_ID } from "@shared/channel-id";
 
 function useAnalyticsHook() {
   const [location] = useLocation();

@@ -295,6 +295,8 @@ export interface DeliverySegment {
   /** Individual Streamer receipts, persisted as each staged upload succeeds. */
   queueImageJobId?: string;
   queueAudioJobId?: string;
+  /** Audio was intentionally omitted after bounded queue-upload failure. */
+  queueAudioUnavailable?: boolean;
 }
 
 const deliverySegmentSchema = z.object({
@@ -306,6 +308,7 @@ const deliverySegmentSchema = z.object({
   queueSlotKey: z.string().min(1).optional(),
   queueImageJobId: z.string().min(1).optional(),
   queueAudioJobId: z.string().min(1).optional(),
+  queueAudioUnavailable: z.boolean().optional(),
 });
 
 // ─── Pending Blocks table ─────────────────────────────────────────────────────

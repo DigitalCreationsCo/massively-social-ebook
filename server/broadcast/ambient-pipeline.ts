@@ -139,6 +139,11 @@ export class AmbientPipeline {
 
   async releaseNextSafe(nextEpisodeStart: number | null, signal: AbortSignal): Promise<AmbientReleaseResult> {
     signal.throwIfAborted();
+    // A released item remains outstanding until the Streamer reports its
+    // terminal state.  Do not turn an ambient lookahead into a remote queue
+    // burst: callers deliberately use this pipeline with one slot of remote
+    // backpressure.
+    if (this.releasedTurns.size > 0) return { state: "pending" };
     const turn = this.stagedTurns.get(this.nextReleaseSequence);
     if (!turn) return { state: "pending" };
     if (!this.canReleaseTurn(Date.now(), nextEpisodeStart)) {
@@ -269,6 +274,10 @@ export class AmbientPipeline {
 
   private async stageGeneratedTurns(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
+      // `staged` uploads reserve Streamer capacity too.  Keeping one staged
+      // or released item prevents a failed later segment from stranding an
+      // arbitrary prefix of an ambient narration in the remote queue.
+      if (this.stagedTurns.size > 0 || this.releasedTurns.size > 0) return;
       if (this.skippedSequences.delete(this.nextStageSequence)) {
         this.nextStageSequence += 1;
         if (this.nextReleaseSequence < this.nextStageSequence && !this.stagedTurns.has(this.nextReleaseSequence)) {
@@ -341,6 +350,12 @@ export class AmbientPipeline {
   }
 
   private hasGenerationCapacity(): boolean {
+    // This pipeline is intentionally single-slot end-to-end.  In particular,
+    // do not keep generating while a prior slot is staged or playing: doing
+    // so can create an unbounded run of locally skipped sequence numbers when
+    // a fast provider resolves before remote playout advances.
+    if (this.stagedTurns.size > 0 || this.releasedTurns.size > 0) return false;
+    if (this.generatedTurns.size + this.inFlightGeneration.size >= 1) return false;
     const reservedSeconds = this.readySeconds() + this.inFlightGeneration.size * ESTIMATED_TURN_SECONDS;
     return reservedSeconds < this.maxReadySeconds && this.preparedBytes < this.maxPreparedBytes;
   }

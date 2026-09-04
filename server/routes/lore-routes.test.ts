@@ -40,7 +40,7 @@ describe('Lore REST API', () => {
         it('returns 200 with lore list', async () => {
             const mockLore = [
                 { id: 1, channelId: 'scifi', content: 'Lore content 1', isActive: true },
-                { id: 2, channelId: 'nap://25th-chapter', content: 'Lore content 2', isActive: false }
+                { id: 2, channelId: '25th-chapter', content: 'Lore content 2', isActive: false }
             ];
             mockedStorage.getLore.mockResolvedValue(mockLore as any);
 

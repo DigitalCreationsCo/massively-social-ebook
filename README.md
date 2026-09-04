@@ -143,6 +143,25 @@ The v1 deployment is intentionally single-instance: fan-out and provider
 connector leadership are process-local. Horizontal scaling requires an external
 fan-out adapter and one elected provider-connector leader.
 
+### Channel IDs
+
+Channel IDs are application keys, queue slot prefixes, and API path parameters.
+Use a single URL-path-safe identifier such as `25th-chapter`; do not use a
+`nap://` URI as a channel ID. The NAP resolver accepts the bare repository ID.
+
+To migrate an existing `nap://25th-chapter` channel, stop that broadcast, run a
+dry run, then apply the migration:
+
+```bash
+DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter
+DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter --apply
+```
+
+The migration renames FK-backed channel rows, moves broadcast desired-state and
+cursor settings, and clears persisted queue receipts. It preserves narrative
+and archived media, but intentionally does not mutate the separate Streamer
+database; discard any legacy staged slots there before restarting the channel.
+
 ## Database migration
 
 Apply `server/migrations/004_live_broadcast.sql`. It adds canonical delivery

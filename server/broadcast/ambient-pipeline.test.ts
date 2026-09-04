@@ -61,9 +61,13 @@ describe("AmbientPipeline", () => {
 
     pending.get(0)!.resolve(turn(0));
     await flush();
-    expect(staged).toEqual([0, 1]);
+    // Only one remote slot is staged at a time.  Later generation can remain
+    // in memory, but it must not reserve remote queue capacity early.
+    expect(staged).toEqual([0]);
 
     await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
+    await flush();
+    expect(staged).toEqual([0, 1]);
     await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
     expect(released).toEqual([0, 1]);
     await flush();
@@ -99,6 +103,39 @@ describe("AmbientPipeline", () => {
     await pipeline.abortAndAwaitAll();
   });
 
+  it("does not release a later slot while the prior slot is still being monitored", async () => {
+    const monitoring = deferred<void>();
+    const released: number[] = [];
+    const pipeline = new AmbientPipeline({
+      initialSequence: 0,
+      generateTurn: async (sequence) => sequence < 2 ? turn(sequence) : undefined,
+      stageTurn: async () => undefined,
+      releaseTurn: async (item) => {
+        released.push(item.sequence);
+        return [job(`image-${item.sequence}`)];
+      },
+      monitorJobs: async () => monitoring.promise,
+      onError: vi.fn(),
+      onActiveJobsChanged: vi.fn(),
+      onMetrics: vi.fn(),
+      maxReadySeconds: 30,
+      maxInFlightGeneration: 1,
+    });
+    const controller = new AbortController();
+    pipeline.start(controller.signal);
+    await flush();
+
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toEqual({ state: "pending" });
+    expect(released).toEqual([0]);
+
+    monitoring.resolve();
+    await flush();
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
+    expect(released).toEqual([0, 1]);
+    await pipeline.abortAndAwaitAll();
+  });
+
   it("aborts and joins in-flight generation without leaving a worker behind", async () => {
     const aborted = vi.fn();
     const pipeline = new AmbientPipeline({
@@ -122,6 +159,8 @@ describe("AmbientPipeline", () => {
     await flush();
 
     await expect(pipeline.abortAndAwaitAll()).resolves.toBeUndefined();
-    expect(aborted).toHaveBeenCalledTimes(2);
+    // Remote-slot backpressure deliberately permits only one ambient
+    // generation worker, even when a caller requests a larger local limit.
+    expect(aborted).toHaveBeenCalledOnce();
   });
 });

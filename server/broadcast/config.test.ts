@@ -43,6 +43,17 @@ describe("broadcast configuration", () => {
     expect(() => loadBroadcastConfig()).toThrow(/more than one channel/i);
   });
 
+  it("rejects channel identifiers that cannot be represented in queue and API paths", () => {
+    configure({
+      "nap://25th-chapter": {
+        controlEndpoint: "https://stream.example.test/channel",
+        queueTokenEnv: "TEST_QUEUE_TOKEN",
+      },
+    });
+
+    expect(() => loadBroadcastConfig()).toThrow(/URL-path-safe/i);
+  });
+
   it.each([
     "https://user:password@stream.example.test/channel",
     "https://stream.example.test/channel?token=leak",

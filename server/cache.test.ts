@@ -135,14 +135,14 @@ describe('Channel Cache - Unit Tests', () => {
   describe('Cache key structure', () => {
     it('should use channelId as key', () => {
       const cache = new Map<string, unknown>();
-      const channelIds = ['scifi', 'nap://25th-chapter', 'fantasy'];
+      const channelIds = ['scifi', '25th-chapter', 'fantasy'];
       
       channelIds.forEach(id => {
         cache.set(id, { data: `data for ${id}` });
       });
 
       expect(cache.has('scifi')).toBe(true);
-      expect(cache.has('nap://25th-chapter')).toBe(true);
+      expect(cache.has('25th-chapter')).toBe(true);
       expect(cache.has('fantasy')).toBe(true);
     });
   });
@@ -288,7 +288,7 @@ describe('Cache Edge Cases', () => {
 
   it('should handle multiple channels', () => {
     const cache = new Map<string, unknown>();
-    const channels = ['scifi', 'nap://25th-chapter', 'fantasy', 'horror', 'romance'];
+    const channels = ['scifi', '25th-chapter', 'fantasy', 'horror', 'romance'];
     
     channels.forEach((id, index) => {
       cache.set(id, {

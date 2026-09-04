@@ -21,9 +21,10 @@ import { logger } from "../logger";
 
 export type { SelectedImageRepresentation };
 
-const TIMEOUT_CONTEXT_MS = 8000;
+// Allow retrieval plus the bounded 45-second PX tool/model workflow.
+const TIMEOUT_CONTEXT_MS = 60_000;
 
-// Channel-specific required entities for empty context scenarios
+// Canonical channel profiles included in every PX request.
 const channelRequiredEntities: Record<string, string[]> = {
   "scifi": [
     "nap://scifi/character/protagonist", 
@@ -34,8 +35,8 @@ const channelRequiredEntities: Record<string, string[]> = {
     "nap://mystery/location/crime-scene"
   ],
   "25th-chapter": [
-    "nap://25th-chapter/character/hero",
-    "nap://25th-chapter/location/setting"
+    "nap://25th-chapter/character/claire-cole",
+    "nap://25th-chapter/character/nathan-gunn"
   ],
   // Add other channels as needed
 };
@@ -44,7 +45,11 @@ const engine = new NarrativeEngine({
   dataProvider: new RagProvider(),
   pxProvider: new PxProvider({
     requiredEntitiesByChannel: channelRequiredEntities
-  })
+  }),
+  config: {
+    representationProperties: ['portrait'],
+    pxErrorPolicy: "fail"
+  }
  });
 
 // Start the narrative lab server in development without blocking app initialization.
@@ -138,7 +143,7 @@ function getEngineSelectionConfig(): { representationProperties: readonly string
 export async function generateContextWithTimeout(channelId: string, inputQuery: string): Promise<ContextWithReferences> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("Context generation timeout (>8000ms)")), TIMEOUT_CONTEXT_MS);
+    timer = setTimeout(() => reject(new Error(`Context generation timeout (>${TIMEOUT_CONTEXT_MS}ms)`)), TIMEOUT_CONTEXT_MS);
   });
   try {
     const contextPromise = engine

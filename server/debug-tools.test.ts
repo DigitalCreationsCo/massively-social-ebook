@@ -58,7 +58,7 @@ describe('Debug Tools API', () => {
 
     describe('Security', () => {
         it('rejects requests without admin token', async () => {
-            const res = await request(app).post('/api/debug/sessions/skip').send({ channelId: 'nap://25th-chapter' });
+            const res = await request(app).post('/api/debug/sessions/skip').send({ channelId: '25th-chapter' });
             expect(res.status).toBe(401);
         });
 
@@ -66,7 +66,7 @@ describe('Debug Tools API', () => {
             const res = await request(app)
                 .post('/api/debug/sessions/skip')
                 .set('x-admin-token', 'wrong-token')
-                .send({ channelId: 'nap://25th-chapter' });
+                .send({ channelId: '25th-chapter' });
             expect(res.status).toBe(401);
         });
 
@@ -77,7 +77,7 @@ describe('Debug Tools API', () => {
                 const res = await request(app)
                     .post('/api/debug/sessions/skip')
                     .set('x-admin-token', ADMIN_TOKEN)
-                    .send({ channelId: 'nap://25th-chapter' });
+                    .send({ channelId: '25th-chapter' });
                 expect(res.status).toBe(403);
                 expect(res.body.message).toContain('disabled in production');
             } finally {
