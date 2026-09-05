@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createPxPrompt, enrichmentSchema } from "./px";
+import { characterRepresentationProperties, createPxPrompt, enrichmentSchema } from "./px";
 
 const request = {
   channelId: "25th-chapter", inputQuery: "Claire investigates.",
-  chronologicalBlocks: [], loreAtoms: [], representationProperties: ["portrait"],
+  chronologicalBlocks: [], loreAtoms: [], representationProperties: characterRepresentationProperties,
   maxUniqueEntityRepresentations: 5,
 };
 
@@ -16,9 +16,10 @@ describe("PX prompt and enrichment contract", () => {
     expect(prompt).toContain("Claire investigates.");
   });
 
-  it("retains nested representation guidance and preferences", () => {
+  it("retains nested representation guidance and prefers character sheets before portraits", () => {
     const prompt = createPxPrompt(request);
     expect(prompt).toContain("full nested representations map");
+    expect(prompt).toContain("character_sheet, portrait");
     expect(prompt).toContain("portrait");
     expect(prompt).toContain("Limit queried entities to 5");
   });

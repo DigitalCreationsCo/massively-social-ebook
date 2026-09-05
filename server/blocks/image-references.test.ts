@@ -63,6 +63,26 @@ describe("selectImageRepresentations", () => {
     expect(result[0]?.hash).toBe("hash-b");
   });
 
+  it("prefers a character sheet and falls back to the portrait", () => {
+    const both = entity("nap://repo/character/hero", {
+      portrait: validRep("portrait-hash"),
+      character_sheet: validRep("sheet-hash"),
+    });
+    const portraitOnly = entity("nap://repo/character/legacy", {
+      portrait: validRep("legacy-portrait-hash"),
+    });
+    const result = selectImageRepresentations(
+      [both, portraitOnly],
+      ["character_sheet", "portrait"],
+      5,
+    );
+
+    expect(result.map(({ representationKey, hash }) => ({ representationKey, hash }))).toEqual([
+      { representationKey: "character_sheet", hash: "sheet-hash" },
+      { representationKey: "portrait", hash: "legacy-portrait-hash" },
+    ]);
+  });
+
   it("selects first valid entry when preference list is empty", () => {
     const entities = [
       entity("nap://repo/character/hero", {

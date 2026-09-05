@@ -52,8 +52,10 @@ describe("AI Generators", () => {
     );
   });
 
-  it("configures NarrativeEngine to propagate PX failures", () => {
-    expect(engineOptions.value).toMatchObject({ config: { pxErrorPolicy: "fail", representationProperties: ["portrait"] } });
+  it("configures NarrativeEngine to prefer character sheets and fall back to portraits", () => {
+    expect(engineOptions.value).toMatchObject({
+      config: { pxErrorPolicy: "fail", representationProperties: ["character_sheet", "portrait"] },
+    });
   });
 
   describe("generateStoryBlock", () => {

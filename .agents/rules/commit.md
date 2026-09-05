@@ -1,3 +1,6 @@
+---
+trigger: always_on
+---
 # Agent Instructions
 
 ## Git Commit Attribution

@@ -14,6 +14,9 @@ import { getLanguageModel } from "./ai-provider";
 import { createMCPClient, type CallToolResult } from "@ai-sdk/mcp";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+/** Prefer a complete character reference while retaining legacy portraits. */
+export const characterRepresentationProperties = ["character_sheet", "portrait"] as const;
+
 function pxError(stage: string, cause: unknown): Error {
   const detail = cause instanceof Error ? cause.message : String(cause);
   return new Error(`PX ${stage} failed: ${detail}`, { cause });

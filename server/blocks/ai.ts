@@ -9,7 +9,7 @@ import {
 import { createImageInstructions } from "../../prompts/image.prompt";
 import { NarrativeEngine } from "@portalshq/narrativeengine";
 import { RagProvider } from "./rag";
-import { PxProvider } from "./px";
+import { PxProvider, characterRepresentationProperties } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
 import { getAiConfiguration, getImageModel, getLanguageModel } from "./ai-provider";
 import {
@@ -47,7 +47,7 @@ const engine = new NarrativeEngine({
     requiredEntitiesByChannel: channelRequiredEntities
   }),
   config: {
-    representationProperties: ['portrait'],
+    representationProperties: characterRepresentationProperties,
     pxErrorPolicy: "fail"
   }
  });
@@ -168,7 +168,7 @@ export async function generateContextWithTimeout(channelId: string, inputQuery: 
           prompt: (context as { prompt: string }).prompt,
           narrativeContext: context,
           imageRepresentations,
-        } satisfies ContextWithReferences;
+        };
       });
     return await Promise.race([contextPromise, timeoutPromise]);
   } finally {
