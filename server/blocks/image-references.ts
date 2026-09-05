@@ -263,12 +263,29 @@ function hostFromUrl(raw: string | undefined): string | undefined {
 }
 
 /**
- * Resolve the HTTPS allowlist for reference downloads.
+ * Hosts for the NAP Lore server derived from configuration (DRY single source).
+ *
+ * Both variables describe the same server: `NAP_LORE_HTTP_URL` is the explicit
+ * HTTP(S) origin used for presigned URLs, `NAP_LORE_URL_BASE` is the `lore://`
+ * base. Either one is enough to allowlist the host presigning will return.
+ */
+function loreHosts(): string[] {
+  const hosts: string[] = [];
+  for (const raw of [process.env["NAP_LORE_HTTP_URL"], process.env["NAP_LORE_URL_BASE"]]) {
+    const host = hostFromUrl(raw);
+    if (host) hosts.push(host);
+  }
+  return [...new Set(hosts)];
+}
+
+/**
+ * Resolve the allowlist for reference downloads.
  *
  * - When `IMAGE_REFERENCE_ALLOWED_HOSTS` is set (comma-separated), use exactly
- *   those hosts (simple, explicit, low-risk).
+ *   those hosts (simple, explicit, low-risk). Include BOTH storage and Lore
+ *   hosts there because the explicit list replaces the defaults below.
  * - Otherwise default to the configured GCS bucket's standard host forms plus
- *   the configured NAP Lore HTTP host and loopback for local development/tests.
+ *   the configured NAP Lore host(s) and loopback for local development/tests.
  */
 export function resolveAllowedHosts(): string[] {
   const configured = parseHostList(process.env["IMAGE_REFERENCE_ALLOWED_HOSTS"]);
@@ -285,8 +302,7 @@ export function resolveAllowedHosts(): string[] {
     hosts.add("storage.cloud.google.com");
   }
 
-  const loreHost = hostFromUrl(process.env["NAP_LORE_HTTP_URL"]);
-  if (loreHost) hosts.add(loreHost);
+  for (const loreHost of loreHosts()) hosts.add(loreHost);
 
   // Loopback for local Lore and unit tests only.
   if (process.env["NODE_ENV"] !== "production") {
@@ -302,18 +318,24 @@ function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
-/** HTTPS required; HTTP allowed only for loopback outside production. */
+/**
+ * Allowlisted hosts may serve over HTTP or HTTPS.
+ *
+ * Production serves storage and Lore behind TLS so presigned URLs are HTTPS;
+ * development Lore is plain HTTP (e.g. `http://100.105.14.118:41339`). Trust is
+ * carried by the allowlist itself: an allowlisted host is fetchable over either
+ * scheme. Note presigned URLs are bearer capabilities — only allowlist HTTP
+ * origins on trusted networks.
+ * Loopback must never be reachable from a production server, even when
+ * explicitly listed in IMAGE_REFERENCE_ALLOWED_HOSTS.
+ */
 export function isAllowedImageUrl(url: URL, allowedHosts: readonly string[]): boolean {
   const protocol = url.protocol.toLowerCase();
   const hostname = url.hostname.toLowerCase();
   // Loopback must never be reachable from a production server, even when
   // explicitly listed in IMAGE_REFERENCE_ALLOWED_HOSTS.
   if (isLoopback(hostname) && process.env["NODE_ENV"] === "production") return false;
-  if (protocol !== "https:") {
-    if (protocol !== "http:") return false;
-    if (process.env["NODE_ENV"] === "production") return false;
-    if (!isLoopback(hostname)) return false;
-  }
+  if (protocol !== "https:" && protocol !== "http:") return false;
   const normalized = new Set(allowedHosts.map((h) => h.toLowerCase()));
   return normalized.has(hostname);
 }

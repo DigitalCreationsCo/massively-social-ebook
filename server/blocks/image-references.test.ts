@@ -216,11 +216,32 @@ describe("resolveAllowedHosts / isAllowedImageUrl", () => {
     expect(hosts).toContain("my-bucket.storage.googleapis.com");
   });
 
-  it("enforces HTTPS and allowlist", () => {
-    const allowed = ["storage.googleapis.com"];
+  it("derives the Lore host from either NAP variable", () => {
+    vi.stubEnv("IMAGE_REFERENCE_ALLOWED_HOSTS", "");
+    vi.stubEnv("NAP_LORE_HTTP_URL", "");
+    vi.stubEnv("NAP_LORE_URL_BASE", "lore://100.105.14.118:41337");
+    expect(resolveAllowedHosts()).toContain("100.105.14.118");
+
+    vi.stubEnv("NAP_LORE_URL_BASE", "");
+    vi.stubEnv("NAP_LORE_HTTP_URL", "http://100.105.14.118:41339");
+    expect(resolveAllowedHosts()).toContain("100.105.14.118");
+  });
+
+  it("allows allowlisted hosts over HTTP and HTTPS", () => {
+    const allowed = ["storage.googleapis.com", "100.105.14.118"];
     expect(isAllowedImageUrl(new URL("https://storage.googleapis.com/b/a.png"), allowed)).toBe(true);
-    expect(isAllowedImageUrl(new URL("http://storage.googleapis.com/b/a.png"), allowed)).toBe(false);
+    expect(isAllowedImageUrl(new URL("http://storage.googleapis.com/b/a.png"), allowed)).toBe(true);
+    expect(isAllowedImageUrl(new URL("http://100.105.14.118:41339/r/a.png"), allowed)).toBe(true);
     expect(isAllowedImageUrl(new URL("https://evil.test/a.png"), allowed)).toBe(false);
+    expect(isAllowedImageUrl(new URL("http://evil.test/a.png"), allowed)).toBe(false);
+    expect(isAllowedImageUrl(new URL("ftp://storage.googleapis.com/b/a.png"), allowed)).toBe(false);
+  });
+
+  it("still blocks loopback in production even when allowlisted", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const allowed = ["127.0.0.1", "localhost"];
+    expect(isAllowedImageUrl(new URL("http://127.0.0.1:41339/a.png"), allowed)).toBe(false);
+    expect(isAllowedImageUrl(new URL("https://localhost/a.png"), allowed)).toBe(false);
   });
 });
 
