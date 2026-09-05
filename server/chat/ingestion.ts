@@ -1,3 +1,4 @@
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import pgPromise from 'pg-promise';
 import { IMain, IDatabase } from 'pg-promise';
 
@@ -99,7 +100,7 @@ export class IngestionService {
   private async handleFailedBatch(events: ReactionEvent[], error: any): Promise<void> {
     // Dead Letter Office (DLO) Logic
     try {
-      const batchId = crypto.randomUUID();
+      const batchId = generateUUID();
       const payload = JSON.stringify(events);
       const errorMessage = error instanceof Error ? error.message : String(error);
 

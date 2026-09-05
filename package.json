@@ -34,7 +34,7 @@
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@portalshq/capability-queue-broadcast": "^0.1.5",
-    "@portalshq/capability-realtime-fanout": "^0.1.4",
+    "@portalshq/capability-realtime-fanout": "^0.1.5",
     "@portalshq/capability-video-delivery": "^0.1.4",
     "@portalshq/nap-sdk": "^0.8.14",
     "@portalshq/narrativeengine": "^0.8.14",

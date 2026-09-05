@@ -1,10 +1,9 @@
-import crypto from "node:crypto";
-
 import {
   QueueBroadcastClient,
   QueueBroadcastError,
   type QueueBroadcastJob,
 } from "@portalshq/capability-queue-broadcast";
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import type { ActivationResult, TickResult } from "@portalshq/runtime-core";
 import type { Session } from "@shared/schema";
 
@@ -133,7 +132,7 @@ export class BroadcastCoordinator {
     await this.disposeAmbientPipeline(new Error(`Broadcast restarted by ${trigger}`));
     this.hasStoredDesiredState = true;
     this.desiredState = "running";
-    this.runId = crypto.randomUUID();
+    this.runId = generateUUID();
     this.ambientSequence = 0;
     this.lastError = undefined;
     this.streamer = { state: "unknown" };
@@ -168,7 +167,7 @@ export class BroadcastCoordinator {
 
   private startProducer(): void {
     if (this.producerPromise || this.desiredState !== "running") return;
-    this.runId ??= crypto.randomUUID();
+    this.runId ??= generateUUID();
     const controller = new AbortController();
     this.abortController = controller;
     this.producerPromise = this.produce(controller.signal)

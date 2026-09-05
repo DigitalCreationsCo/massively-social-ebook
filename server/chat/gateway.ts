@@ -1,9 +1,8 @@
-import crypto from "node:crypto";
-
 import {
   Chat,
   InMemoryFanoutBus,
   normalizeExternalStreamEndpoint,
+  generateUUID,
   type ChatMessage as FanoutChatMessage,
   type ExternalChatEvent,
 } from "@portalshq/capability-realtime-fanout";
@@ -54,7 +53,7 @@ export class ChatGateway {
   ): Promise<StoredChatMessage> {
     const config = this.requireConfig(channelId);
     const normalizedText = normalizeText(text);
-    const messageId = `portals:${crypto.randomUUID()}`;
+    const messageId = `portals:${generateUUID()}`;
     const sentAt = new Date();
     const activeSession = await storage.getActiveSession(channelId);
     const nextSession = activeSession ? undefined : await storage.getNextSession(channelId);

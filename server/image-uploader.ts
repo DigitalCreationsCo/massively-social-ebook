@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import { GCPStorageManager } from "./storage-manager";
 import { generateStoryImage } from "./blocks/ai";
 import { getAiConfiguration } from "./blocks/ai-provider";
@@ -62,7 +62,7 @@ export function buildImagePath(
   channelId: string,
   imageType: ImageType,
 ): string {
-  const uuid = crypto.randomUUID();
+  const uuid = generateUUID();
   const folderMap: Record<ImageType, string> = {
     block: "blocks",
     cover: "cover",
@@ -138,7 +138,7 @@ export async function generateStoryImageAsset(
   const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
   const buffer = Buffer.from(normalized, "base64");
   if (buffer.length === 0) throw new Error("Image generator returned empty image data");
-  return { buffer, mimeType: "image/jpeg", filename: `story-${crypto.randomUUID()}.jpg` };
+  return { buffer, mimeType: "image/jpeg", filename: `story-${generateUUID()}.jpg` };
 }
 
 /** Archive a generated image separately from its direct streamer upload. */

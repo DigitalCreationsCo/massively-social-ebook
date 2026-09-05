@@ -1,3 +1,4 @@
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import type { Express, Request, RequestHandler } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -546,7 +547,7 @@ export async function registerRoutes(
     }
 
     clientChannelIds.set(ws, channelId);
-    const connectionId = crypto.randomUUID();
+    const connectionId = generateUUID();
     void broadcastRuntime.addViewer(channelId, connectionId).catch((cause) => {
       logger.error(
         `Failed to register viewer for ${channelId}`,

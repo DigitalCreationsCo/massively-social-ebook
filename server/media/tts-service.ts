@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -96,7 +96,7 @@ export function probeWavDuration(buffer: Buffer): number {
 
 export async function synthesizeSpeech(
   text: string,
-  objectName = `tts-${crypto.randomUUID()}.wav`,
+  objectName = `tts-${generateUUID()}.wav`,
   signal?: AbortSignal,
 ): Promise<SynthesizedSpeech> {
   const speech = await generateSpeechBuffer(text, signal);

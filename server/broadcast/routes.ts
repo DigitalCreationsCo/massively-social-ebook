@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import type { Express, Request } from "express";
 
 import { isAdmin } from "../middleware/auth";
@@ -23,7 +23,7 @@ export function registerBroadcastRoutes(app: Express, runtime: BroadcastRuntime)
   app.post("/api/chat/identity", (req, res, next) => {
     const existing = getChatIdentity(req);
     if (existing) return res.json(existing);
-    const guestId = crypto.randomUUID();
+    const guestId = generateUUID();
     req.session.guestId = guestId;
     req.session.guestDisplayName = `Guest ${guestId.slice(0, 6).toUpperCase()}`;
     req.session.save((cause) => {

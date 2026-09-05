@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-
+import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import type { QueueUploadAsset } from "@portalshq/capability-queue-broadcast";
 import type { Block, DeliverySegment, Session } from "@shared/schema";
 
@@ -95,7 +95,7 @@ export async function prepareCanonicalSlot(
     audioUrl: assertArchiveMediaUrl(
       await archiveSpeechBuffer(
         speech,
-        `channel-${channelId}-session-${session.id}-${crypto.randomUUID()}-${String(ordinal).padStart(3, "0")}.${speech.extension}`,
+        `channel-${channelId}-session-${session.id}-${generateUUID()}-${String(ordinal).padStart(3, "0")}.${speech.extension}`,
       ),
       "audio",
     ),
@@ -370,7 +370,7 @@ async function fetchArchiveAsset(
   if (!response.ok) throw new Error(`Archived ${kind} download failed (${response.status})`);
   const buffer = Buffer.from(await response.arrayBuffer());
   const contentType = response.headers.get("content-type") || (kind === "image" ? "image/jpeg" : "audio/wav");
-  return toUploadAsset(buffer, contentType, `recovered-${crypto.randomUUID()}.${kind === "image" ? "jpg" : "wav"}`);
+  return toUploadAsset(buffer, contentType, `recovered-${generateUUID()}.${kind === "image" ? "jpg" : "wav"}`);
 }
 
 function assertArchiveMediaUrl(value: string, kind: string): string {
