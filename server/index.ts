@@ -16,6 +16,8 @@ import { pool } from "./db";
 import { logAiConfiguration } from "./ai-call-logger";
 import { getAiConfiguration } from "./blocks/ai-provider";
 import { validateServerConfiguration } from "./blocks/image-references";
+import { initializeChannelRegistry } from "./channel-registry";
+import { loadStoryGenerationConfig } from "./story-generation-config";
 
 const app = express();
 const httpServer = createServer(app);
@@ -108,6 +110,16 @@ declare module "express-session" {
 }
 
 (async () => {
+  // Fail before workers, routes, or provider calls are started.  A public
+  // decision count other than the supported A/B contract must never silently
+  // degrade into an unexpected production behavior.
+  const storyGeneration = loadStoryGenerationConfig();
+  logger.info("Story generation configuration loaded", "server", { ...storyGeneration });
+
+  // Required Px manifests are a startup dependency. Do this before routes or
+  // broadcast workers can produce a session/ambient turn.
+  await initializeChannelRegistry();
+
   // ── Health check / keep-alive endpoint ─────────────────────────────
   // Responds immediately (no DB) so external cron/pinger can keep the
   // Fly.io machine warm without stressing the DB pool.

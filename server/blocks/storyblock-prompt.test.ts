@@ -25,9 +25,10 @@ describe("story block prompts", () => {
     const instructions = createStoryBlockSystemInstructions({
       genre: "mystery",
       isResolving: false,
+      publicChoicesEnabled: true,
     });
 
-    expect(instructions).toContain("The narrative them is mystery");
+    expect(instructions).toContain("The narrative theme is mystery");
     expect(instructions).toContain("Characters don't make stupid decisions");
     expect(instructions).toContain("generate 2 choices");
     expect(instructions).not.toContain("Mara opened the letter");

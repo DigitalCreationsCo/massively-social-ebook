@@ -10,6 +10,8 @@ logs
 server/blocks/generated/
 .env.local
 .env.production.local
+channel-registry.json
+channel-registry.json.*.tmp
 
 .traces
 

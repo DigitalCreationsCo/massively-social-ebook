@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { LiveBroadcastSection } from "../LiveBroadcastSection";
+import { episodeProgressPercent, LiveBroadcastSection } from "../LiveBroadcastSection";
 import { useLiveChannel } from "@/hooks/use-live-channel";
 import { usePlayback } from "@/hooks/use-playback";
 
@@ -31,7 +31,7 @@ describe("LiveBroadcastSection component", () => {
     (usePlayback as any).mockReturnValue({ isLoading: false, data: null, isError: false });
     render(<LiveBroadcastSection />);
 
-    expect(screen.getByText(/signal unavailable/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/signal unavailable/i)).not.toHaveLength(0);
     expect(screen.getByTestId("video-delivery-player")).toHaveTextContent("no manifest");
   });
 
@@ -42,14 +42,19 @@ describe("LiveBroadcastSection component", () => {
       data: {
         playback: { sessionId: "session-1", playbackManifestUrl: "https://media.example/live.m3u8" },
         delivery: { isRunning: true, isHealthy: true },
-        broadcast: { desiredState: "running", mode: "continuous", sessionStatus: "active", viewerCount: 12450 },
+        broadcast: {
+          desiredState: "running", mode: "continuous", sessionStatus: "active", viewerCount: 12450,
+          sessionScheduledStartAt: Date.now() - 50_000,
+          sessionScheduledEndAt: Date.now() + 50_000,
+        },
       },
     });
     render(<LiveBroadcastSection />);
 
-    expect(screen.getByText(/on air/i)).toBeInTheDocument();
-    expect(screen.getByText("12.5K")).toBeInTheDocument();
+    expect(screen.getAllByText(/on air/i)).not.toHaveLength(0);
+    expect(screen.getByLabelText("12.5K viewers")).toBeInTheDocument();
     expect(screen.getByTestId("video-delivery-player")).toHaveTextContent("https://media.example/live.m3u8");
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
   });
 
   it("explains a delivery failure while preserving chat and watch access", () => {
@@ -85,7 +90,17 @@ describe("LiveBroadcastSection component", () => {
     });
     render(<LiveBroadcastSection />);
 
-    expect(screen.getByText(/production paused/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/^paused$/i)).not.toHaveLength(0);
     expect(screen.getByText(/service reconnecting: streamer control api is unreachable/i)).toBeInTheDocument();
+  });
+});
+
+describe("episodeProgressPercent", () => {
+  it("uses the coordinator's scheduled session bounds and clamps safely", () => {
+    expect(episodeProgressPercent(1_000, 2_000, 1_500)).toBe(50);
+    expect(episodeProgressPercent(1_000, 2_000, 500)).toBe(0);
+    expect(episodeProgressPercent(1_000, 2_000, 2_500)).toBe(100);
+    expect(episodeProgressPercent(undefined, 2_000, 1_500)).toBe(0);
+    expect(episodeProgressPercent(2_000, 1_000, 1_500)).toBe(0);
   });
 });

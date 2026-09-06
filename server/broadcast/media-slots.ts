@@ -375,7 +375,12 @@ async function generateImageWithFallback(
       asError(cause),
     );
     signal.throwIfAborted();
-    const fallback = await storage.getRandomImage(channelId);
+    // Keep the stream visually continuous while the next image is pending:
+    // repeat the most recent canonical visual before falling back to any
+    // historical channel image. This is both less jarring and immediately
+    // available during provider quota/rate-limit failures.
+    const mostRecent = await storage.getLastBlock(channelId);
+    const fallback = mostRecent?.imageUrl ?? await storage.getRandomImage(channelId);
     if (!fallback) throw cause;
     const asset = await fetchArchiveAsset(assertArchiveMediaUrl(fallback, "image"), "image", signal);
     return {

@@ -1,49 +1,8 @@
 import { normalizeBroadcastEndpoint } from "@portalshq/capability-queue-broadcast";
-import { isSafeChannelId } from "@shared/channel-id";
-import { z } from "zod";
+import { getChannelRegistry, type RegistryChannelConfig } from "../channel-registry";
 
-const secretReference = z.string().trim().regex(/^[A-Z][A-Z0-9_]*$/, "must name an environment variable");
-
-const youtubeConfigSchema = z.object({
-  liveChatId: z.string().trim().min(1),
-  clientIdEnv: secretReference,
-  clientSecretEnv: secretReference,
-  refreshTokenEnv: secretReference,
-});
-
-const twitchConfigSchema = z.object({
-  broadcasterUserId: z.string().trim().min(1),
-  userId: z.string().trim().min(1),
-  clientIdEnv: secretReference,
-  clientSecretEnv: secretReference,
-  refreshTokenEnv: secretReference,
-});
-
-const channelConfigSchema = z.object({
-  /** Authenticated FastAPI control-plane URL, normally the streamer's :8000 port. */
-  controlEndpoint: z.string().url().optional(),
-  /** @deprecated Use controlEndpoint. Kept for existing deployments. */
-  endpoint: z.string().url().optional(),
-  queueTokenEnv: secretReference,
-  youtube: youtubeConfigSchema.optional(),
-  twitch: twitchConfigSchema.optional(),
-}).superRefine((value, context) => {
-  if (!value.controlEndpoint && !value.endpoint) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["controlEndpoint"],
-      message: "controlEndpoint is required (the legacy endpoint field is also accepted)",
-    });
-  }
-});
-
-const channelIdSchema = z.string().trim().refine(isSafeChannelId, {
-  message: "must be a URL-path-safe identifier (letters, digits, dots, underscores, and hyphens only)",
-});
-const registrySchema = z.record(channelIdSchema, channelConfigSchema);
-
-export type YoutubeBroadcastConfig = z.infer<typeof youtubeConfigSchema>;
-export type TwitchBroadcastConfig = z.infer<typeof twitchConfigSchema>;
+export type YoutubeBroadcastConfig = NonNullable<RegistryChannelConfig["youtube"]>;
+export type TwitchBroadcastConfig = NonNullable<RegistryChannelConfig["twitch"]>;
 
 export interface BroadcastChannelConfig {
   channelId: string;
@@ -55,17 +14,7 @@ export interface BroadcastChannelConfig {
 }
 
 export function loadBroadcastConfig(): Map<string, BroadcastChannelConfig> {
-  const raw = process.env.BROADCAST_CHANNELS_JSON;
-  if (!raw?.trim()) return new Map();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (cause) {
-    throw new Error("BROADCAST_CHANNELS_JSON must be valid JSON", { cause });
-  }
-
-  const registry = registrySchema.parse(parsed);
+  const registry = getChannelRegistry().channels;
   const configs = new Map<string, BroadcastChannelConfig>();
   const endpoints = new Set<string>();
   for (const [channelId, entry] of Object.entries(registry)) {

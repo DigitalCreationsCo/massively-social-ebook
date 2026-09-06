@@ -22,6 +22,12 @@ function pxError(stage: string, cause: unknown): Error {
   return new Error(`PX ${stage} failed: ${detail}`, { cause });
 }
 
+function mcpEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+}
+
 const sourceSkillPath = path.resolve(process.cwd(), "server/blocks/generated/px-skill.md");
 const deployedSkillPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "px-skill.md");
 
@@ -90,7 +96,7 @@ const manifestSchema = z.object({
   representations: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
-type ResolvedEntity = z.infer<typeof manifestSchema> & { type: string };
+export type ResolvedEntity = z.infer<typeof manifestSchema> & { type: string };
 
 function parseManifestText(text: string): unknown {
   try {
@@ -150,6 +156,55 @@ export interface PxProviderOptions {
   loadSkill?: PxSkillLoader;
   // Canonical entities required on every request for the channel.
   requiredEntitiesByChannel?: Record<string, string[]>;
+  /** Runtime registry accessor; preferred over the legacy static map. */
+  getRequiredEntities?: (channelId: string) => string[];
+  /** Runtime cache accessor populated by the startup Px resolution pass. */
+  getRequiredEntityManifests?: (channelId: string) => unknown[];
+}
+
+/**
+ * Resolve complete canonical manifests without involving an LLM. This is used
+ * during startup to make required profiles an explicit readiness dependency.
+ */
+export async function resolvePxManifests(uris: readonly string[]): Promise<ResolvedEntity[]> {
+  const uniqueUris = [...new Set(uris)];
+  if (uniqueUris.length === 0) return [];
+
+  const transport = new StdioClientTransport({ command: "/bin/sh", args: ["-lc", "exec nap-mcp-server"], env: mcpEnvironment() });
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(new Error("PX startup resolution timeout (>12000ms)")), 12_000);
+  let client: Awaited<ReturnType<typeof createMCPClient>> | undefined;
+  try {
+    client = await createMCPClient({ transport, initializationOptions: { signal: controller.signal } });
+    let definitions = await client.listTools({ options: { signal: controller.signal } });
+    let definition = definitions.tools.find((tool) => tool.name === "nap_resolve");
+    while (!definition && definitions.nextCursor) {
+      definitions = await client.listTools({ params: { cursor: definitions.nextCursor }, options: { signal: controller.signal } });
+      definition = definitions.tools.find((tool) => tool.name === "nap_resolve");
+    }
+    const resolve = definition ? client.toolsFromDefinitions({ tools: [definition] }).nap_resolve : undefined;
+    if (!resolve || typeof resolve.execute !== "function") {
+      throw new Error("The MCP server does not expose an executable nap_resolve tool.");
+    }
+    const manifests: ResolvedEntity[] = [];
+    for (const uri of uniqueUris) {
+      controller.signal.throwIfAborted();
+      const results = await resolve.execute({ uri, format: "json" }, { toolCallId: `startup:${uri}`, messages: [], context: {}, abortSignal: controller.signal });
+      let resolved: ResolvedEntity | undefined;
+      for await (const result of Symbol.asyncIterator in results ? results : [results]) {
+        resolved = readManifest(result, uri);
+      }
+      if (!resolved) throw new Error(`nap_resolve returned no manifest for ${uri}.`);
+      manifests.push(resolved);
+    }
+    return manifests;
+  } catch (cause) {
+    throw pxError("startup manifest resolution", cause);
+  } finally {
+    clearTimeout(deadline);
+    if (client) await client.close();
+    else await transport.close();
+  }
 }
 
 async function loadSavedPxSkill(): Promise<string> {
@@ -219,10 +274,15 @@ function createPxInstructions(skill: string): string {
 export class PxProvider implements BasePxProvider {
   private readonly loadSkill: PxSkillLoader;
   private readonly requiredEntitiesByChannel: Record<string, string[]>;
+  private readonly getRequiredEntities: (channelId: string) => string[];
+  private readonly getRequiredEntityManifests: (channelId: string) => unknown[];
 
   constructor(options: PxProviderOptions = {}) {
     this.loadSkill = options.loadSkill ?? loadSavedPxSkill;
     this.requiredEntitiesByChannel = options.requiredEntitiesByChannel ?? {};
+    this.getRequiredEntities = options.getRequiredEntities
+      ?? ((channelId) => this.requiredEntitiesByChannel[channelId] ?? []);
+    this.getRequiredEntityManifests = options.getRequiredEntityManifests ?? (() => []);
   }
 
   async enrichContext(
@@ -235,15 +295,18 @@ export class PxProvider implements BasePxProvider {
       throw new Error("PX enrichment failed: maxUniqueEntityRepresentations must be a nonnegative integer.");
     }
     if (limit === 0) return { entities: [] };
-    const requiredEntities = [...new Set(this.requiredEntitiesByChannel[request.channelId] ?? [])].slice(0, limit);
+    const requiredEntities = [...new Set(this.getRequiredEntities(request.channelId))].slice(0, limit);
     const manifests = new Map<string, ResolvedEntity>();
+    for (const cachedManifest of this.getRequiredEntityManifests(request.channelId)) {
+      const manifest = manifestSchema.parse(cachedManifest);
+      manifests.set(manifest.id, { ...manifest, type: manifest.entity_type });
+    }
+    const cachedManifestCount = manifests.size;
 
     const transport = new StdioClientTransport({
       command: "/bin/sh",
       args: ["-lc", "exec nap-mcp-server"],
-      env: {
-        ...process.env,
-      },
+      env: mcpEnvironment(),
     });
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(new Error("PX enrichment timeout (>12000ms)")), 12_000);
@@ -306,11 +369,13 @@ export class PxProvider implements BasePxProvider {
         return task;
       };
 
-      // Required channel profiles must not depend on whether the model decides
-      // to call a tool, or whether the current story happens to contain a URI.
+      // Startup has already resolved required profiles and persisted the exact
+      // manifests. Keep an explicit fallback for legacy callers/tests.
       stage = "required entity resolution";
       for (const uri of requiredEntities) {
-        await executeResolve({ uri }, { toolCallId: `required:${uri}`, messages: [], context: {} });
+        if (!manifests.has(uri)) {
+          await executeResolve({ uri }, { toolCallId: `required:${uri}`, messages: [], context: {} });
+        }
       }
 
       const guardedResolve = dynamicTool({
@@ -370,6 +435,9 @@ export class PxProvider implements BasePxProvider {
       return { ...output, entities: [...manifests.values()] };
     } catch (cause) {
       failed = true;
+      // A live PX/MCP outage must not discard the startup-validated canonical
+      // profiles. NarrativeEngine can still use them to preserve continuity.
+      if (cachedManifestCount > 0) return { entities: [...manifests.values()] };
       if (resolutionFailure) throw resolutionFailure;
       throw pxError(NoObjectGeneratedError.isInstance(cause) ? "schema validation" : stage, cause);
     } finally {

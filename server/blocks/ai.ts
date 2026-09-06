@@ -18,33 +18,19 @@ import {
   type SelectedImageRepresentation,
 } from "./image-references";
 import { logger } from "../logger";
+import { getRequiredEntities, getRequiredEntityManifests } from "../channel-registry";
+import { loadStoryGenerationConfig } from "../story-generation-config";
 
 export type { SelectedImageRepresentation };
 
 // Bounded context workflow: 12s cap, fallback to previousContext on timeout.
 const TIMEOUT_CONTEXT_MS = 12_000;
 
-// Canonical channel profiles included in every PX request.
-const channelRequiredEntities: Record<string, string[]> = {
-  "scifi": [
-    "nap://scifi/character/protagonist", 
-    "nap://scifi/location/primary-setting"
-  ],
-  "mystery": [
-    "nap://mystery/character/detective",
-    "nap://mystery/location/crime-scene"
-  ],
-  "25th-chapter": [
-    "nap://25th-chapter/character/claire-cole",
-    "nap://25th-chapter/character/nathan-gunn"
-  ],
-  // Add other channels as needed
-};
-
 const engine = new NarrativeEngine({
   dataProvider: new RagProvider(),
   pxProvider: new PxProvider({
-    requiredEntitiesByChannel: channelRequiredEntities
+    getRequiredEntities,
+    getRequiredEntityManifests,
   }),
   config: {
     representationProperties: characterRepresentationProperties,
@@ -213,6 +199,62 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   return buildBlockFromContext(channelId, previousContext, enrichedContext, narrativeContext, imageRepresentations, isResolving, sessionId, contextFailure);
 }
 
+/**
+ * Generate a bounded canonical chain from one RAG/PX retrieval snapshot.
+ *
+ * Text remains ordered because every draft becomes the next draft's immediate
+ * context.  Media is intentionally not generated here: callers admit media
+ * only for real canonical slots they have capacity to stage, so a text window
+ * can never fill the prepared playback queue speculatively.
+ */
+export async function generateCanonicalStoryWindow(
+  channelId: string,
+  previousContext: string,
+  blockCount: number,
+  sessionId?: number,
+): Promise<StoryBlockResult[]> {
+  const count = Math.max(0, Math.min(5, Math.floor(blockCount)));
+  if (count === 0) return [];
+  let enrichedContext = previousContext;
+  let narrativeContext: unknown | undefined;
+  let imageRepresentations: SelectedImageRepresentation[] | undefined;
+  let contextFailure: ContextFailure | undefined;
+  try {
+    const resolved = await generateContextWithTimeout(channelId, previousContext);
+    enrichedContext = resolved.prompt;
+    narrativeContext = resolved.narrativeContext;
+    imageRepresentations = resolved.imageRepresentations;
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    logger.warn("[NLP] Canonical window context failed; using immediate context", "blocks", error, { channelId, sessionId });
+    contextFailure = { reason: "backend_error", name: error.name, message: error.message.slice(0, 500) };
+  }
+
+  const generated: StoryBlockResult[] = [];
+  let immediateContext = previousContext;
+  for (let index = 0; index < count; index += 1) {
+    // Preserve retrieved history while explicitly injecting the newest
+    // generated continuation, which NarrativeEngine could not know when its
+    // one context build began.
+    const contextualPrompt = index === 0
+      ? enrichedContext
+      : `${enrichedContext}\n\nSequential continuation generated in this window:\n${immediateContext}`;
+    const block = await buildBlockFromContext(
+      channelId,
+      immediateContext,
+      contextualPrompt,
+      narrativeContext,
+      imageRepresentations,
+      index === count - 1,
+      sessionId,
+      contextFailure,
+    );
+    generated.push(block);
+    immediateContext = block.content;
+  }
+  return generated;
+}
+
 /** Why the prompt fell back to immediate context (persisted in the prompt log). */
 export interface ContextFailure {
   reason: "backend_error";
@@ -234,7 +276,11 @@ async function buildBlockFromContext(
     previousBlock: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
   });
-  const systemInstructions = createStoryBlockSystemInstructions({ isResolving });
+  const storyGeneration = loadStoryGenerationConfig();
+  const systemInstructions = createStoryBlockSystemInstructions({
+    isResolving,
+    publicChoicesEnabled: storyGeneration.publicChoicesEnabled,
+  });
 
   const { provider, model } = getAiConfiguration().text;
   const aiCall = logAiCall({
@@ -282,7 +328,7 @@ async function buildBlockFromContext(
 
   const result: StoryBlockResult = response.output;
 
-  if (isResolving) {
+  if (isResolving || !storyGeneration.publicChoicesEnabled) {
     delete result.optionA;
     delete result.optionB;
   }
@@ -310,6 +356,10 @@ async function buildBlockFromContext(
         sessionId,
         channelId,
         isResolving,
+        publicChoices: {
+          configured: storyGeneration.publicChoiceCount,
+          effect: storyGeneration.publicChoiceEffect,
+        },
         previousContext,
         enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
         // Present only when enrichment fell back: distinguishes a backend
@@ -389,6 +439,10 @@ export async function generateStoryImage(description: string, options: GenerateS
       prompt,
       n: 1,
       aspectRatio: "16:9",
+      // Broadcast has an archived-image fallback. Do not spend its available
+      // playout buffer waiting through SDK retries when a provider is rate
+      // limited or out of quota.
+      maxRetries: 0,
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
     if (response.image?.base64) {

@@ -249,6 +249,20 @@ describe("canonical NAP profiles", () => {
     expect(mocks.model).not.toHaveBeenCalled();
   });
 
+  it("keeps startup-cached required profiles when live PX is unavailable", async () => {
+    mocks.create.mockRejectedValue(new Error("PX unavailable"));
+    const provider = new PxProvider({
+      loadSkill: async () => "# NAP skill",
+      getRequiredEntities: () => [claire.id],
+      getRequiredEntityManifests: () => [claire],
+    });
+
+    await expect(provider.enrichContext(storyRequest)).resolves.toEqual({
+      entities: [{ ...claire, type: "character" }],
+    });
+    expect(mocks.model).not.toHaveBeenCalled();
+  });
+
   it("deduplicates configured profiles and repeated model tool calls", async () => {
     const toolCall = result([{
       type: "tool-call", toolName: "nap_resolve", toolCallId: "again", input: JSON.stringify({ uri: claire.id }),

@@ -14,13 +14,13 @@ import {
   hydrateCanonicalSlot,
   prepareAmbientSlots,
   prepareCanonicalSlot,
-  prepareCanonicalText,
   slotsFromBlock,
   type CanonicalText,
   type PreparedAmbientTurn,
   type PreparedBroadcastSlot,
 } from "./media-slots";
 import { AmbientPipeline, type AmbientPipelineStatus } from "./ambient-pipeline";
+import { generateCanonicalStoryWindow } from "../blocks/ai";
 
 type DesiredState = "running" | "stopped";
 type BroadcastMode = "stopped" | "waiting_for_streamer" | "ambient" | "preparing" | "episode";
@@ -39,6 +39,9 @@ export interface BroadcastCoordinatorStatus {
   mode: BroadcastMode;
   sessionStatus: "none" | "scheduled" | "preparing" | "active" | "completed";
   activeSessionId?: number;
+  /** Epoch milliseconds used by watch clients for the non-interactive episode progress overlay. */
+  sessionScheduledStartAt?: number;
+  sessionScheduledEndAt?: number;
   runId?: string;
   currentJobs?: { jobIds: string[] };
   lastError?: string;
@@ -73,6 +76,7 @@ export class BroadcastCoordinator {
   private mode: BroadcastMode = "stopped";
   private sessionStatus: BroadcastCoordinatorStatus["sessionStatus"] = "none";
   private activeSessionId: number | undefined;
+  private activeSessionSchedule: { startAt: number; endAt: number } | undefined;
   private runId: string | undefined;
   private abortController: AbortController | undefined;
   private producerPromise: Promise<void> | undefined;
@@ -82,9 +86,8 @@ export class BroadcastCoordinator {
   private lastError: string | undefined;
   private streamer: StreamerAvailabilityStatus = { state: "unknown" };
   private streamerFailureCount = 0;
-  private prefetchedCanonicalText:
-    | { sessionId: number; previousContext: string; promise: Promise<CanonicalText> }
-    | undefined;
+  /** Ordered text already admitted for the current canonical refill only. */
+  private canonicalTextWindow: { sessionId: number; texts: CanonicalText[] } | undefined;
 
   constructor(
     readonly channelId: string,
@@ -123,7 +126,7 @@ export class BroadcastCoordinator {
     this.hasStoredDesiredState = true;
     this.desiredState = "stopped";
     this.mode = "stopped";
-    this.prefetchedCanonicalText = undefined;
+    this.canonicalTextWindow = undefined;
     await storage.setSystemSetting(this.desiredSettingKey(), "stopped");
     this.abortController?.abort(new Error("Broadcast stopped by operator"));
     await this.producerPromise?.catch(() => undefined);
@@ -137,7 +140,7 @@ export class BroadcastCoordinator {
     this.abortController?.abort(new Error(`Broadcast restarted by ${trigger}`));
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error(`Broadcast restarted by ${trigger}`));
-    this.prefetchedCanonicalText = undefined;
+    this.canonicalTextWindow = undefined;
     this.hasStoredDesiredState = true;
     this.desiredState = "running";
     this.runId = generateUUID();
@@ -151,7 +154,7 @@ export class BroadcastCoordinator {
 
   /** Stop local work for process shutdown without changing the persisted desired state. */
   async shutdown(): Promise<void> {
-    this.prefetchedCanonicalText = undefined;
+    this.canonicalTextWindow = undefined;
     this.abortController?.abort(new Error("Broadcast process shutting down"));
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error("Broadcast process shutting down"));
@@ -166,6 +169,10 @@ export class BroadcastCoordinator {
       mode: this.mode,
       sessionStatus: this.sessionStatus,
       ...(this.activeSessionId ? { activeSessionId: this.activeSessionId } : {}),
+      ...(this.activeSessionSchedule ? {
+        sessionScheduledStartAt: this.activeSessionSchedule.startAt,
+        sessionScheduledEndAt: this.activeSessionSchedule.endAt,
+      } : {}),
       ...(this.runId ? { runId: this.runId } : {}),
       ...(this.currentJobs ? { currentJobs: this.currentJobs } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
@@ -443,6 +450,10 @@ export class BroadcastCoordinator {
   }
 
   private async produceEpisode(session: Session, signal: AbortSignal): Promise<void> {
+    this.activeSessionSchedule = {
+      startAt: session.scheduledStart.getTime(),
+      endAt: session.scheduledEnd.getTime(),
+    };
     this.mode = "preparing";
     this.sessionStatus = session.status === "active" ? "active" : "preparing";
     const cursorKey = this.cursorSettingKey(session.id);
@@ -577,54 +588,36 @@ export class BroadcastCoordinator {
         ?? "";
       await this.requireStreamerAvailable(signal);
 
-      // Pipelined text/finish + prefetch:
-      // Reuse prefetched text if it matches this session and previousContext;
-      // otherwise initiate text generation.
-      let textPromise: Promise<CanonicalText>;
-      if (
-        this.prefetchedCanonicalText
-        && this.prefetchedCanonicalText.sessionId === session.id
-        && this.prefetchedCanonicalText.previousContext === previousContext
-      ) {
-        textPromise = this.prefetchedCanonicalText.promise;
-        this.prefetchedCanonicalText = undefined;
-      } else {
-        this.prefetchedCanonicalText = undefined;
-        textPromise = prepareCanonicalText(this.channelId, previousContext, session.id, signal);
-      }
-
       let generated: CanonicalText;
       try {
-        generated = await textPromise;
+        if (!this.canonicalTextWindow || this.canonicalTextWindow.sessionId !== session.id || this.canonicalTextWindow.texts.length === 0) {
+          // Admission is derived solely from ordinary canonical refill demand.
+          // Text does not reserve any Streamer slots; media/staging below still
+          // happens one canonical turn at a time in FIFO order.
+          const missingSlots = Math.max(1, minimumSlots - slotCount);
+          const texts = await generateCanonicalStoryWindow(
+            this.channelId,
+            previousContext,
+            Math.min(3, missingSlots),
+            session.id,
+          );
+          this.canonicalTextWindow = { sessionId: session.id, texts: [...texts] };
+        }
+        generated = this.canonicalTextWindow.texts.shift()!;
       } catch (cause) {
-        this.prefetchedCanonicalText = undefined;
+        this.canonicalTextWindow = undefined;
         throw cause;
       }
 
       if (!generated?.content) {
-        this.prefetchedCanonicalText = undefined;
         await wait(2_000, signal);
         return;
-      }
-
-      // Concurrently prefetch the NEXT turn's text while this turn's media,
-      // archives, DB insert, and slot staging run.
-      if (Date.now() < session.scheduledEnd.getTime()) {
-        const nextContext = generated.content;
-        const nextPromise = prepareCanonicalText(this.channelId, nextContext, session.id, signal);
-        nextPromise.catch(() => undefined);
-        this.prefetchedCanonicalText = {
-          sessionId: session.id,
-          previousContext: nextContext,
-          promise: nextPromise,
-        };
       }
 
       const prepared = await finishCanonicalSlot(this.channelId, session, generated, signal);
       // Generation failures are terminal for this turn, not the channel. Wait
       // before moving on so a persistent provider failure cannot busy-loop.
       if (!prepared?.block || prepared.slots.length === 0) {
-        this.prefetchedCanonicalText = undefined;
         await wait(2_000, signal);
         return;
       }
@@ -727,7 +720,7 @@ export class BroadcastCoordinator {
     this.activeSessionId = undefined;
     this.sessionStatus = "completed";
     this.mode = "ambient";
-    this.prefetchedCanonicalText = undefined;
+    this.canonicalTextWindow = undefined;
   }
 
   private async submitSlot(

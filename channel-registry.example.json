@@ -1,0 +1,13 @@
+{
+  "channels": {
+    "your-channel-id": {
+      "controlEndpoint": "http://localhost:8000",
+      "queueTokenEnv": "BROADCAST_QUEUE_TOKEN",
+      "requiredEntities": [
+        "nap://your-channel-id/character/lead"
+      ]
+    }
+  },
+  "entities": {},
+  "entitiesFetchedAt": "2026-01-01T00:00:00.000Z"
+}

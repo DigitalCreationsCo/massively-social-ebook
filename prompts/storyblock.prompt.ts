@@ -124,6 +124,8 @@ type StoryBlockPromptOptions = {
 
 type StoryBlockSystemInstructionOptions = Pick<StoryBlockPromptOptions, "genre"> & {
   isResolving: boolean;
+  /** Choices are emitted only for the explicit public A/B feature. */
+  publicChoicesEnabled?: boolean;
 };
 
 /** The live story state sent as the user prompt for each generated block. */
@@ -148,6 +150,7 @@ export const createStoryBlockContextPrompt = ({
 export const createStoryBlockSystemInstructions = ({
   isResolving,
   genre = "mystery",
+  publicChoicesEnabled = false,
 }: StoryBlockSystemInstructionOptions) => {
   const storyRules = GENRE_RULES[genre] ?? GENRE_RULES.adventure;
 
@@ -166,6 +169,6 @@ export const createStoryBlockSystemInstructions = ({
     "Max 35 words.",
     ...examples,
     ...contentBlacklist,
-    createDecisionInstructions(),
+    ...(publicChoicesEnabled && !isResolving ? [createDecisionInstructions()] : []),
   ].join("\n");
 };

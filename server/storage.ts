@@ -226,7 +226,10 @@ export class DatabaseStorage implements IStorage {
     return block;
   }
 
-  async createBlock(block: InsertBlock, useEmbedding = true): Promise<Block> {
+  // Embedding generation is opt-in.  Block persistence must stay cheap and
+  // reliable for normal broadcast/session paths unless a caller explicitly
+  // requests semantic indexing.
+  async createBlock(block: InsertBlock, useEmbedding = false): Promise<Block> {
     const [newBlock] = await db.insert(blocks).values(block).returning();
     if (useEmbedding) {
       enqueueEmbeddingTask(

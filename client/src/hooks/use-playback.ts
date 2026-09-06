@@ -17,6 +17,8 @@ export interface PlaybackBroadcast {
   mode: string;
   sessionStatus: string;
   viewerCount: number;
+  sessionScheduledStartAt?: number;
+  sessionScheduledEndAt?: number;
   streamer?: {
     state: "unknown" | "available" | "unavailable";
     lastCheckedAt?: number;

@@ -129,10 +129,15 @@ export function VideoDeliveryPlayer({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 5,
+        // Join a live broadcast at the current/recent segment rather than
+        // replaying a large portion of its retained manifest on page load.
+        // Two segments leaves enough room for HLS jitter without adding a
+        // visible delay to a newly connected viewer.
+        startPosition: -1,
+        liveSyncDurationCount: 2,
         maxLiveSyncPlaybackRate: 1.25,
         maxBufferLength: 30,
-        liveMaxLatencyDurationCount: 10,
+        liveMaxLatencyDurationCount: 5,
         manifestLoadingMaxRetry: 3,
         levelLoadingMaxRetry: 3,
         fragLoadingMaxRetry: 4,
@@ -337,6 +342,12 @@ export function VideoDeliveryPlayer({
           }}
           onWaiting={() => {
             captureHeldFrame();
+            // HLS can remain attached and report a regular buffer wait (rather
+            // than a fatal error) when the queue has not produced the next
+            // segment yet. Treat it as a visible stall so the last decoded
+            // image stays on screen instead of exposing the video's black
+            // canvas until playout resumes.
+            setPlayerState("reconnecting");
             mediaAnalytics.trackBufferStart();
           }}
           onPlaying={() => {

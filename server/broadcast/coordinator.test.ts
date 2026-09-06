@@ -20,8 +20,11 @@ const mediaMock = vi.hoisted(() => ({
   finishCanonicalSlot: vi.fn(),
 }));
 
+const blocksMock = vi.hoisted(() => ({ generateCanonicalStoryWindow: vi.fn() }));
+
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("./media-slots", () => mediaMock);
+vi.mock("../blocks/ai", () => blocksMock);
 
 import { BroadcastCoordinator } from "./coordinator";
 
@@ -282,7 +285,7 @@ describe("BroadcastCoordinator", () => {
     const secondSlot = { ...slot, idempotencyPrefix: slot.idempotencyPrefix.replace(/:0$/, ":1"), slotKey: `${slot.slotKey}:next`, segmentOrdinal: 1, imageJobId: "image-job-2", audioJobId: "audio-job-2" };
     // Three staged segments keep ensureStagedSlots (cursor + 3 lookahead)
     // satisfied without invoking generation in this test.
-    const block = { id: 8, deliverySegments: [{ audioUrl: "https://assets.example/one.wav" }, { audioUrl: "https://assets.example/two.wav" }, { audioUrl: "https://assets.example/three.wav" }] };
+    const block = { id: 8, deliverySegments: [{ audioUrl: "https://assets.example/one.wav" }, { audioUrl: "https://assets.example/two.wav" }, { audioUrl: "https://assets.example/three.wav" }, { audioUrl: "https://assets.example/four.wav" }] };
     storageMock.getSystemSetting.mockResolvedValue("0");
     storageMock.getBlocksBySessionOrdered.mockResolvedValue([block]);
     mediaMock.slotsFromBlock.mockReturnValue([firstSlot, secondSlot]);
@@ -299,6 +302,7 @@ describe("BroadcastCoordinator", () => {
     const session = {
       id: 3,
       status: "active",
+      scheduledStart: new Date(),
       scheduledEnd: new Date(Date.now() + 60_000),
     };
 
@@ -605,7 +609,7 @@ describe("BroadcastCoordinator", () => {
     expect(coordinator.getStatus().mode).toBe("waiting_for_streamer");
   });
 
-  it("pipelines canonical text/finish and prefetches subsequent block text during current block staging", async () => {
+  it("admits only the missing canonical slots as one ordered text window", async () => {
     const session = {
       id: 9,
       channelId: "main",
@@ -615,37 +619,19 @@ describe("BroadcastCoordinator", () => {
     storageMock.getBlocksBySessionOrdered.mockResolvedValue([]);
     storageMock.getLastBlock.mockResolvedValue(undefined);
 
-    const text2Deferred = deferred<any>();
-    const finish1Deferred = deferred<any>();
-    let finish1Pending = false;
-    let finish1Resolved = false;
-    let prefetchStartedBeforeFinish1Resolved = false;
-    const textCalls: string[] = [];
-
-    mediaMock.prepareCanonicalText.mockImplementation(async (_channelId: string, context: string) => {
-      textCalls.push(context);
-      if (context === "") return { content: "Text block 1", title: "Block 1" };
-      if (context === "Text block 1") {
-        if (!finish1Resolved) prefetchStartedBeforeFinish1Resolved = true;
-        return await text2Deferred.promise;
-      }
-      return { content: `Text for ${context}`, title: "Extra" };
-    });
-
+    blocksMock.generateCanonicalStoryWindow.mockResolvedValue([
+      { content: "Text block 1", title: "Block 1" },
+      { content: "Text block 2", title: "Block 2" },
+    ]);
+    let nextId = 0;
     mediaMock.finishCanonicalSlot.mockImplementation(async (_channelId: string, _session: any, generated: any) => {
-      if (generated.title === "Block 1") {
-        finish1Pending = true;
-        const result = await finish1Deferred.promise;
-        finish1Pending = false;
-        finish1Resolved = true;
-        return result;
-      }
+      nextId += 1;
       return {
-        block: { id: 2, content: generated.content, deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
+        block: { id: nextId, content: generated.content, deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
         slots: [{
           durationSeconds: 15,
-          idempotencyPrefix: "channel:main:session:9:block:2:segment:0",
-          slotKey: "channel:main:session:9:block:2:segment:0:slot",
+          idempotencyPrefix: `channel:main:session:9:block:${nextId}:segment:0`,
+          slotKey: `channel:main:session:9:block:${nextId}:segment:0:slot`,
           segmentOrdinal: 0,
         }],
       };
@@ -660,36 +646,9 @@ describe("BroadcastCoordinator", () => {
     const coordinator = new BroadcastCoordinator("main", client as any);
     (coordinator as any).streamer = { state: "available" };
 
-    const stagingPromise = (coordinator as any).ensureStagedSlots(session, 2, new AbortController().signal);
+    await (coordinator as any).ensureStagedSlots(session, 2, new AbortController().signal);
 
-    await flushMicrotasks(30);
-
-    // Concurrency invariant: Block 1 finish and Block 2 prefetch are simultaneously in flight
-    expect(finish1Pending).toBe(true);
-    expect(prefetchStartedBeforeFinish1Resolved).toBe(true);
-    expect(textCalls).toEqual(["", "Text block 1"]);
-
-    // Resolve prefetch for Block 2 while Block 1 finish is STILL pending
-    text2Deferred.resolve({ content: "Text block 2", title: "Block 2" });
-    await flushMicrotasks(20);
-    expect(finish1Pending).toBe(true);
-
-    // Now resolve Block 1 finish
-    finish1Deferred.resolve({
-      block: { id: 1, content: "Text block 1", deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
-      slots: [{
-        durationSeconds: 15,
-        idempotencyPrefix: "channel:main:session:9:block:1:segment:0",
-        slotKey: "channel:main:session:9:block:1:segment:0:slot",
-        segmentOrdinal: 0,
-      }],
-    });
-
-    await stagingPromise;
-
-    // Invariant: Block 2 consumed the in-flight prefetch without duplicate text calls,
-    // and spawned background prefetch for Block 3
-    expect(textCalls).toEqual(["", "Text block 1", "Text block 2"]);
+    expect(blocksMock.generateCanonicalStoryWindow).toHaveBeenCalledWith("main", "", 2, 9);
     expect(mediaMock.finishCanonicalSlot).toHaveBeenCalledTimes(2);
   });
 
@@ -764,7 +723,7 @@ describe("BroadcastCoordinator", () => {
     await coordinator.stop();
   });
 
-  it("discards prefetched text when previousContext diverges and generates fresh text", async () => {
+  it("does not consume an old prefetch when admitting a canonical window", async () => {
     const session = {
       id: 9,
       channelId: "main",
@@ -783,14 +742,7 @@ describe("BroadcastCoordinator", () => {
     const coordinator = new BroadcastCoordinator("main", client as any);
     (coordinator as any).streamer = { state: "available" };
 
-    // Prime coordinator with stale prefetched text for a divergent context
-    (coordinator as any).prefetchedCanonicalText = {
-      sessionId: 9,
-      previousContext: "stale-divergent-context",
-      promise: Promise.resolve({ content: "stale text", title: "Stale" }),
-    };
-
-    mediaMock.prepareCanonicalText.mockResolvedValue({ content: "fresh text", title: "Fresh" });
+    blocksMock.generateCanonicalStoryWindow.mockResolvedValue([{ content: "fresh text", title: "Fresh" }]);
     mediaMock.finishCanonicalSlot.mockResolvedValue({
       block: { id: 1, content: "fresh text", deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
       slots: [{
@@ -801,11 +753,9 @@ describe("BroadcastCoordinator", () => {
       }],
     });
 
-    // Actual context from storage is "" (differs from "stale-divergent-context")
     await (coordinator as any).ensureStagedSlots(session, 1, new AbortController().signal);
 
-    // Verifies stale prefetch was discarded and fresh text was generated with current context
-    expect(mediaMock.prepareCanonicalText).toHaveBeenCalledWith("main", "", 9, expect.anything());
+    expect(blocksMock.generateCanonicalStoryWindow).toHaveBeenCalledWith("main", "", 1, 9);
     expect(mediaMock.finishCanonicalSlot).toHaveBeenCalledWith(
       "main",
       session,

@@ -42,12 +42,13 @@ vi.mock("@portalshq/narrativeengine", () => ({
   },
 }));
 
-import { generateContextWithTimeout, generateStoryBlock, generateStoryImage } from "./ai";
+import { generateCanonicalStoryWindow, generateContextWithTimeout, generateStoryBlock, generateStoryImage } from "./ai";
 import { logger } from "../logger";
 
 describe("AI Generators", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     mockBuildContext.mockImplementation(({ inputQuery }: { inputQuery: string }) =>
       Promise.resolve({ prompt: inputQuery }),
     );
@@ -81,8 +82,28 @@ describe("AI Generators", () => {
       expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Current story context:");
       expect(result.title).toBe("Test Title");
       expect(result.content).toBe("Test content here.");
+      expect(result.optionA).toBeUndefined();
+      expect(result.optionB).toBeUndefined();
+      expect(mockGenerateText.mock.calls[0][0].instructions).not.toContain("generate 2 choices");
+    });
+
+    it("emits public A/B choices only when explicitly enabled", async () => {
+      vi.stubEnv("STORY_DECISION_BRANCHES", "2");
+      mockGenerateText.mockResolvedValueOnce({
+        output: {
+          title: "Choice Title",
+          content: "Choose.",
+          optionA: { label: "A", description: "desc A" },
+          optionB: { label: "B", description: "desc B" },
+          isNotable: false,
+        },
+      });
+
+      const result = await generateStoryBlock("scifi", "Previous block text");
+
       expect(result.optionA?.label).toBe("A");
       expect(result.optionB?.label).toBe("B");
+      expect(mockGenerateText.mock.calls[0][0].instructions).toContain("generate 2 choices");
     });
 
     it("throws when the provider returns no structured output", async () => {
@@ -135,6 +156,19 @@ describe("AI Generators", () => {
       expect(result.optionB).toBeUndefined();
       expect(result.title).toBe("Resolution Title");
     });
+
+    it("builds RAG/PX context once for a dependent canonical text window", async () => {
+      mockBuildContext.mockResolvedValueOnce({ prompt: "Retrieved story history" });
+      mockGenerateText
+        .mockResolvedValueOnce({ output: { title: "One", content: "First continuation.", isNotable: false } })
+        .mockResolvedValueOnce({ output: { title: "Two", content: "Second continuation.", isNotable: false } });
+
+      const blocks = await generateCanonicalStoryWindow("scifi", "Previous block.", 2, 5);
+
+      expect(blocks.map((block) => block.content)).toEqual(["First continuation.", "Second continuation."]);
+      expect(mockBuildContext).toHaveBeenCalledTimes(1);
+      expect(mockGenerateText.mock.calls[1][0].prompt).toContain("First continuation.");
+    });
   });
 
   describe("generateStoryImage", () => {
@@ -149,10 +183,19 @@ describe("AI Generators", () => {
         prompt: expect.any(String),
         n: 1,
         aspectRatio: "16:9",
+        maxRetries: 0,
       });
       expect(mockGetImageModel).toHaveBeenCalledTimes(1);
       expect(result).toBe(base64Image);
       expect(result).not.toContain("data:image");
+    });
+
+    it("does not retry image generation internally when broadcast can use an archived fallback", async () => {
+      mockGenerateImage.mockResolvedValueOnce({ image: { base64: "eA==" } });
+
+      await generateStoryImage("A scene");
+
+      expect(mockGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0 }));
     });
 
     it("throws when no image data is returned", async () => {

@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadBroadcastConfig } from "./config";
+import { setChannelRegistryForTests } from "../channel-registry";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
 function configure(registry: unknown) {
-  vi.stubEnv("BROADCAST_CHANNELS_JSON", JSON.stringify(registry));
+  setChannelRegistryForTests({
+    channels: Object.fromEntries(Object.entries(registry as Record<string, object>).map(([channelId, channel]) => [
+      channelId,
+      { ...channel, requiredEntities: ["nap://test/character/lead"] },
+    ])),
+    entities: {},
+  });
   vi.stubEnv("TEST_QUEUE_TOKEN", "server-secret");
 }
 
@@ -44,14 +51,12 @@ describe("broadcast configuration", () => {
   });
 
   it("rejects channel identifiers that cannot be represented in queue and API paths", () => {
-    configure({
+    expect(() => configure({
       "nap://25th-chapter": {
         controlEndpoint: "https://stream.example.test/channel",
         queueTokenEnv: "TEST_QUEUE_TOKEN",
       },
-    });
-
-    expect(() => loadBroadcastConfig()).toThrow(/URL-path-safe/i);
+    })).toThrow(/URL-path-safe/i);
   });
 
   it.each([

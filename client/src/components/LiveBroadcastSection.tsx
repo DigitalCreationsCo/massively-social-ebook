@@ -4,14 +4,20 @@ import { useLiveChannel } from "@/hooks/use-live-channel";
 import { usePlayback } from "@/hooks/use-playback";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, WifiOff } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_CHANNEL_ID } from "@shared/channel-id";
 import { useLocation } from "wouter";
 import { VideoDeliveryPlayer } from "./VideoDeliveryPlayer";
+import { DecisionPhase } from "./DecisionPhase";
 
 function formatViewerCount(viewerCount?: number) {
   if (typeof viewerCount !== "number") return "—";
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(viewerCount);
+}
+
+export function episodeProgressPercent(startAt?: number, endAt?: number, now = Date.now()): number {
+  if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt! <= startAt!) return 0;
+  return Math.min(100, Math.max(0, ((now - startAt!) / (endAt! - startAt!)) * 100));
 }
 
 interface LiveBroadcastSectionProps {
@@ -32,6 +38,20 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
   const hasHealthyBroadcast = Boolean(delivery?.isRunning && delivery.isHealthy && manifestUrl);
   const deliveryIssue = delivery && (!delivery.isRunning || !delivery.isHealthy);
   const waitingForStreamer = broadcast?.mode === "waiting_for_streamer";
+  const [clock, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const sessionStartAt = broadcast?.sessionScheduledStartAt;
+  const sessionEndAt = broadcast?.sessionScheduledEndAt;
+  const initialTimeRemaining = sessionStartAt && sessionEndAt
+    ? Math.max(1, Math.round((sessionEndAt - sessionStartAt) / 1_000))
+    : 1;
+  const timeRemaining = sessionEndAt
+    ? Math.max(0, Math.round((sessionEndAt - clock) / 1_000))
+    : 0;
 
   useLayoutEffect(() => {
     const layout = layoutRef.current;
@@ -102,6 +122,19 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45" />
             <VideoDeliveryPlayer className="live-broadcast-player absolute inset-0 h-full max-h-full min-h-0 w-full aspect-auto" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+              <DecisionPhase
+                phase="reading"
+                timeRemaining={timeRemaining}
+                timeToDecision={0}
+                initialTimeToDecision={1}
+                initialTimeRemaining={initialTimeRemaining}
+                turnsToNextChoice={-1}
+                hasVoted={false}
+                onVote={() => undefined}
+                voteResults={{ A: 0, B: 0 }}
+              />
+            </div>
             <div className="hidden md:block pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
           </div>
         </div>

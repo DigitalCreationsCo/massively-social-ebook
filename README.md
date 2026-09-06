@@ -32,31 +32,55 @@ use sibling `file:` packages:
 - `@portalshq/capability-realtime-fanout`
 - `@portalshq/runtime-core`
 
-`BROADCAST_CHANNELS_JSON` is validated during startup and keyed by the existing
-application channel ID. Tokens and OAuth credentials are referenced by variable
-name, never embedded in the registry:
+`CHANNEL_REGISTRY_PATH` must point to a writable, deployment-local JSON file.
+It is validated and refreshed before the server begins serving traffic. The
+file is keyed by the existing application channel ID; it contains both broadcast
+configuration and the canonical Px manifests required to preserve narrative
+continuity. Tokens and OAuth credentials are referenced by variable name, never
+embedded in the registry:
 
 ```json
 {
-  "your-channel-id": {
-    "controlEndpoint": "https://streamer.example.com",
-    "queueTokenEnv": "BROADCAST_QUEUE_TOKEN",
-    "youtube": {
-      "liveChatId": "youtube-live-chat-id",
-      "clientIdEnv": "YOUTUBE_CLIENT_ID",
-      "clientSecretEnv": "YOUTUBE_CLIENT_SECRET",
-      "refreshTokenEnv": "YOUTUBE_REFRESH_TOKEN"
-    },
-    "twitch": {
-      "broadcasterUserId": "123",
-      "userId": "456",
-      "clientIdEnv": "TWITCH_CLIENT_ID",
-      "clientSecretEnv": "TWITCH_CLIENT_SECRET",
-      "refreshTokenEnv": "TWITCH_REFRESH_TOKEN"
+  "channels": {
+    "your-channel-id": {
+      "controlEndpoint": "https://streamer.example.com",
+      "queueTokenEnv": "BROADCAST_QUEUE_TOKEN",
+      "requiredEntities": [
+        "nap://your-channel-id/character/lead"
+      ],
+      "youtube": {
+        "liveChatId": "youtube-live-chat-id",
+        "clientIdEnv": "YOUTUBE_CLIENT_ID",
+        "clientSecretEnv": "YOUTUBE_CLIENT_SECRET",
+        "refreshTokenEnv": "YOUTUBE_REFRESH_TOKEN"
+      },
+      "twitch": {
+        "broadcasterUserId": "123",
+        "userId": "456",
+        "clientIdEnv": "TWITCH_CLIENT_ID",
+        "clientSecretEnv": "TWITCH_CLIENT_SECRET",
+        "refreshTokenEnv": "TWITCH_REFRESH_TOKEN"
+      }
     }
-  }
+  },
+  "entities": {},
+  "entitiesFetchedAt": "2026-01-01T00:00:00.000Z"
 }
 ```
+
+At every process startup, the server resolves every URI in every channel's
+`requiredEntities` list with Px. It writes the complete returned manifests into
+`entities`, keyed by URI, only after all lookups succeed. A failed lookup,
+invalid manifest, unreadable registry, or non-writable registry prevents startup;
+the server never starts with random/fallback canonical entities. During normal
+operation, sessions and ambient generation use the startup cache even if a later
+live Px request fails. The cache is refreshed on startup only.
+
+Copy [channel-registry.example.json](channel-registry.example.json) to the
+path configured by `CHANNEL_REGISTRY_PATH`; do not commit the resulting file.
+For container deployments, mount a persistent writable file or directory at
+that path. See [the channel registry guide](docs/channel-registry.md) for the
+migration, schema, and operational behavior.
 
 Each control endpoint must be unique and must not contain credentials, a query,
 or a fragment. It is the Streamer's authenticated FastAPI base URL—typically

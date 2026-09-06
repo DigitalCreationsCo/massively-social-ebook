@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const blocks = vi.hoisted(() => ({ generateStoryBlock: vi.fn() }));
 const images = vi.hoisted(() => ({ archiveStoryImage: vi.fn(), generateStoryImageAsset: vi.fn(), downloadArchiveBuffer: vi.fn() }));
 const speech = vi.hoisted(() => ({ archiveSpeechBuffer: vi.fn(), synthesizeNarrationBuffers: vi.fn() }));
-const storage = vi.hoisted(() => ({ createBlock: vi.fn(), getRandomImage: vi.fn() }));
+const storage = vi.hoisted(() => ({ createBlock: vi.fn(), getLastBlock: vi.fn(), getRandomImage: vi.fn() }));
 
 vi.mock("../blocks/ai", () => blocks);
 vi.mock("../image-uploader", () => images);
@@ -282,6 +282,28 @@ describe("broadcast media slots", () => {
       expect(storage.getRandomImage).toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+
+  it("repeats the most recent canonical image before choosing a random fallback", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
+    images.generateStoryImageAsset.mockRejectedValue(new Error("quota exhausted"));
+    storage.getLastBlock.mockResolvedValue({ imageUrl: "https://archive.example/latest.jpg" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(Buffer.from("latest-bytes") as unknown as BodyInit, {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }),
+    );
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+    try {
+      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 40, new AbortController().signal);
+      expect(prepared?.image).toBeDefined();
+      expect(storage.getLastBlock).toHaveBeenCalledWith("main");
+      expect(storage.getRandomImage).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      storage.getLastBlock.mockReset();
     }
   });
 

@@ -1,6 +1,7 @@
 import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import { GCPStorageManager } from "./storage-manager";
 import { generateStoryImage } from "./blocks/ai";
+import { admitImageProviderWork } from "./blocks/provider-budget";
 import { getAiConfiguration } from "./blocks/ai-provider";
 import {
   fetchReferenceImages,
@@ -131,10 +132,13 @@ export async function generateStoryImageAsset(
     }
   }
 
-  const base64Data = await generateStoryImage(description, {
-    ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
-    ...(options.signal ? { abortSignal: options.signal } : {}),
-  });
+  const base64Data = await admitImageProviderWork(
+    () => generateStoryImage(description, {
+      ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+    }),
+    options.signal,
+  );
   const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
   const buffer = Buffer.from(normalized, "base64");
   if (buffer.length === 0) throw new Error("Image generator returned empty image data");

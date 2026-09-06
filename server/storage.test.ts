@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DatabaseStorage } from './storage';
 import { db } from './db';
+import { enqueueEmbeddingTask } from './blocks/embedding-queue';
 
 vi.mock('./db', () => {
   const mockChainDb = {
@@ -11,11 +12,17 @@ vi.mock('./db', () => {
     orderBy: vi.fn().mockReturnThis(),
     limit: vi.fn().mockReturnThis(),
     insert: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    returning: vi.fn(),
     onConflictDoUpdate: vi.fn().mockReturnThis(),
     execute: vi.fn(),
   };
   return { db: mockChainDb };
 });
+
+vi.mock('./blocks/embedding-queue', () => ({
+  enqueueEmbeddingTask: vi.fn(),
+}));
 
 describe('Data Abstraction Layer: Core Storage', () => {
   const storageDb = new DatabaseStorage();
@@ -42,6 +49,32 @@ describe('Data Abstraction Layer: Core Storage', () => {
 
       const resultImage = await storageDb.getRandomImage('scifi');
       expect(resultImage).toBeNull();
+    });
+  });
+
+  describe('block embeddings', () => {
+    const block = {
+      id: 101,
+      channelId: 'scifi',
+      sessionId: 1,
+      title: 'A signal',
+      content: 'The signal returns.',
+    };
+
+    it('does not enqueue an embedding when the option is omitted', async () => {
+      (db.returning as any).mockResolvedValueOnce([block]);
+
+      await storageDb.createBlock(block as any);
+
+      expect(enqueueEmbeddingTask).not.toHaveBeenCalled();
+    });
+
+    it('enqueues an embedding only when explicitly requested', async () => {
+      (db.returning as any).mockResolvedValueOnce([block]);
+
+      await storageDb.createBlock(block as any, true);
+
+      expect(enqueueEmbeddingTask).toHaveBeenCalledWith(101, 'The signal returns.', 'A signal');
     });
   });
 
