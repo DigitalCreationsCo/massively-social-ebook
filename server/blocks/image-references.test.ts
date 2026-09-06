@@ -432,6 +432,70 @@ describe("fetchReferenceImages", () => {
     expect(result).toEqual([]);
   });
 
+  it("downloads http presigned URLs on allowlisted hosts (dev Lore)", async () => {
+    const presignFn = vi.fn(async () => signedResult("http://100.105.14.118:41339/r/image.png?token=x"));
+    const fetchFn = vi.fn(async () => imageResponse(new Uint8Array([1, 2, 3])));
+    const result = await fetchReferenceImages(
+      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      { presignFn, fetchFn, allowedHosts: ["100.105.14.118"], maxImages: 3 },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.mimeType).toBe("image/png");
+  });
+
+  it("follows redirects across allowlisted http/https hosts", async () => {
+    const presignFn = vi.fn(async () => signedResult("http://100.105.14.118:41339/r/image.png?token=x"));
+    const fetchFn = vi.fn(async (url: unknown) => {
+      if (String(url).startsWith("http://100.105.14.118")) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://storage.googleapis.com/bucket/image.png?token=y" },
+        });
+      }
+      return imageResponse(new Uint8Array([4, 5]));
+    });
+    const result = await fetchReferenceImages(
+      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      { presignFn, fetchFn, allowedHosts: ["100.105.14.118", "storage.googleapis.com"], maxImages: 3 },
+    );
+    expect(result).toHaveLength(1);
+    expect([...result[0]!.buffer]).toEqual([4, 5]);
+  });
+
+  it("accepts valid images missing a Content-Type via magic bytes", async () => {
+    const presignFn = vi.fn(async () => signedResult("http://100.105.14.118:41339/r/image.png?token=x"));
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+    const fetchFn = vi.fn(async () => new Response(pngBytes as BodyInit, { status: 200 }));
+    const result = await fetchReferenceImages(
+      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      { presignFn, fetchFn, allowedHosts: ["100.105.14.118"] },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.mimeType).toBe("image/png");
+  });
+
+  it("accepts valid images served as application/octet-stream via magic bytes", async () => {
+    const presignFn = vi.fn(async () => signedResult());
+    const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    const fetchFn = vi.fn(async () => imageResponse(jpegBytes, "application/octet-stream"));
+    const result = await fetchReferenceImages(
+      [selected("nap://r/character/a", "k", "h-octet")],
+      { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.mimeType).toBe("image/jpeg");
+  });
+
+  it("still rejects non-image bytes without a usable Content-Type", async () => {
+    const presignFn = vi.fn(async () => signedResult());
+    const fetchFn = vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]) as BodyInit, { status: 200 }));
+    const result = await fetchReferenceImages(
+      [selected("nap://r/character/a", "k", "h-garbage")],
+      { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] },
+    );
+    expect(result).toEqual([]);
+  });
+
   it("propagates parent abort instead of skipping", async () => {
     const controller = new AbortController();
     controller.abort(new Error("broadcast stopped"));

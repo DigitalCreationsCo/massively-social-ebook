@@ -470,6 +470,32 @@ function normalizeMime(contentType: string | null): string {
   return contentType.split(";")[0]!.trim().toLowerCase();
 }
 
+/**
+ * Identify PNG/JPEG/WebP bytes by magic number so a missing or generic
+ * Content-Type (Lore omits it) can't reject a valid image. Returns undefined
+ * for anything else — callers still skip those as unsupported_mime.
+ */
+function sniffImageMime(buffer: Buffer): "image/png" | "image/jpeg" | "image/webp" | undefined {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+    buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return undefined;
+}
+
 function combineSignals(parent: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
   const timeoutSignal = (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout
     ? (AbortSignal as unknown as { timeout: (ms: number) => AbortSignal }).timeout(timeoutMs)
@@ -567,7 +593,7 @@ function skipReasonFromError(error: unknown): string {
 /**
  * Fetch one reference URL with strict validation. Redirects are followed
  * manually (up to MAX_REDIRECTS) and each hop is validated against the same
- * HTTPS + allowlist policy.
+ * HTTP/HTTPS + allowlist policy.
  */
 async function downloadOneUrl(
   initialUrl: string,
@@ -592,7 +618,7 @@ async function downloadOneUrl(
     if (!isAllowedImageUrl(url, allowedHosts)) {
       const protocol = url.protocol.toLowerCase();
       if (protocol !== "https:" && protocol !== "http:") {
-        throw Object.assign(new Error("reference URL must use HTTPS"), { code: "invalid_protocol" });
+        throw Object.assign(new Error("reference URL must use HTTP or HTTPS"), { code: "invalid_protocol" });
       }
       throw Object.assign(new Error("reference host is not allowlisted"), { code: "host_not_allowed" });
     }
@@ -619,11 +645,22 @@ async function downloadOneUrl(
       if (!response.ok) {
         throw Object.assign(new Error(`reference download failed (${response.status})`), { code: `http_${response.status}` });
       }
-      const mimeType = normalizeMime(response.headers.get("content-type"));
+      // Read the bounded body before trusting Content-Type: bytes are ground
+      // truth (Lore omits the header), the header is only a hint.
+      let buffer: Buffer;
+      try {
+        buffer = await readBodyWithCap(response, maxBytes, signal);
+      } catch (error) {
+        // A broadcast abort mid-stream must propagate, not become a skip.
+        if (parentSignal?.aborted) throw parentSignal.reason;
+        throw error;
+      }
+      const headerMime = normalizeMime(response.headers.get("content-type"));
+      const sniffedMime = sniffImageMime(buffer);
+      const mimeType = sniffedMime ?? (headerMime.length > 0 ? headerMime : undefined);
       if (!mimeType || !allowedMimes.has(mimeType)) {
         throw Object.assign(new Error(`unsupported reference MIME type (${mimeType || "unknown"})`), { code: "unsupported_mime" });
       }
-      const buffer = await readBodyWithCap(response, maxBytes, signal);
       return { buffer, mimeType };
     } finally {
       cleanup();
