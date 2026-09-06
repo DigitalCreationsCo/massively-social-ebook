@@ -42,6 +42,16 @@ interface AmbientPipelineOptions {
   maxPreparedBytes?: number;
   maxInFlightGeneration?: number;
   safetyMarginMs?: number;
+  /**
+   * How many *distinct visuals* may sit staged-or-released (queued at the
+   * Streamer) ahead of playout. 2-3 keeps the next image(s) ready so queue
+   * time never eats into per-image playback duration. Split narration
+   * segments share one contentId and count as one visual. The Streamer plays
+   * FIFO, each slot for its own imageDuration; releases are immediate, never
+   * paced to playout. Video-safe: a future video turn counts as one visual
+   * exactly like an image turn.
+   */
+  maxBufferedSlots?: number;
 }
 
 export type AmbientReleaseResult =
@@ -49,13 +59,14 @@ export type AmbientReleaseResult =
   | { state: "pending" }
   | { state: "blocked"; episodeStart: number };
 
-const DEFAULT_MAX_READY_SECONDS = 30;
+const DEFAULT_MAX_READY_SECONDS = 60;
 const DEFAULT_MAX_PREPARED_BYTES = 50 * 1024 * 1024;
-// Keep the default deliberately conservative: several hosted AI providers
-// reject overlapping structured-output requests. Operators can raise this
-// after verifying their provider quota supports it.
-const DEFAULT_MAX_IN_FLIGHT_GENERATION = 1;
+// Two in-flight generations overlap text/media of N+1 with staging of N.
+// Raise only after verifying provider quota supports overlapping calls.
+const DEFAULT_MAX_IN_FLIGHT_GENERATION = 2;
 const DEFAULT_SAFETY_MARGIN_MS = 2_000;
+/** Distinct visuals buffered staged-or-released ahead of playout (2-3 total). */
+const DEFAULT_BUFFERED_SLOTS = 3;
 const ESTIMATED_TURN_SECONDS = 15;
 
 /**
@@ -67,7 +78,7 @@ const ESTIMATED_TURN_SECONDS = 15;
 export class AmbientPipeline {
   private readonly generatedTurns = new Map<number, PreparedAmbientTurn>();
   private readonly stagedTurns = new Map<number, PreparedAmbientTurn>();
-  private readonly releasedTurns = new Map<number, { durationSeconds: number; jobIds: string[] }>();
+  private readonly releasedTurns = new Map<number, { durationSeconds: number; jobIds: string[]; contentKey: string }>();
   private readonly skippedSequences = new Set<number>();
   private readonly inFlightGeneration = new Set<number>();
   private readonly metrics = new Map<number, AmbientTurnMetrics>();
@@ -75,6 +86,7 @@ export class AmbientPipeline {
   private readonly maxReadySeconds: number;
   private readonly maxPreparedBytes: number;
   private readonly maxInFlightGeneration: number;
+  private readonly maxBufferedSlots: number;
   private readonly safetyMarginMs: number;
   private controller: AbortController | undefined;
   private refillPromise: Promise<void> | undefined;
@@ -111,6 +123,12 @@ export class AmbientPipeline {
       0,
       30_000,
     );
+    this.maxBufferedSlots = boundedEnvironmentNumber(
+      "BROADCAST_AMBIENT_BUFFER_SLOTS",
+      options.maxBufferedSlots ?? DEFAULT_BUFFERED_SLOTS,
+      1,
+      5,
+    );
     this.nextGenerationSequence = options.initialSequence;
     this.nextStageSequence = options.initialSequence;
     this.nextReleaseSequence = options.initialSequence;
@@ -140,10 +158,16 @@ export class AmbientPipeline {
   async releaseNextSafe(nextEpisodeStart: number | null, signal: AbortSignal): Promise<AmbientReleaseResult> {
     signal.throwIfAborted();
     // A released item remains outstanding until the Streamer reports its
-    // terminal state.  Do not turn an ambient lookahead into a remote queue
-    // burst: callers deliberately use this pipeline with one slot of remote
-    // backpressure.
-    if (this.releasedTurns.size > 0) return { state: "pending" };
+    // terminal state (played out). Keep up to maxBufferedSlots *distinct
+    // visuals* outstanding so the next image is already queued when the
+    // current duration completes. A split narration shares one contentId
+    // across its segments, so three slots of the same picture count as one.
+    // Only released (FIFO-eligible) visuals block further releases — staged
+    // work must always be releasable, otherwise a full staged buffer
+    // deadlocks. The Streamer plays FIFO, each for its own imageDuration —
+    // queue time never shortens playback. Video-safe: contentKey is
+    // media-agnostic (image today, video tomorrow), never image-byte-specific.
+    if (this.releasedDistinctCount() >= this.maxBufferedSlots) return { state: "pending" };
     const turn = this.stagedTurns.get(this.nextReleaseSequence);
     if (!turn) return { state: "pending" };
     if (!this.canReleaseTurn(Date.now(), nextEpisodeStart)) {
@@ -160,6 +184,7 @@ export class AmbientPipeline {
       this.releasedTurns.set(turn.sequence, {
         durationSeconds: turn.totalDurationSeconds,
         jobIds: jobs.map((job) => job.id),
+        contentKey: contentKeyForTurn(turn),
       });
       this.nextReleaseSequence += 1;
       this.publishMetrics(metrics);
@@ -274,10 +299,12 @@ export class AmbientPipeline {
 
   private async stageGeneratedTurns(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      // `staged` uploads reserve Streamer capacity too.  Keeping one staged
-      // or released item prevents a failed later segment from stranding an
+      // `staged` uploads reserve Streamer capacity too. Cap distinct visuals
+      // (not delivery slots) at the buffer depth so one split narration that
+      // shares a single image cannot fill the buffer and starve the next
+      // distinct image. A failed later segment then cannot strand an
       // arbitrary prefix of an ambient narration in the remote queue.
-      if (this.stagedTurns.size > 0 || this.releasedTurns.size > 0) return;
+      if (this.bufferedDistinctCount() >= this.maxBufferedSlots) return;
       if (this.skippedSequences.delete(this.nextStageSequence)) {
         this.nextStageSequence += 1;
         if (this.nextReleaseSequence < this.nextStageSequence && !this.stagedTurns.has(this.nextReleaseSequence)) {
@@ -350,12 +377,11 @@ export class AmbientPipeline {
   }
 
   private hasGenerationCapacity(): boolean {
-    // This pipeline is intentionally single-slot end-to-end.  In particular,
-    // do not keep generating while a prior slot is staged or playing: doing
-    // so can create an unbounded run of locally skipped sequence numbers when
-    // a fast provider resolves before remote playout advances.
-    if (this.stagedTurns.size > 0 || this.releasedTurns.size > 0) return false;
-    if (this.generatedTurns.size + this.inFlightGeneration.size >= 1) return false;
+    // Keep the next image(s) generating while the buffer plays out: staging
+    // consumes in sequence order, so a fast provider just fills the generated
+    // map instead of creating skipped sequences. Memory stays bounded by the
+    // ready-seconds and prepared-bytes caps below.
+    if (this.generatedTurns.size + this.inFlightGeneration.size >= Math.max(this.maxInFlightGeneration, this.maxBufferedSlots)) return false;
     const reservedSeconds = this.readySeconds() + this.inFlightGeneration.size * ESTIMATED_TURN_SECONDS;
     return reservedSeconds < this.maxReadySeconds && this.preparedBytes < this.maxPreparedBytes;
   }
@@ -376,6 +402,25 @@ export class AmbientPipeline {
 
   private stagedDurationSeconds(): number {
     return [...this.stagedTurns.values()].reduce((total, turn) => total + turn.totalDurationSeconds, 0);
+  }
+
+  /**
+   * Distinct visuals currently reserving remote capacity (staged + released).
+   * Split siblings share one contentKey, so N slots of the same picture count
+   * as one — the buffer guarantees distinct images, not delivery slots.
+   * Staging gate only: releases are gated on released visuals alone so a
+   * full staged buffer can always drain.
+   */
+  private bufferedDistinctCount(): number {
+    const keys = new Set<string>();
+    for (const turn of this.stagedTurns.values()) keys.add(contentKeyForTurn(turn));
+    for (const turn of this.releasedTurns.values()) keys.add(turn.contentKey);
+    return keys.size;
+  }
+
+  /** Distinct visuals already released and still outstanding (playing/monitored). */
+  private releasedDistinctCount(): number {
+    return new Set([...this.releasedTurns.values()].map((turn) => turn.contentKey)).size;
   }
 
   private workerSignal(): AbortSignal {
@@ -416,6 +461,25 @@ function boundedEnvironmentNumber(name: string, fallback: number, minimum: numbe
     throw new TypeError(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
   return value;
+}
+
+/**
+ * Media-agnostic visual identity for buffer accounting. Prefers the explicit
+ * contentId (set per AI generation, shared across its split segments),
+ * falls back to the generation idempotency prefix, then image/video bytes,
+ * then sequence. Image/audio/video share this key space equally — a future
+ * video turn counts as one distinct visual exactly like an image turn.
+ */
+function contentKeyForTurn(turn: Pick<PreparedAmbientTurn, "sequence" | "idempotencyPrefix"> & Partial<PreparedAmbientTurn>): string {
+  if (typeof turn.contentId === "string" && turn.contentId.length > 0) return turn.contentId;
+  const prefix = turn.idempotencyPrefix.split(":segment:")[0]!;
+  if (prefix && prefix !== turn.idempotencyPrefix) return prefix;
+  if (turn.idempotencyPrefix) return turn.idempotencyPrefix;
+  const imageSha = (turn as { image?: { sha256?: unknown } }).image?.sha256;
+  if (typeof imageSha === "string" && imageSha.length > 0) return `sha:${imageSha}`;
+  const videoSha = (turn as { video?: { sha256?: unknown } }).video?.sha256;
+  if (typeof videoSha === "string" && videoSha.length > 0) return `sha:${videoSha}`;
+  return `sequence:${turn.sequence}`;
 }
 
 function wait(delayMs: number, signal: AbortSignal): Promise<void> {

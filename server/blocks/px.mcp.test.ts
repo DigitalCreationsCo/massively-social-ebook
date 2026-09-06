@@ -306,8 +306,8 @@ describe("MCP diagnostics and deadlines", () => {
         options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
       }));
       const pending = enrich();
-      const assertion = expect(pending).rejects.toThrow("PX enrichment timeout (>45000ms)");
-      await vi.advanceTimersByTimeAsync(45_000);
+      const assertion = expect(pending).rejects.toThrow("PX enrichment timeout (>12000ms)");
+      await vi.advanceTimersByTimeAsync(12_000);
       await assertion;
       expect(mocks.close).toHaveBeenCalledOnce();
       expect(vi.getTimerCount()).toBe(0);

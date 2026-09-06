@@ -8,6 +8,33 @@ import type {
   NarrativeLore as BaseNarrativeLore,
 } from "@portalshq/narrativeengine";
 
+/**
+ * NarrativeEngine asks its four RAG read methods at once.  Letting every
+ * simultaneous block-generation fan out four pg requests was enough to
+ * exhaust the shared application pool during playback/session activity.
+ *
+ * Keep this deliberately small and module-wide: separate RagProvider
+ * instances must not each create their own burst.  This only serializes the
+ * short database portions of context retrieval; embedding work is unaffected.
+ */
+const RAG_DB_CONCURRENCY = 1;
+let activeRagDbQueries = 0;
+const ragDbWaiters: Array<() => void> = [];
+
+async function withRagDbSlot<T>(operation: () => Promise<T>): Promise<T> {
+  if (activeRagDbQueries >= RAG_DB_CONCURRENCY) {
+    await new Promise<void>((resolve) => ragDbWaiters.push(resolve));
+  }
+
+  activeRagDbQueries += 1;
+  try {
+    return await operation();
+  } finally {
+    activeRagDbQueries -= 1;
+    ragDbWaiters.shift()?.();
+  }
+}
+
 interface SqliteStatement {
   get(...parameters: unknown[]): unknown;
   all(...parameters: unknown[]): unknown[];
@@ -83,7 +110,7 @@ export class RagProvider
   private readonly useEmbeddings: boolean;
 
   constructor(private readonly options: RagProviderOptions = {}) {
-    // Default to true for backward compatibility
+    // Embeddings are opt-in: normal context retrieval stays entirely in Postgres.
     this.useEmbeddings = this.options.useEmbeddings === true;
   }
 
@@ -99,8 +126,10 @@ export class RagProvider
       return row.count;
     }
 
-    const { storage } = await import("../storage");
-    return await storage.getBlockCount(channelId);
+    return await withRagDbSlot(async () => {
+      const { storage } = await import("../storage");
+      return await storage.getBlockCount(channelId);
+    });
   }
 
   async getLoreAtoms(channelId: string): Promise<BaseNarrativeLore[]> {
@@ -127,12 +156,14 @@ export class RagProvider
       }));
     }
 
-    const { db } = await import("../db");
-    const result = await db
-      .select()
-      .from(lore)
-      .where(and(eq(lore.channelId, channelId), eq(lore.isActive, true)))
-      .orderBy(asc(lore.id));
+    const result = await withRagDbSlot(async () => {
+      const { db } = await import("../db");
+      return await db
+        .select()
+        .from(lore)
+        .where(and(eq(lore.channelId, channelId), eq(lore.isActive, true)))
+        .orderBy(asc(lore.id));
+    });
     return result.map(row => ({
       ...row,
       createdAt: row.createdAt ? new Date(row.createdAt) : null,
@@ -191,7 +222,7 @@ export class RagProvider
       const queryEmbedding = await generateEmbedding(query);
       const queryEmbeddingStr = JSON.stringify(queryEmbedding);
 
-      result = await db.execute(sql`
+      result = await withRagDbSlot(() => db.execute(sql`
             WITH
               channel_blocks AS (
                 SELECT
@@ -228,10 +259,10 @@ export class RagProvider
             FROM matched_blocks m, max_ts mt
             ORDER BY score_vector_dense DESC, score_keyword_sparse DESC
             LIMIT ${limit}
-          `);
+          `));
     } else {
       // When useEmbeddings is false, use only keyword search
-      result = await db.execute(sql`
+      result = await withRagDbSlot(() => db.execute(sql`
             WITH
               channel_blocks AS (
                 SELECT
@@ -267,7 +298,7 @@ export class RagProvider
             FROM matched_blocks m, max_ts mt
             ORDER BY score_keyword_sparse DESC
             LIMIT ${limit}
-          `);
+          `));
     }
 
     return (result.rows as any[]).map(row => ({
@@ -315,14 +346,14 @@ export class RagProvider
     }
 
     const { db } = await import("../db");
-    const result = await db.execute(sql`
+    const result = await withRagDbSlot(() => db.execute(sql`
       WITH numbered AS (
         SELECT b.*, ROW_NUMBER() OVER (ORDER BY b.id ASC) AS narrative_index
         FROM blocks b
         WHERE b.channel_id = ${channelId}
       )
       SELECT * FROM numbered WHERE is_notable = true ORDER BY narrative_index ASC
-    `);
+    `));
     return (result.rows as Array<Record<string, unknown>>).map((row) => ({
       id: Number(row.id),
       index: Number(row.narrative_index),
@@ -366,9 +397,9 @@ export class RagProvider
       }));
     }
 
-    const { db } = await import("../db");
     const requestedIndices = sql.join(indices.map((index) => sql`${index}`), sql`, `);
-    const result = await db.execute(sql`
+    const { db } = await import("../db");
+    const result = await withRagDbSlot(() => db.execute(sql`
       WITH numbered AS (
         SELECT b.*, ROW_NUMBER() OVER (ORDER BY b.id ASC) AS narrative_index
         FROM blocks b
@@ -376,7 +407,7 @@ export class RagProvider
       )
       SELECT * FROM numbered WHERE narrative_index IN (${requestedIndices})
       ORDER BY narrative_index ASC
-    `);
+    `));
     return (result.rows as Array<Record<string, unknown>>).map((row) => ({
       id: Number(row.id),
       index: Number(row.narrative_index),

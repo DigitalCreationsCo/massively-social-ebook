@@ -119,12 +119,54 @@ export class GCPStorageManager {
    * Generates a public HTTPS URL for an object.
    * * Logic: Normalizes the input and ensures the bucket name is prepended
    * to the path if it is missing.
+   * * NOTE: the URL form alone does not make the object readable — callers
+   * rely on {@link makePublicBestEffort} (or bucket-level public IAM) for
+   * that. A private object fetched over plain HTTPS fails with 403.
    * * @param pathOrUri - The GCS path, gs:// URI, or partial path.
-   * @returns A URL in the format https://storage.googleapis.com/[bucket]/[path]
+   * * @returns A URL in the format https://storage.googleapis.com/[bucket]/[path]
    */
   getPublicUrl(pathOrUri: string): string {
     const relativePath = this.getBucketRelativePath(pathOrUri);
     return `https://storage.googleapis.com/${this.bucketName}/${relativePath}`;
+  }
+
+  /**
+   * True when a public HTTPS URL addresses an object in this bucket, so an
+   * authenticated SDK read can substitute for an unauthenticated fetch
+   * (e.g. after a 403 on a persisted archive URL).
+   */
+  ownsPublicUrl(rawUrl: string): boolean {
+    let url: URL;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      return false;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    if (host === "storage.googleapis.com" || host === "storage.cloud.google.com") {
+      const segments = url.pathname.replace(/^\/+/, "").split("/");
+      return segments[0]?.toLowerCase() === this.bucketName.toLowerCase();
+    }
+    return host === `${this.bucketName.toLowerCase()}.storage.googleapis.com`;
+  }
+
+  /**
+   * Best-effort per-object public read. Uniform bucket-level access (or
+   * least-privilege credentials) rejects object ACLs — that is fine: the
+   * failure is swallowed and reads fall back to authenticated SDK access.
+   * Never throws.
+   */
+  private async makePublicBestEffort(relativePath: string): Promise<void> {
+    try {
+      await this.storage.bucket(this.bucketName).file(relativePath).makePublic();
+    } catch (error) {
+      console.debug(
+        `GCPStorageManager: leaving ${relativePath} private (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
   }
 
   /**
@@ -375,6 +417,7 @@ export class GCPStorageManager {
           cacheControl: "public, max-age=31536000",
         },
       });
+      await this.makePublicBestEffort(relativeDest);
       return this.getGcsUrl(normalizedDest);
     } catch (error: any) {
       console.error({ error, relativeDest }, `Failed buffer upload`);
@@ -499,6 +542,7 @@ export class GCPStorageManager {
         },
       );
     }
+    await this.makePublicBestEffort(destination);
 
     return { audioGcsUri: gcsUri, audioPublicUri: this.getPublicUrl(gcsUri) };
   }

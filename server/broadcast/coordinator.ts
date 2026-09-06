@@ -10,10 +10,13 @@ import type { Session } from "@shared/schema";
 import { logger } from "../logger";
 import { storage } from "../storage";
 import {
+  finishCanonicalSlot,
   hydrateCanonicalSlot,
   prepareAmbientSlots,
   prepareCanonicalSlot,
+  prepareCanonicalText,
   slotsFromBlock,
+  type CanonicalText,
   type PreparedAmbientTurn,
   type PreparedBroadcastSlot,
 } from "./media-slots";
@@ -79,6 +82,9 @@ export class BroadcastCoordinator {
   private lastError: string | undefined;
   private streamer: StreamerAvailabilityStatus = { state: "unknown" };
   private streamerFailureCount = 0;
+  private prefetchedCanonicalText:
+    | { sessionId: number; previousContext: string; promise: Promise<CanonicalText> }
+    | undefined;
 
   constructor(
     readonly channelId: string,
@@ -117,6 +123,7 @@ export class BroadcastCoordinator {
     this.hasStoredDesiredState = true;
     this.desiredState = "stopped";
     this.mode = "stopped";
+    this.prefetchedCanonicalText = undefined;
     await storage.setSystemSetting(this.desiredSettingKey(), "stopped");
     this.abortController?.abort(new Error("Broadcast stopped by operator"));
     await this.producerPromise?.catch(() => undefined);
@@ -130,6 +137,7 @@ export class BroadcastCoordinator {
     this.abortController?.abort(new Error(`Broadcast restarted by ${trigger}`));
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error(`Broadcast restarted by ${trigger}`));
+    this.prefetchedCanonicalText = undefined;
     this.hasStoredDesiredState = true;
     this.desiredState = "running";
     this.runId = generateUUID();
@@ -143,6 +151,7 @@ export class BroadcastCoordinator {
 
   /** Stop local work for process shutdown without changing the persisted desired state. */
   async shutdown(): Promise<void> {
+    this.prefetchedCanonicalText = undefined;
     this.abortController?.abort(new Error("Broadcast process shutting down"));
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error("Broadcast process shutting down"));
@@ -225,7 +234,7 @@ export class BroadcastCoordinator {
         if (preRollDue && scheduled) {
           this.mode = "preparing";
           this.sessionStatus = "preparing";
-          await this.ensureStagedSlots(scheduled, 2, signal);
+          await this.ensureStagedSlots(scheduled, 3, signal);
         }
 
         this.mode = "ambient";
@@ -277,25 +286,64 @@ export class BroadcastCoordinator {
     // Keeping the remaining segments locally means each one gets independent
     // staging, release, monitoring, and failure handling.
     const pendingSegments: PreparedAmbientTurn[] = [];
+    // Narrowed generation mutex: prepareChain is held only during the fast check
+    // and shift of pendingSegments or generationSequence reservation (< 1 microsecond).
+    // Media generation runs outside the lock so multiple ambient turns generate in parallel.
+    let prepareChain: Promise<void> = Promise.resolve();
+    // Commit chain: ensures completed turns append their segments to pendingSegments
+    // in strict generationSequence order, guaranteeing split-sibling contiguity.
+    let commitChain: Promise<void> = Promise.resolve();
     const pipeline = new AmbientPipeline({
       initialSequence: this.ambientSequence,
       generateTurn: async (sequence, workerSignal) => {
         await this.requireStreamerAvailable(workerSignal);
-        let next = pendingSegments.shift();
-        if (!next) {
-          const generationSequence = this.ambientSequence;
-          const turn = await prepareAmbientSlots(
-            this.channelId,
-            previousCanonicalContext,
-            this.runId!,
-            generationSequence,
-            workerSignal,
-          );
-          this.ambientSequence = generationSequence + 1;
-          if (!turn) return undefined;
-          pendingSegments.push(...this.splitAmbientTurn(turn));
+        let next: PreparedAmbientTurn | undefined;
+        let generationSequence: number | undefined;
+
+        const previous = prepareChain;
+        let release!: () => void;
+        prepareChain = new Promise<void>((resolve) => { release = resolve; });
+        await previous;
+        try {
+          workerSignal.throwIfAborted();
           next = pendingSegments.shift();
+          if (!next) {
+            generationSequence = this.ambientSequence++;
+          }
+        } finally {
+          release();
         }
+
+        if (next) return { ...next, sequence };
+
+        // Media preparation runs OUTSIDE prepareChain: multiple workers generate in parallel.
+        const turnPromise = prepareAmbientSlots(
+          this.channelId,
+          previousCanonicalContext,
+          this.runId!,
+          generationSequence!,
+          workerSignal,
+        );
+
+        const previousCommit = commitChain;
+        let commitRelease!: () => void;
+        commitChain = new Promise<void>((resolve) => { commitRelease = resolve; });
+
+        let turn: PreparedAmbientTurn | undefined;
+        try {
+          turn = await turnPromise;
+        } finally {
+          await previousCommit.catch(() => undefined);
+          try {
+            if (turn) {
+              pendingSegments.push(...this.splitAmbientTurn(turn));
+            }
+            next = pendingSegments.shift();
+          } finally {
+            commitRelease();
+          }
+        }
+
         return next ? { ...next, sequence } : undefined;
       },
       stageTurn: async (turn, workerSignal) => {
@@ -352,11 +400,17 @@ export class BroadcastCoordinator {
   private splitAmbientTurn(turn: PreparedAmbientTurn): PreparedAmbientTurn[] {
     return turn.segments.map((segment) => ({
       ...turn,
+      // Preserve contentId: split siblings share one visual identity so the
+      // buffer counts distinct images, not delivery slots. Byte accounting
+      // below stays per-slot (the Streamer stores a duplicate per slot).
+      contentId: turn.contentId,
       segments: [segment],
       totalDurationSeconds: segment.durationSeconds,
       // The same image is intentionally sent with each segment so the
       // Streamer can make an independent image+audio composition. Count its
       // bytes for every remote slot; it is not a shared remote upload.
+      // Video-safe: a future video turn would clone its own video bytes here
+      // the same way; imageDuration below never applies to video uploads.
       totalBytes: turn.image.data.size + (segment.audio?.data.size ?? 0),
     }));
   }
@@ -393,7 +447,11 @@ export class BroadcastCoordinator {
     this.sessionStatus = session.status === "active" ? "active" : "preparing";
     const cursorKey = this.cursorSettingKey(session.id);
     const cursor = Number(await storage.getSystemSetting(cursorKey) || 0);
-    await this.ensureStagedSlots(session, cursor + 2, signal);
+    // Keep 3 slots staged ahead so the next image is already queued when the
+    // current duration completes. Releases stay strictly serial (one playout
+    // at a time); staging runs ahead, and each cycle's top-up generation
+    // overlaps the current slot's playout instead of gating the next release.
+    await this.ensureStagedSlots(session, cursor + 3, signal);
     if (Date.now() >= session.scheduledEnd.getTime()) {
       await this.finishSession(session);
       return;
@@ -403,6 +461,16 @@ export class BroadcastCoordinator {
     const slots = blocks.flatMap((block) => block.deliverySegments?.length ? slotsFromBlock(block) : []);
     const slot = slots[cursor];
     if (!slot) return;
+
+    // Top up the NEXT slot concurrently while the current one plays: staging
+    // (text + image generation, the slow part) overlaps monitoring instead of
+    // serializing behind it. The promise is always awaited below before this
+    // method returns, so top-ups never overlap across loop iterations and the
+    // cursor still advances only after its own slot submitted cleanly.
+    // The side-attached catch prevents an unhandled rejection while submit
+    // runs; the later await rethrows so produce() still sees the failure.
+    const topUp = this.ensureStagedSlots(session, cursor + 4, signal);
+    topUp.catch(() => undefined);
 
     let markedActive = session.status === "active";
     try {
@@ -424,6 +492,7 @@ export class BroadcastCoordinator {
       );
     }
     await storage.setSystemSetting(cursorKey, String(cursor + 1));
+    await topUp;
     this.lastError = undefined;
   }
 
@@ -507,10 +576,55 @@ export class BroadcastCoordinator {
         ?? (await storage.getLastBlock(this.channelId))?.content
         ?? "";
       await this.requireStreamerAvailable(signal);
-      const prepared = await prepareCanonicalSlot(this.channelId, session, previousContext, signal);
+
+      // Pipelined text/finish + prefetch:
+      // Reuse prefetched text if it matches this session and previousContext;
+      // otherwise initiate text generation.
+      let textPromise: Promise<CanonicalText>;
+      if (
+        this.prefetchedCanonicalText
+        && this.prefetchedCanonicalText.sessionId === session.id
+        && this.prefetchedCanonicalText.previousContext === previousContext
+      ) {
+        textPromise = this.prefetchedCanonicalText.promise;
+        this.prefetchedCanonicalText = undefined;
+      } else {
+        this.prefetchedCanonicalText = undefined;
+        textPromise = prepareCanonicalText(this.channelId, previousContext, session.id, signal);
+      }
+
+      let generated: CanonicalText;
+      try {
+        generated = await textPromise;
+      } catch (cause) {
+        this.prefetchedCanonicalText = undefined;
+        throw cause;
+      }
+
+      if (!generated?.content) {
+        this.prefetchedCanonicalText = undefined;
+        await wait(2_000, signal);
+        return;
+      }
+
+      // Concurrently prefetch the NEXT turn's text while this turn's media,
+      // archives, DB insert, and slot staging run.
+      if (Date.now() < session.scheduledEnd.getTime()) {
+        const nextContext = generated.content;
+        const nextPromise = prepareCanonicalText(this.channelId, nextContext, session.id, signal);
+        nextPromise.catch(() => undefined);
+        this.prefetchedCanonicalText = {
+          sessionId: session.id,
+          previousContext: nextContext,
+          promise: nextPromise,
+        };
+      }
+
+      const prepared = await finishCanonicalSlot(this.channelId, session, generated, signal);
       // Generation failures are terminal for this turn, not the channel. Wait
       // before moving on so a persistent provider failure cannot busy-loop.
-      if (!prepared.block || prepared.slots.length === 0) {
+      if (!prepared?.block || prepared.slots.length === 0) {
+        this.prefetchedCanonicalText = undefined;
         await wait(2_000, signal);
         return;
       }
@@ -613,6 +727,7 @@ export class BroadcastCoordinator {
     this.activeSessionId = undefined;
     this.sessionStatus = "completed";
     this.mode = "ambient";
+    this.prefetchedCanonicalText = undefined;
   }
 
   private async submitSlot(
@@ -811,9 +926,19 @@ class StreamerUnavailableError extends Error {}
 class StreamerProbeError extends Error {}
 
 function safeImageDuration(durationSeconds: number): number {
-  const defaultDuration = 15;
-  const clamped = Math.max(1, Math.min(30, Math.ceil(durationSeconds)));
-  return Number.isFinite(durationSeconds) ? clamped : defaultDuration;
+  // Unified floor: max(config, audio). Short clips hold the image for the
+  // full floor; long narration is never truncated. Image-only: applies to
+  // `imageDuration` on image uploads exclusively — video uploads must omit
+  // `imageDuration` and retain their intrinsic duration.
+  const floor = broadcastImageFloor();
+  if (!Number.isFinite(durationSeconds)) return floor;
+  const clamped = Math.max(1, Math.min(30, Math.ceil(Math.max(floor, durationSeconds))));
+  return clamped;
+}
+
+function broadcastImageFloor(): number {
+  const configured = Number(process.env.BROADCAST_IMAGE_DURATION_SECONDS ?? 12);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 12;
 }
 
 function isRetryable(cause: unknown): boolean {

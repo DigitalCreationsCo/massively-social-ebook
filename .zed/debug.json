@@ -1,6 +1,6 @@
 [
   {
-    "label": "Debug TSX Server (watch)",
+    "label": "Debug TSX Server (watch + breakpoints)",
     "adapter": "JavaScript",
     "type": "node",
     "request": "launch",
@@ -8,26 +8,15 @@
     "args": ["watch", "-r", "dotenv/config", "server/index.ts"],
     "env": {
       "NODE_ENV": "development",
+      "DOTENV_CONFIG_PATH": ".env.local"
     },
     "sourceMaps": true,
     "skipFiles": ["<node_internals>/**"],
-  },
-  {
-    "label": "Debug TSX Server (breakpoints)",
-    "adapter": "JavaScript",
-    "type": "node",
-    "request": "launch",
-    "runtimeExecutable": "./node_modules/.bin/tsx",
-    "args": ["-r", "dotenv/config", "server/index.ts"],
-    "env": {
-      "NODE_ENV": "development",
-    },
-    "sourceMaps": true,
-    "skipFiles": ["<node_internals>/**"],
+    "restart": true
   },
   {
     "label": "Debug Current File (Javascript)",
-    "type": "pwa-node",
+    "type": "node",
     "adapter": "JavaScript",
     "request": "launch",
     "runtimeExecutable": "node",
@@ -36,7 +25,7 @@
     "skipFiles": ["<node_internals>/**"],
     "use_new_terminal": true,
     "envFile": "${workspaceFolder}/.env.local",
-    "cwd": "/Users/vibrantceo/Projects/massively-social-ebook",
-    "sourceMaps": true,
-  },
+    "cwd": "/Users/vibrantceo/Projects/portals/massively-social-ebook",
+    "sourceMaps": true
+  }
 ]

@@ -21,8 +21,8 @@ import { logger } from "../logger";
 
 export type { SelectedImageRepresentation };
 
-// Allow retrieval plus the bounded 45-second PX tool/model workflow.
-const TIMEOUT_CONTEXT_MS = 60_000;
+// Bounded context workflow: 12s cap, fallback to previousContext on timeout.
+const TIMEOUT_CONTEXT_MS = 12_000;
 
 // Canonical channel profiles included in every PX request.
 const channelRequiredEntities: Record<string, string[]> = {
@@ -48,7 +48,9 @@ const engine = new NarrativeEngine({
   }),
   config: {
     representationProperties: characterRepresentationProperties,
-    pxErrorPolicy: "fail"
+    // PX is complementary only: a NAP/MCP/LLM hiccup must degrade to a
+    // warning, never nuke the RAG chronologicalBlocks/lore already gathered.
+    pxErrorPolicy: "continue"
   }
  });
 
@@ -182,6 +184,9 @@ export async function generateStoryBlock(channelId: string, previousContext: str
   let enrichedContext = previousContext;
   let narrativeContext: unknown | undefined;
   let imageRepresentations: SelectedImageRepresentation[] | undefined;
+  // Diagnosability: persisted into the prompt log so a cold start that fell
+  // back can be told apart from a healthy-but-empty enrichment.
+  let contextFailure: ContextFailure | undefined;
 
   try {
     const resolved = await generateContextWithTimeout(channelId, previousContext);
@@ -189,13 +194,42 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     narrativeContext = resolved.narrativeContext;
     imageRepresentations = resolved.imageRepresentations;
   } catch (err) {
-    console.warn("[NLP] Circuit breaker triggered, falling back to immediate context:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.warn("[NLP] Circuit breaker triggered, falling back to immediate context", "blocks", error, {
+      channelId,
+      sessionId,
+    });
+    contextFailure = {
+      reason: "backend_error",
+      name: error.name,
+      message: error.message.slice(0, 500),
+    };
     enrichedContext = previousContext;
     narrativeContext = undefined;
     imageRepresentations = undefined;
   }
 
   // const  = createNextNarrativeIncrementPrompt({ })
+  return buildBlockFromContext(channelId, previousContext, enrichedContext, narrativeContext, imageRepresentations, isResolving, sessionId, contextFailure);
+}
+
+/** Why the prompt fell back to immediate context (persisted in the prompt log). */
+export interface ContextFailure {
+  reason: "backend_error";
+  name?: string;
+  message?: string;
+}
+
+async function buildBlockFromContext(
+  channelId: string,
+  previousContext: string,
+  enrichedContext: string,
+  narrativeContext: unknown | undefined,
+  imageRepresentations: SelectedImageRepresentation[] | undefined,
+  isResolving: boolean,
+  sessionId?: number,
+  contextFailure?: ContextFailure,
+): Promise<StoryBlockResult> {
   const contextPrompt = createStoryBlockContextPrompt({
     previousBlock: previousContext,
     ragContext: enrichedContext !== previousContext ? enrichedContext : undefined,
@@ -261,29 +295,35 @@ export async function generateStoryBlock(channelId: string, previousContext: str
     result.selectedImageRepresentations = imageRepresentations;
   }
 
-  try {
-    const dateStr = new Date().toISOString().split('T')[0];
-    const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
-    const sessionStr = sessionId ? `${sessionId}` : 'unknown';
-    const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelId, dateStr);
-    await fs.mkdir(logDir, { recursive: true });
+  // Fire-and-forget: never block generation on prompt logging.
+  void (async () => {
+    try {
+      const dateStr = new Date().toISOString().split('T')[0];
+      const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
+      const sessionStr = sessionId ? `${sessionId}` : 'unknown';
+      const logDir = path.join(process.cwd(), 'logs', 'prompts', sessionStr, channelId, dateStr);
+      await fs.mkdir(logDir, { recursive: true });
 
-    const logFile = path.join(logDir, `prompt_${timestampStr}.json`);
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      sessionId,
-      channelId,
-      isResolving,
-      previousContext,
-      enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
-      systemInstructions,
-      prompt: contextPrompt,
-      response: result
-    };
-    await fs.writeFile(logFile, JSON.stringify(logEntry, null, 2) + '\n');
-  } catch (err) {
-    console.error('Failed to log storyblock prompt:', err);
-  }
+      const logFile = path.join(logDir, `prompt_${timestampStr}.json`);
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        sessionId,
+        channelId,
+        isResolving,
+        previousContext,
+        enrichedContext: enrichedContext !== previousContext ? enrichedContext : undefined,
+        // Present only when enrichment fell back: distinguishes a backend
+        // failure from a healthy-but-empty enrichment.
+        ...(contextFailure ? { contextFailure } : {}),
+        systemInstructions,
+        prompt: contextPrompt,
+        response: result
+      };
+      await fs.writeFile(logFile, JSON.stringify(logEntry, null, 2) + '\n');
+    } catch (err) {
+      console.error('Failed to log storyblock prompt:', err);
+    }
+  })();
 
   return result;
 }

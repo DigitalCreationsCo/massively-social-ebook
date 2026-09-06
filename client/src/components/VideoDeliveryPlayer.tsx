@@ -37,6 +37,27 @@ export function VideoDeliveryPlayer({
   const [areControlsVisible, setAreControlsVisible] = useState(true);
   const controlsFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyticsSessionIdRef = useRef<string | null>(null);
+  // Last decoded frame, shown as a poster overlay while the stream stalls
+  // or reconnects so the previous image holds indefinitely instead of black.
+  const [heldFrame, setHeldFrame] = useState<string | null>(null);
+  const mediaErrorRecoveryRef = useRef(false);
+
+  const captureHeldFrame = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) return;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      setHeldFrame(canvas.toDataURL("image/jpeg", 0.7));
+    } catch {
+      // Cross-origin segments taint the canvas; fall back to holding the
+      // live <video> element itself (don't destroy src) instead of a snapshot.
+    }
+  }, []);
 
   // Detect media type from URL
   const mediaType = manifestUrl?.endsWith('.m3u8') ? 'hls' : 
@@ -67,6 +88,8 @@ export function VideoDeliveryPlayer({
     try {
       await video.play();
       setPlayerState("playing");
+      setHeldFrame(null);
+      mediaErrorRecoveryRef.current = false;
       mediaAnalytics.trackPlay(video.currentTime);
       if (stabilityTimerRef.current) clearTimeout(stabilityTimerRef.current);
       stabilityTimerRef.current = setTimeout(() => {
@@ -95,7 +118,7 @@ export function VideoDeliveryPlayer({
     video.muted = true;
     video.playsInline = true;
     const startPlayback = () => { if (!disposed) void attemptPlayback(); };
-    const handleNativeError = () => { if (!disposed) scheduleReconnect(); };
+    const handleNativeError = () => { if (!disposed) { captureHeldFrame(); scheduleReconnect(); } };
 
     if (canPlayNativeHls(video)) {
       video.src = manifestUrl;
@@ -103,11 +126,35 @@ export function VideoDeliveryPlayer({
       video.addEventListener("error", handleNativeError);
       video.load();
     } else if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, liveSyncDurationCount: 3, maxLiveSyncPlaybackRate: 1.25 });
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        liveSyncDurationCount: 5,
+        maxLiveSyncPlaybackRate: 1.25,
+        maxBufferLength: 30,
+        liveMaxLatencyDurationCount: 10,
+        manifestLoadingMaxRetry: 3,
+        levelLoadingMaxRetry: 3,
+        fragLoadingMaxRetry: 4,
+      });
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal || disposed) return;
+        if (disposed) return;
+        // Transient stalls/retries are handled internally by hls.js —
+        // hold the last frame and let it recover without tearing down.
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaErrorRecoveryRef.current) {
+          mediaErrorRecoveryRef.current = true;
+          captureHeldFrame();
+          try {
+            hls.recoverMediaError();
+            return;
+          } catch {
+            // fall through to reconnect
+          }
+        }
+        captureHeldFrame();
         scheduleReconnect();
       });
       hls.loadSource(manifestUrl);
@@ -123,6 +170,8 @@ export function VideoDeliveryPlayer({
 
     return () => {
       disposed = true;
+      // Snapshot before teardown so the reconnect still shows the last image.
+      captureHeldFrame();
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -133,6 +182,8 @@ export function VideoDeliveryPlayer({
       }
       video.removeEventListener("canplay", startPlayback);
       video.removeEventListener("error", handleNativeError);
+      // Only fully unload when the manifest itself changed or unmounting —
+      // reconnect retries (sourceVersion bumps) reuse the same element.
       video.pause();
       video.removeAttribute("src");
       video.load();
@@ -145,7 +196,7 @@ export function VideoDeliveryPlayer({
         analyticsSessionIdRef.current = null;
       }
     };
-  }, [attemptPlayback, manifestUrl, scheduleReconnect, sourceVersion, channelId, mediaType]);
+  }, [attemptPlayback, manifestUrl, scheduleReconnect, sourceVersion, channelId, mediaType, captureHeldFrame]);
 
   const handlePlaybackToggle = async (event?: MouseEvent<HTMLButtonElement>) => {
     event?.stopPropagation();
@@ -253,6 +304,7 @@ export function VideoDeliveryPlayer({
       onFocus={handleContainerFocus}
     >
       {!isUnavailable && (
+        <>
         <video 
           ref={videoRef} 
           muted 
@@ -262,6 +314,7 @@ export function VideoDeliveryPlayer({
           aria-label="Media player video" 
           onPlay={() => {
             setPlayerState("playing");
+            setHeldFrame(null);
             mediaAnalytics.trackPlay(videoRef.current?.currentTime);
           }} 
           onPause={() => {
@@ -278,16 +331,29 @@ export function VideoDeliveryPlayer({
             }
           }}
           onError={() => {
+            captureHeldFrame();
             mediaAnalytics.trackError("Video playback error");
             scheduleReconnect();
           }}
           onWaiting={() => {
+            captureHeldFrame();
             mediaAnalytics.trackBufferStart();
           }}
           onPlaying={() => {
+            setHeldFrame(null);
             mediaAnalytics.trackBufferEnd();
           }}
         />
+        {heldFrame && isBusy && (
+          <img
+            src={heldFrame}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 size-full object-cover"
+            draggable={false}
+          />
+        )}
+        </>
       )}
 
       {isUnavailable ? (

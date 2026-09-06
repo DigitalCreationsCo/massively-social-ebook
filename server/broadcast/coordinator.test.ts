@@ -16,6 +16,8 @@ const mediaMock = vi.hoisted(() => ({
   hydrateCanonicalSlot: vi.fn(),
   prepareAmbientSlots: vi.fn(),
   prepareCanonicalSlot: vi.fn(),
+  prepareCanonicalText: vi.fn(),
+  finishCanonicalSlot: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
@@ -41,9 +43,10 @@ function ambientTurn(sequence: number) {
   return {
     sequence,
     idempotencyPrefix: `channel:main:run:test:sequence:${sequence}`,
+    contentId: `channel:main:run:test:sequence:${sequence}`,
     image,
-    segments: [{ segmentOrdinal: 0, durationSeconds: 10 }],
-    totalDurationSeconds: 10,
+    segments: [{ segmentOrdinal: 0, durationSeconds: 12 }],
+    totalDurationSeconds: 12,
     totalBytes: image.data.size,
   };
 }
@@ -96,7 +99,7 @@ describe("BroadcastCoordinator", () => {
     expect(client.watchJob).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the next ambient slot local while an earlier slot is playing", async () => {
+  it("buffers ambient slots up to the buffer depth while earlier slots play", async () => {
     storageMock.setSystemSetting.mockResolvedValue(undefined);
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
@@ -115,14 +118,16 @@ describe("BroadcastCoordinator", () => {
     const coordinator = new BroadcastCoordinator("main", client as any);
 
     await coordinator.restart();
-    await flushMicrotasks(80);
+    await flushMicrotasks(120);
 
-    expect(client.releaseSlot).toHaveBeenCalledOnce();
-    expect(client.watchJob).toHaveBeenCalledOnce();
+    // The next images queue immediately when ready — one still playing must
+    // not hold back the buffer. Black only appears if the connection breaks.
+    expect(client.releaseSlot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(client.watchJob.mock.calls.length).toBeGreaterThanOrEqual(2);
     await coordinator.stop();
   });
 
-  it("releases split ambient narration one segment at a time", async () => {
+  it("queues split ambient narration segments back-to-back", async () => {
     const firstSegmentFinished = deferred<void>();
     storageMock.setSystemSetting.mockResolvedValue(undefined);
     storageMock.getNextSession.mockResolvedValue(undefined);
@@ -132,10 +137,10 @@ describe("BroadcastCoordinator", () => {
       .mockResolvedValueOnce({
         ...ambientTurn(0),
         segments: [
-          { segmentOrdinal: 0, durationSeconds: 10 },
-          { segmentOrdinal: 1, durationSeconds: 8 },
+          { segmentOrdinal: 0, durationSeconds: 12 },
+          { segmentOrdinal: 1, durationSeconds: 12 },
         ],
-        totalDurationSeconds: 18,
+        totalDurationSeconds: 24,
       })
       // Keep the test bounded after the two segments under test. Real ambient
       // generation is expensive and therefore cannot resolve in this loop.
@@ -156,21 +161,70 @@ describe("BroadcastCoordinator", () => {
     const coordinator = new BroadcastCoordinator("main", client as any);
 
     await coordinator.restart();
-    await flushMicrotasks(80);
-    expect(client.releaseSlot).toHaveBeenCalledTimes(1);
-    expect(client.releaseSlot).toHaveBeenLastCalledWith(
+    await flushMicrotasks(120);
+    // Both segments queue immediately when ready — the second never waits for
+    // the first duration to complete. The Streamer plays them back-to-back,
+    // each for its own duration.
+    expect(client.releaseSlot).toHaveBeenCalledTimes(2);
+    expect(client.releaseSlot).toHaveBeenNthCalledWith(
+      1,
       "channel:main:run:test:sequence:0:segment:0:slot",
+      expect.anything(),
+    );
+    expect(client.releaseSlot).toHaveBeenNthCalledWith(
+      2,
+      "channel:main:run:test:sequence:0:segment:1:slot",
       expect.anything(),
     );
 
     firstSegmentFinished.resolve();
     await flushMicrotasks(120);
-    expect(client.releaseSlot).toHaveBeenCalledTimes(2);
-    expect(client.releaseSlot).toHaveBeenLastCalledWith(
-      "channel:main:run:test:sequence:0:segment:1:slot",
-      expect.anything(),
-    );
     await coordinator.stop();
+  });
+
+  it("holds a short narration image for the unified floor, never the TTS length", async () => {
+    const shortSlot = { ...slot, durationSeconds: 5 };
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async () => ({ jobs: [job("image-job", "done"), job("audio-job", "done")] })),
+      watchJob: vi.fn(async function* (jobId: string) { yield job(jobId, "done"); }),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    await (coordinator as any).submitSlot(shortSlot, new AbortController().signal);
+
+    // 5s of audio still stages a 12s image; video uploads (when present)
+    // never receive imageDuration — equal citizenship, no override.
+    expect(client.stageUpload).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      mediaType: "image",
+      imageDuration: 12,
+    }));
+    const audioCall = client.stageUpload.mock.calls.find((call) => (call[0] as any).mediaType === "audio");
+    expect((audioCall?.[0] as any).imageDuration).toBeUndefined();
+  });
+
+  it("preserves split siblings under one visual identity for distinct-image buffering", async () => {
+    const coordinator = new BroadcastCoordinator("main", {} as any);
+    const sharedImage = { data: new Blob(["image"]), filename: "scene.jpg", sha256: "a".repeat(64) };
+    const split = (coordinator as any).splitAmbientTurn({
+      sequence: 0,
+      idempotencyPrefix: "channel:main:run:test:sequence:0",
+      contentId: "channel:main:run:test:sequence:0",
+      image: sharedImage,
+      segments: [
+        { segmentOrdinal: 0, durationSeconds: 12 },
+        { segmentOrdinal: 1, durationSeconds: 12 },
+      ],
+      totalDurationSeconds: 24,
+      totalBytes: 10,
+    });
+
+    expect(split).toHaveLength(2);
+    expect(split[0].contentId).toBe("channel:main:run:test:sequence:0");
+    expect(split[1].contentId).toBe("channel:main:run:test:sequence:0");
+    expect(split[0].segments).toHaveLength(1);
   });
 
   it("releases a staged image when its optional audio upload fails", async () => {
@@ -226,7 +280,9 @@ describe("BroadcastCoordinator", () => {
   it("advances the persisted canonical cursor after a terminal slot failure", async () => {
     const firstSlot = { ...slot, imageJobId: "image-job", audioJobId: "audio-job" };
     const secondSlot = { ...slot, idempotencyPrefix: slot.idempotencyPrefix.replace(/:0$/, ":1"), slotKey: `${slot.slotKey}:next`, segmentOrdinal: 1, imageJobId: "image-job-2", audioJobId: "audio-job-2" };
-    const block = { id: 8, deliverySegments: [{ audioUrl: "https://assets.example/one.wav" }, { audioUrl: "https://assets.example/two.wav" }] };
+    // Three staged segments keep ensureStagedSlots (cursor + 3 lookahead)
+    // satisfied without invoking generation in this test.
+    const block = { id: 8, deliverySegments: [{ audioUrl: "https://assets.example/one.wav" }, { audioUrl: "https://assets.example/two.wav" }, { audioUrl: "https://assets.example/three.wav" }] };
     storageMock.getSystemSetting.mockResolvedValue("0");
     storageMock.getBlocksBySessionOrdered.mockResolvedValue([block]);
     mediaMock.slotsFromBlock.mockReturnValue([firstSlot, secondSlot]);
@@ -274,6 +330,8 @@ describe("BroadcastCoordinator", () => {
     expect(client.getPlayback).not.toHaveBeenCalled();
     expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
     expect(mediaMock.prepareCanonicalSlot).not.toHaveBeenCalled();
+    expect(mediaMock.prepareCanonicalText).not.toHaveBeenCalled();
+    expect(mediaMock.finishCanonicalSlot).not.toHaveBeenCalled();
     expect(mediaMock.hydrateCanonicalSlot).not.toHaveBeenCalled();
     expect(client.stageUpload).not.toHaveBeenCalled();
     expect(client.releaseSlot).not.toHaveBeenCalled();
@@ -375,6 +433,8 @@ describe("BroadcastCoordinator", () => {
       expect.anything(),
     );
     expect(mediaMock.prepareCanonicalSlot).not.toHaveBeenCalled();
+    expect(mediaMock.prepareCanonicalText).not.toHaveBeenCalled();
+    expect(mediaMock.finishCanonicalSlot).not.toHaveBeenCalled();
     expect(client.stageUpload).not.toHaveBeenCalled();
 
     controller.abort(new Error("test complete"));
@@ -509,8 +569,10 @@ describe("BroadcastCoordinator", () => {
     await flushMicrotasks();
     await producing;
 
-    expect(client.health).toHaveBeenCalledTimes(3);
-    expect(client.getPlayback).toHaveBeenCalledTimes(2);
+    expect(client.health).toHaveBeenCalledTimes(4);
+    expect(client.getPlayback).toHaveBeenCalledTimes(3);
+    // Both generators probe, but the first preparation aborts the run before
+    // the second can start generating — a single producer, no duplicate work.
     expect(mediaMock.prepareAmbientSlots).toHaveBeenCalledOnce();
     expect(coordinator.getStatus().streamer.state).toBe("available");
   });
@@ -541,5 +603,261 @@ describe("BroadcastCoordinator", () => {
     expect(coordinator.getStatus().streamer.state).toBe("unavailable");
     // Verify that the mode changed to waiting_for_streamer
     expect(coordinator.getStatus().mode).toBe("waiting_for_streamer");
+  });
+
+  it("pipelines canonical text/finish and prefetches subsequent block text during current block staging", async () => {
+    const session = {
+      id: 9,
+      channelId: "main",
+      scheduledEnd: new Date(Date.now() + 60_000),
+      status: "preparing",
+    };
+    storageMock.getBlocksBySessionOrdered.mockResolvedValue([]);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+
+    const text2Deferred = deferred<any>();
+    const finish1Deferred = deferred<any>();
+    let finish1Pending = false;
+    let finish1Resolved = false;
+    let prefetchStartedBeforeFinish1Resolved = false;
+    const textCalls: string[] = [];
+
+    mediaMock.prepareCanonicalText.mockImplementation(async (_channelId: string, context: string) => {
+      textCalls.push(context);
+      if (context === "") return { content: "Text block 1", title: "Block 1" };
+      if (context === "Text block 1") {
+        if (!finish1Resolved) prefetchStartedBeforeFinish1Resolved = true;
+        return await text2Deferred.promise;
+      }
+      return { content: `Text for ${context}`, title: "Extra" };
+    });
+
+    mediaMock.finishCanonicalSlot.mockImplementation(async (_channelId: string, _session: any, generated: any) => {
+      if (generated.title === "Block 1") {
+        finish1Pending = true;
+        const result = await finish1Deferred.promise;
+        finish1Pending = false;
+        finish1Resolved = true;
+        return result;
+      }
+      return {
+        block: { id: 2, content: generated.content, deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
+        slots: [{
+          durationSeconds: 15,
+          idempotencyPrefix: "channel:main:session:9:block:2:segment:0",
+          slotKey: "channel:main:session:9:block:2:segment:0:slot",
+          segmentOrdinal: 0,
+        }],
+      };
+    });
+
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => ({ jobs: [job(`image-${slotKey}`, "queued")] })),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    (coordinator as any).streamer = { state: "available" };
+
+    const stagingPromise = (coordinator as any).ensureStagedSlots(session, 2, new AbortController().signal);
+
+    await flushMicrotasks(30);
+
+    // Concurrency invariant: Block 1 finish and Block 2 prefetch are simultaneously in flight
+    expect(finish1Pending).toBe(true);
+    expect(prefetchStartedBeforeFinish1Resolved).toBe(true);
+    expect(textCalls).toEqual(["", "Text block 1"]);
+
+    // Resolve prefetch for Block 2 while Block 1 finish is STILL pending
+    text2Deferred.resolve({ content: "Text block 2", title: "Block 2" });
+    await flushMicrotasks(20);
+    expect(finish1Pending).toBe(true);
+
+    // Now resolve Block 1 finish
+    finish1Deferred.resolve({
+      block: { id: 1, content: "Text block 1", deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
+      slots: [{
+        durationSeconds: 15,
+        idempotencyPrefix: "channel:main:session:9:block:1:segment:0",
+        slotKey: "channel:main:session:9:block:1:segment:0:slot",
+        segmentOrdinal: 0,
+      }],
+    });
+
+    await stagingPromise;
+
+    // Invariant: Block 2 consumed the in-flight prefetch without duplicate text calls,
+    // and spawned background prefetch for Block 3
+    expect(textCalls).toEqual(["", "Text block 1", "Text block 2"]);
+    expect(mediaMock.finishCanonicalSlot).toHaveBeenCalledTimes(2);
+  });
+
+  it("parallelizes ambient prep across workers with narrowed mutex while preserving split-sibling contiguity", async () => {
+    let activeGenerations = 0;
+    let maxConcurrentGenerations = 0;
+    const gen0Deferred = deferred<any>();
+    const gen1Deferred = deferred<any>();
+    const releasedSlots: string[] = [];
+
+    storageMock.setSystemSetting.mockResolvedValue(undefined);
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+
+    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => {
+      activeGenerations += 1;
+      maxConcurrentGenerations = Math.max(maxConcurrentGenerations, activeGenerations);
+      try {
+        if (sequence === 0) {
+          return await gen0Deferred.promise;
+        }
+        if (sequence === 1) {
+          return await gen1Deferred.promise;
+        }
+        return undefined;
+      } finally {
+        activeGenerations -= 1;
+      }
+    });
+
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => {
+        releasedSlots.push(slotKey);
+        return { jobs: [job(`job-${slotKey}`, "done")] };
+      }),
+      watchJob: vi.fn(async function* (jobId: string) {
+        yield job(jobId, "done");
+      }),
+    };
+
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    await coordinator.restart();
+    await flushMicrotasks(60);
+
+    // Both workers should be generating in flight concurrently!
+    expect(maxConcurrentGenerations).toBe(2);
+
+    // Resolve gen 0 with split turn (2 segments)
+    gen0Deferred.resolve({
+      ...ambientTurn(0),
+      segments: [
+        { segmentOrdinal: 0, durationSeconds: 12 },
+        { segmentOrdinal: 1, durationSeconds: 12 },
+      ],
+      totalDurationSeconds: 24,
+    });
+
+    // Resolve gen 1 with 1 segment
+    gen1Deferred.resolve(ambientTurn(1));
+
+    await flushMicrotasks(120);
+
+    // Verify split sibling segments released contiguously first, followed by gen 1
+    expect(releasedSlots[0]).toContain("sequence:0:segment:0");
+    expect(releasedSlots[1]).toContain("sequence:0:segment:1");
+    expect(releasedSlots[2]).toContain("sequence:1:segment:0");
+
+    await coordinator.stop();
+  });
+
+  it("discards prefetched text when previousContext diverges and generates fresh text", async () => {
+    const session = {
+      id: 9,
+      channelId: "main",
+      scheduledEnd: new Date(Date.now() + 60_000),
+      status: "preparing",
+    };
+    storageMock.getBlocksBySessionOrdered.mockResolvedValue([]);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => ({ jobs: [job(`image-${slotKey}`, "queued")] })),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    (coordinator as any).streamer = { state: "available" };
+
+    // Prime coordinator with stale prefetched text for a divergent context
+    (coordinator as any).prefetchedCanonicalText = {
+      sessionId: 9,
+      previousContext: "stale-divergent-context",
+      promise: Promise.resolve({ content: "stale text", title: "Stale" }),
+    };
+
+    mediaMock.prepareCanonicalText.mockResolvedValue({ content: "fresh text", title: "Fresh" });
+    mediaMock.finishCanonicalSlot.mockResolvedValue({
+      block: { id: 1, content: "fresh text", deliverySegments: [{ ordinal: 0, durationSeconds: 15 }] },
+      slots: [{
+        durationSeconds: 15,
+        idempotencyPrefix: "channel:main:session:9:block:1:segment:0",
+        slotKey: "channel:main:session:9:block:1:segment:0:slot",
+        segmentOrdinal: 0,
+      }],
+    });
+
+    // Actual context from storage is "" (differs from "stale-divergent-context")
+    await (coordinator as any).ensureStagedSlots(session, 1, new AbortController().signal);
+
+    // Verifies stale prefetch was discarded and fresh text was generated with current context
+    expect(mediaMock.prepareCanonicalText).toHaveBeenCalledWith("main", "", 9, expect.anything());
+    expect(mediaMock.finishCanonicalSlot).toHaveBeenCalledWith(
+      "main",
+      session,
+      expect.objectContaining({ title: "Fresh", content: "fresh text" }),
+      expect.anything(),
+    );
+  });
+
+  it("does not deadlock the ambient commit chain when an earlier concurrent worker fails", async () => {
+    const gen0Deferred = deferred<any>();
+    const gen1Deferred = deferred<any>();
+    const releasedSlots: string[] = [];
+
+    storageMock.setSystemSetting.mockResolvedValue(undefined);
+    storageMock.getNextSession.mockResolvedValue(undefined);
+    storageMock.getActiveSession.mockResolvedValue(undefined);
+    storageMock.getLastBlock.mockResolvedValue(undefined);
+
+    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => {
+      if (sequence === 0) return await gen0Deferred.promise;
+      if (sequence === 1) return await gen1Deferred.promise;
+      return undefined;
+    });
+
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async (slotKey: string) => {
+        releasedSlots.push(slotKey);
+        return { jobs: [job(`job-${slotKey}`, "done")] };
+      }),
+      watchJob: vi.fn(async function* (jobId: string) {
+        yield job(jobId, "done");
+      }),
+    };
+
+    const coordinator = new BroadcastCoordinator("main", client as any);
+    await coordinator.restart();
+    await flushMicrotasks(60);
+
+    // Worker 0 fails/returns undefined (e.g. image provider failure)
+    gen0Deferred.resolve(undefined);
+    // Worker 1 succeeds concurrently
+    gen1Deferred.resolve(ambientTurn(1));
+
+    await flushMicrotasks(120);
+
+    // Worker 1 must not hang behind Worker 0's failure; its slot must be released
+    expect(releasedSlots.length).toBeGreaterThanOrEqual(1);
+    expect(releasedSlots[0]).toContain("sequence:1:segment:0");
+
+    await coordinator.stop();
   });
 });

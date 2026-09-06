@@ -7,11 +7,17 @@ function turn(sequence: number, durationSeconds = 10) {
   return {
     sequence,
     idempotencyPrefix: `channel:main:run:test:sequence:${sequence}`,
+    contentId: `channel:main:run:test:sequence:${sequence}`,
     image,
     segments: [{ segmentOrdinal: 0, durationSeconds }],
     totalDurationSeconds: durationSeconds,
     totalBytes: image.data.size,
   };
+}
+
+/** Split siblings share one visual identity despite distinct slot sequences. */
+function splitSibling(sequence: number, contentId: string, durationSeconds = 10) {
+  return { ...turn(sequence, durationSeconds), contentId };
 }
 
 function job(id: string) {
@@ -50,6 +56,7 @@ describe("AmbientPipeline", () => {
       onMetrics: (item) => metrics.push(item),
       maxReadySeconds: 20,
       maxInFlightGeneration: 2,
+      maxBufferedSlots: 1,
     });
     const controller = new AbortController();
     pipeline.start(controller.signal);
@@ -61,8 +68,9 @@ describe("AmbientPipeline", () => {
 
     pending.get(0)!.resolve(turn(0));
     await flush();
-    // Only one remote slot is staged at a time.  Later generation can remain
-    // in memory, but it must not reserve remote queue capacity early.
+    // With a buffer depth of one, only one remote slot is staged at a time.
+    // Later generation can remain in memory, but it must not reserve remote
+    // queue capacity early.
     expect(staged).toEqual([0]);
 
     await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
@@ -103,7 +111,7 @@ describe("AmbientPipeline", () => {
     await pipeline.abortAndAwaitAll();
   });
 
-  it("does not release a later slot while the prior slot is still being monitored", async () => {
+  it("does not release beyond the buffer depth while prior slots are still monitored", async () => {
     const monitoring = deferred<void>();
     const released: number[] = [];
     const pipeline = new AmbientPipeline({
@@ -120,6 +128,7 @@ describe("AmbientPipeline", () => {
       onMetrics: vi.fn(),
       maxReadySeconds: 30,
       maxInFlightGeneration: 1,
+      maxBufferedSlots: 1,
     });
     const controller = new AbortController();
     pipeline.start(controller.signal);
@@ -131,6 +140,125 @@ describe("AmbientPipeline", () => {
 
     monitoring.resolve();
     await flush();
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
+    expect(released).toEqual([0, 1]);
+    await pipeline.abortAndAwaitAll();
+  });
+
+  it("releases up to the buffer depth while prior slots are still monitored", async () => {
+    const monitoring = deferred<void>();
+    const released: number[] = [];
+    const pipeline = new AmbientPipeline({
+      initialSequence: 0,
+      generateTurn: async (sequence) => sequence < 3 ? turn(sequence) : undefined,
+      stageTurn: async () => undefined,
+      releaseTurn: async (item) => {
+        released.push(item.sequence);
+        return [job(`image-${item.sequence}`)];
+      },
+      monitorJobs: async () => monitoring.promise,
+      onError: vi.fn(),
+      onActiveJobsChanged: vi.fn(),
+      onMetrics: vi.fn(),
+      maxReadySeconds: 60,
+      maxInFlightGeneration: 2,
+      maxBufferedSlots: 3,
+    });
+    const controller = new AbortController();
+    pipeline.start(controller.signal);
+    await flush();
+
+    // All three images queue immediately when ready — queue time never eats
+    // into per-image playback duration. The fourth release pends: buffer full.
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 2 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toEqual({ state: "pending" });
+    expect(released).toEqual([0, 1, 2]);
+
+    monitoring.resolve();
+    await flush();
+    await pipeline.abortAndAwaitAll();
+  });
+
+  it("counts split siblings sharing one visual as a single buffered slot", async () => {
+    const released: number[] = [];
+    const staged: number[] = [];
+    const pipeline = new AmbientPipeline({
+      initialSequence: 0,
+      // Sequences 0-2 share image A (one 3-segment split); 3 is image B.
+      // Slot-counting would fill a depth-2 buffer with A0+A1 and starve B.
+      generateTurn: async (sequence) => {
+        if (sequence === 0 || sequence === 1 || sequence === 2) return splitSibling(sequence, "gen-A");
+        if (sequence === 3) return splitSibling(sequence, "gen-B");
+        return undefined;
+      },
+      stageTurn: async (item) => { staged.push(item.sequence); },
+      releaseTurn: async (item) => {
+        released.push(item.sequence);
+        return [job(`image-${item.sequence}`)];
+      },
+      monitorJobs: async () => undefined,
+      onError: vi.fn(),
+      onActiveJobsChanged: vi.fn(),
+      onMetrics: vi.fn(),
+      maxReadySeconds: 60,
+      maxInFlightGeneration: 2,
+      maxBufferedSlots: 2,
+    });
+    const controller = new AbortController();
+    pipeline.start(controller.signal);
+    await flush();
+
+    // All three A slots stage despite depth 2 — they are one distinct visual.
+    // B (the next distinct image) stages too instead of starving.
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 2 });
+    expect(staged).toEqual(expect.arrayContaining([0, 1, 2]));
+    expect(released).toEqual([0, 1, 2]);
+    await pipeline.abortAndAwaitAll();
+  });
+
+  it("treats a future video turn as one distinct visual like an image turn", async () => {
+    const released: number[] = [];
+    const pipeline = new AmbientPipeline({
+      initialSequence: 0,
+      generateTurn: async (sequence) => {
+        if (sequence === 0) return turn(0);
+        if (sequence === 1) {
+          // Video primitive with equal citizenship: own contentId, no imageDuration override.
+          return {
+            sequence: 1,
+            idempotencyPrefix: "channel:main:run:test:sequence:1",
+            contentId: "channel:main:run:test:sequence:1",
+            image: { data: new Blob(["poster"]), filename: "poster-1.jpg", sha256: "c".repeat(64) },
+            video: { data: new Blob(["video"]), filename: "clip-1.mp4", sha256: "d".repeat(64) },
+            segments: [{ segmentOrdinal: 0, durationSeconds: 12 }],
+            totalDurationSeconds: 12,
+            totalBytes: 12,
+          };
+        }
+        return undefined;
+      },
+      stageTurn: async () => undefined,
+      releaseTurn: async (item) => {
+        released.push(item.sequence);
+        return [job(`image-${item.sequence}`)];
+      },
+      monitorJobs: async () => undefined,
+      onError: vi.fn(),
+      onActiveJobsChanged: vi.fn(),
+      onMetrics: vi.fn(),
+      maxReadySeconds: 60,
+      maxInFlightGeneration: 2,
+      maxBufferedSlots: 2,
+    });
+    const controller = new AbortController();
+    pipeline.start(controller.signal);
+    await flush();
+
+    await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 0 });
     await expect(pipeline.releaseNextSafe(null, controller.signal)).resolves.toMatchObject({ state: "released", sequence: 1 });
     expect(released).toEqual([0, 1]);
     await pipeline.abortAndAwaitAll();
@@ -159,8 +287,7 @@ describe("AmbientPipeline", () => {
     await flush();
 
     await expect(pipeline.abortAndAwaitAll()).resolves.toBeUndefined();
-    // Remote-slot backpressure deliberately permits only one ambient
-    // generation worker, even when a caller requests a larger local limit.
-    expect(aborted).toHaveBeenCalledOnce();
+    // Up to maxInFlightGeneration workers may be in flight; all must join.
+    expect(aborted).toHaveBeenCalledTimes(2);
   });
 });

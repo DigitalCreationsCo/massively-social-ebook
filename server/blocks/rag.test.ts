@@ -34,9 +34,9 @@ describe("RagProvider", () => {
   });
 
   describe("constructor with useEmbeddings option", () => {
-    it("defaults to useEmbeddings true for backward compatibility", () => {
+    it("defaults to keyword-only retrieval so context reads do not require an embedding call", () => {
       const defaultProvider = new RagProvider();
-      expect((defaultProvider as any).useEmbeddings).toBe(true);
+      expect((defaultProvider as any).useEmbeddings).toBe(false);
     });
 
     it("respects useEmbeddings false option", () => {
@@ -58,6 +58,30 @@ describe("RagProvider", () => {
       
       expect(count).toBe(42);
       expect(mockedStorage.getBlockCount).toHaveBeenCalledWith("scifi");
+    });
+
+    it("stagers concurrent NarrativeEngine reads instead of bursting the shared pg pool", async () => {
+      let releaseFirst: (() => void) | undefined;
+      let callCount = 0;
+      mockedStorage.getBlockCount.mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Promise<number>((resolve) => {
+            releaseFirst = () => resolve(1);
+          });
+        }
+        return Promise.resolve(callCount);
+      });
+
+      const first = provider.getBlockCount("scifi");
+      const second = provider.getBlockCount("scifi");
+      const third = provider.getBlockCount("scifi");
+
+      await vi.waitFor(() => expect(mockedStorage.getBlockCount).toHaveBeenCalledTimes(1));
+      expect(releaseFirst).toBeDefined();
+      releaseFirst!();
+      await expect(Promise.all([first, second, third])).resolves.toEqual([1, 2, 3]);
+      expect(mockedStorage.getBlockCount).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -192,7 +216,8 @@ describe("RagProvider", () => {
       expect(mockGenerateEmbedding).not.toHaveBeenCalled();
     });
 
-    it("uses embedding generation when useEmbeddings is true (default)", async () => {
+    it("uses embedding generation when useEmbeddings is explicitly true", async () => {
+      const providerWithEmbeddings = new RagProvider({ useEmbeddings: true });
       (db.execute as unknown as Mock).mockResolvedValue({
         rows: [
           {
@@ -213,7 +238,7 @@ describe("RagProvider", () => {
         ]
       });
 
-      const candidates = await provider.getHybridSearchCandidates("scifi", "alien encounter", 10);
+      const candidates = await providerWithEmbeddings.getHybridSearchCandidates("scifi", "alien encounter", 10);
       
       expect(candidates).toHaveLength(1);
       expect(candidates[0].scoreVectorDense).toBe(0.85);

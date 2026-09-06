@@ -4,61 +4,40 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Debug Server (with breakpoints)",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "--inspect-brk=0.0.0.0:9229",
-        "--loader",
-        "tsx/esm",
-        "-r",
-        "dotenv/config",
-        "server/index.ts"
-      ],
+      "name": "Debug Server (watch + breakpoints)",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": ["watch", "-r", "dotenv/config", "server/index.ts"],
+      "cwd": "${workspaceFolder}",
       "env": {
         "NODE_ENV": "development",
         "DOTENV_CONFIG_PATH": ".env.local"
       },
-      "sourceMaps": true,
-      "skipFiles": ["<node_internals>/**"],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
-    },
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "Debug Server (watch mode)",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "--inspect=0.0.0.0:9230",
-        "--loader",
-        "tsx/esm",
-        "-r",
-        "dotenv/config",
-        "node_modules/tsx/bin/tsx",
-        "watch",
-        "server/index.ts"
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
       ],
-      "env": {
-        "NODE_ENV": "development",
-        "DOTENV_CONFIG_PATH": ".env.local"
-      },
-      "sourceMaps": true,
-      "skipFiles": ["<node_internals>/**"],
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen",
+      "outputCapture": "std",
+      "autoAttachChildProcesses": true,
       "restart": true,
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "skipFiles": ["<node_internals>/**"]
     },
     {
       "type": "node",
       "request": "attach",
       "name": "Attach to Running Server",
       "port": 9229,
+      "restart": true,
       "localRoot": "${workspaceFolder}",
       "remoteRoot": "${workspaceFolder}",
-      "skipFiles": ["<node_internals>/**"],
-      "sourceMaps": true
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "skipFiles": ["<node_internals>/**"]
     }
   ]
 }

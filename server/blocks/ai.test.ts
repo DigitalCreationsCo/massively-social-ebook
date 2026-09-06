@@ -43,6 +43,7 @@ vi.mock("@portalshq/narrativeengine", () => ({
 }));
 
 import { generateContextWithTimeout, generateStoryBlock, generateStoryImage } from "./ai";
+import { logger } from "../logger";
 
 describe("AI Generators", () => {
   beforeEach(() => {
@@ -54,7 +55,7 @@ describe("AI Generators", () => {
 
   it("configures NarrativeEngine to prefer character sheets and fall back to portraits", () => {
     expect(engineOptions.value).toMatchObject({
-      config: { pxErrorPolicy: "fail", representationProperties: ["character_sheet", "portrait"] },
+      config: { pxErrorPolicy: "continue", representationProperties: ["character_sheet", "portrait"] },
     });
   });
 
@@ -251,6 +252,7 @@ describe("AI Generators", () => {
     });
 
     it("returns neither context nor references when PX enrichment fails", async () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
       mockBuildContext.mockRejectedValueOnce(new Error("PX failed"));
       mockGenerateText.mockResolvedValueOnce({
         output: { title: "T", content: "C", isNotable: false },
@@ -261,6 +263,13 @@ describe("AI Generators", () => {
       expect(result.narrativeContext).toBeUndefined();
       expect(result.imageRepresentations).toBeUndefined();
       expect(result.selectedImageRepresentations).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        "[NLP] Circuit breaker triggered, falling back to immediate context",
+        "blocks",
+        expect.objectContaining({ message: "PX failed" }),
+        expect.objectContaining({ channelId: "chan" }),
+      );
+      warn.mockRestore();
     });
 
     it("rejects after the bounded context timeout", async () => {
@@ -268,8 +277,8 @@ describe("AI Generators", () => {
       try {
         mockBuildContext.mockImplementationOnce(() => new Promise(() => undefined));
         const pending = generateContextWithTimeout("chan", "q");
-        const assertion = expect(pending).rejects.toThrow("Context generation timeout (>60000ms)");
-        await vi.advanceTimersByTimeAsync(60000);
+        const assertion = expect(pending).rejects.toThrow("Context generation timeout (>12000ms)");
+        await vi.advanceTimersByTimeAsync(12000);
         await assertion;
       } finally {
         vi.useRealTimers();

@@ -40,6 +40,7 @@ export interface BatchGenerateOptions {
    * Optional signal to cancel generation mid-way.
    */
   signal?: AbortSignal;
+  useEmbedding?: boolean;
 }
 
 export interface BatchGenerateResult {
@@ -161,7 +162,9 @@ export async function batchGenerateBlocks(
           ttsEnabled: true,
           audioUrl: null,
           isNotable: false, // We don't set isNotable during batch gen; the replay system marks notable blocks separately
-        });
+        },
+        options.useEmbedding ?? false,
+      );
 
         // Update the narrative context for the next block
         currentContext = block.content;

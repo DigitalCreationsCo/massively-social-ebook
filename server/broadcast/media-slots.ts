@@ -7,6 +7,7 @@ import { generateStoryBlock } from "../blocks/ai";
 import type { SelectedImageRepresentation } from "../blocks/image-references";
 import {
   archiveStoryImage,
+  downloadArchiveBuffer,
   generateStoryImageAsset,
   type GeneratedStoryImage,
 } from "../image-uploader";
@@ -42,7 +43,18 @@ export interface PreparedBroadcastSlot {
 export interface PreparedAmbientTurn {
   sequence: number;
   idempotencyPrefix: string;
+  /**
+   * Distinct visual identity for buffer accounting. Split narration segments
+   * share one image (and one contentId); different generations must differ.
+   * Media-agnostic by design: a future video turn would carry its own
+   * contentId here so image/audio/video all have equal citizenship in the
+   * staged-or-released buffer. Optional for backward compatibility — the
+   * pipeline falls back to the generation idempotency prefix when absent.
+   */
+  contentId?: string;
   image: QueueUploadAsset;
+  /** Reserved for a future first-class video primitive; never derived from imageDuration. */
+  video?: QueueUploadAsset;
   segments: PreparedAmbientSegment[];
   totalDurationSeconds: number;
   totalBytes: number;
@@ -78,20 +90,52 @@ export async function prepareCanonicalSlot(
   session: Session,
   previousContext: string,
   signal: AbortSignal,
+  useEmbedding?: boolean,
 ): Promise<{ block?: Block; slots: PreparedBroadcastSlot[] }> {
+  const generated = await prepareCanonicalText(channelId, previousContext, session.id, signal);
+  return finishCanonicalSlot(channelId, session, generated, signal, useEmbedding);
+}
+
+/** Narrative text for one canonical turn. Serial and chained: each turn's text needs the previous turn's content. */
+export type CanonicalText = Awaited<ReturnType<typeof generateStoryBlock>>;
+
+export function prepareCanonicalText(
+  channelId: string,
+  previousContext: string,
+  sessionId: number | undefined,
+  signal: AbortSignal,
+): Promise<CanonicalText> {
   signal.throwIfAborted();
-  const generated = await retryGeneration(
+  return retryGeneration(
     "narrative text",
-    () => generateStoryBlock(channelId, previousContext, false, session.id),
+    () => generateStoryBlock(channelId, previousContext, false, sessionId),
     signal,
   );
+}
+
+/**
+ * Media, archive, persistence, and stage-ready slots for already-generated
+ * text. Safe to run while the NEXT turn's text generates: it touches only
+ * this turn's assets plus one new block row.
+ */
+export async function finishCanonicalSlot(
+  channelId: string,
+  session: Session,
+  generated: CanonicalText,
+  signal: AbortSignal,
+  useEmbedding?: boolean,
+): Promise<{ block?: Block; slots: PreparedBroadcastSlot[] }> {
+  signal.throwIfAborted();
   const imageRepresentations = generated.imageRepresentations ?? generated.selectedImageRepresentations ?? [];
   const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "block", signal, imageRepresentations);
   if (!media.image) return { slots: [] };
 
-  const imageUrl = media.image.archiveUrl
-    ?? await archiveStoryImage(media.image.image, channelId, "block");
-  const archivedSegments = await Promise.all(media.narration.map(async ({ speech }, ordinal) => ({
+  // Slots stage from in-memory bytes; archives are only for DB persistence.
+  // Run image + audio archives concurrently so neither blocks the other.
+  const imageArchivePromise = media.image.archiveUrl
+    ? Promise.resolve(media.image.archiveUrl)
+    : archiveStoryImage(media.image.image, channelId, "block");
+  const audioArchivePromises = media.narration.map(async ({ speech }, ordinal) => ({
     audioUrl: assertArchiveMediaUrl(
       await archiveSpeechBuffer(
         speech,
@@ -99,13 +143,20 @@ export async function prepareCanonicalSlot(
       ),
       "audio",
     ),
-    durationSeconds: speech.durationSeconds,
+    // Persist the playout duration, not the raw TTS length: short clips hold
+    // the unified image floor so the picture does not vanish after 5-10s.
+    // Longer narration is preserved verbatim (never truncated to the floor).
+    durationSeconds: slotDurationForSpeech(speech.durationSeconds),
     ordinal,
-  })));
+  }));
+  const [imageUrl, archivedSegments] = await Promise.all([
+    imageArchivePromise,
+    Promise.all(audioArchivePromises),
+  ]);
   const deliverySegments: DeliverySegment[] = archivedSegments.length > 0
     ? archivedSegments
     : [{ durationSeconds: imageOnlyDuration(), ordinal: 0 }];
-  const block = await storage.createBlock({
+  const blockData = {
     channelId,
     sessionId: session.id,
     title: generated.title,
@@ -118,7 +169,10 @@ export async function prepareCanonicalSlot(
     audioUrl: archivedSegments[0]?.audioUrl ?? null,
     deliverySegments,
     isNotable: false,
-  });
+  };
+  const block = useEmbedding !== undefined
+    ? await storage.createBlock(blockData, useEmbedding)
+    : await storage.createBlock(blockData);
   return {
     block,
     slots: slotsWithAssets({
@@ -174,7 +228,11 @@ export async function prepareAmbientSlots(
   const narration = media.narration.length > 0 ? media.narration : [undefined];
   const segments = narration.map((item, segmentOrdinal) => ({
     segmentOrdinal,
-    durationSeconds: item?.speech.durationSeconds ?? imageOnlyDuration(),
+    // Unified image floor: max(config, audio). Short voice clips hold the
+    // image for the full floor; long narration is never cut to fit it.
+    // Video (when present) keeps its intrinsic duration elsewhere — this
+    // floor only ever feeds imageDuration, never a video duration.
+    durationSeconds: slotDurationForSpeech(item?.speech.durationSeconds),
     ...(item ? {
       audio: toUploadAsset(item.speech.buffer, item.speech.mimeType, `narration-${segmentOrdinal}.${item.speech.extension}`),
     } : {}),
@@ -182,6 +240,7 @@ export async function prepareAmbientSlots(
   return {
     sequence,
     idempotencyPrefix,
+    contentId: idempotencyPrefix,
     image,
     segments,
     totalDurationSeconds: segments.reduce((total, segment) => total + segment.durationSeconds, 0),
@@ -238,12 +297,16 @@ async function generateTurnMedia(
   imageRepresentations: readonly SelectedImageRepresentation[] = [],
 ): Promise<{ image?: GeneratedImageWithArchive; narration: PreparedNarration[] }> {
   const description = `${title}: ${content.slice(0, 300)}`;
+  // Image and narration generate concurrently. Narration is best-effort: a
+  // single failed attempt falls back to an image-only turn (playback must
+  // proceed identically with or without narration), so it defaults to one
+  // attempt while text/image keep the fuller retry budget.
   const [imageResult, narrationResult] = await Promise.allSettled([
     retryGeneration("story image", () => generateImageWithFallback(description, channelId, imageType, signal, imageRepresentations), signal),
     retryGeneration("narration", () => synthesizeNarrationBuffers(dialogue || content, {
       maxDurationSeconds: Number(process.env.BROADCAST_MAX_SEGMENT_SECONDS || 25),
       signal,
-    }), signal),
+    }), signal, narrationAttempts()),
   ]);
   if (imageResult.status === "rejected") {
     logger.error(
@@ -283,7 +346,7 @@ function slotsWithAssets(input: {
   return narration.map((item, segmentOrdinal) => {
     const idempotencyPrefix = `${base}:segment:${segmentOrdinal}`;
     return {
-      durationSeconds: item?.speech.durationSeconds ?? imageOnlyDuration(),
+      durationSeconds: slotDurationForSpeech(item?.speech.durationSeconds),
       idempotencyPrefix,
       slotKey: `${idempotencyPrefix}:slot`,
       ...(input.blockId !== undefined ? { blockId: input.blockId } : {}),
@@ -330,16 +393,18 @@ async function retryGeneration<T>(
   label: string,
   operation: () => Promise<T>,
   signal: AbortSignal,
+  attempts: number = GENERATION_ATTEMPTS,
 ): Promise<T> {
+  const bounded = Math.max(1, Math.min(GENERATION_ATTEMPTS, Math.floor(attempts) || 1));
   let lastError: unknown;
-  for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < bounded; attempt += 1) {
     signal.throwIfAborted();
     try {
       return await operation();
     } catch (cause) {
       if (signal.aborted) throw signal.reason;
       lastError = cause;
-      if (attempt === GENERATION_ATTEMPTS - 1) break;
+      if (attempt === bounded - 1) break;
       logger.warn(`${label} attempt ${attempt + 1} failed; retrying`, "broadcast", asError(cause));
       await wait(RETRY_DELAYS_MS[attempt]!, signal);
     }
@@ -347,9 +412,49 @@ async function retryGeneration<T>(
   throw asError(lastError);
 }
 
+/**
+ * How many times a failed narration (TTS) attempt is retried before falling
+ * back to an image-only turn. Defaults to 1 — a dead provider (e.g. exhausted
+ * quota) must not stall staging behind doomed retries. Raise via
+ * BROADCAST_NARRATION_ATTEMPTS (1-3) if transient TTS flakes are common.
+ */
+function narrationAttempts(): number {
+  const raw = process.env.BROADCAST_NARRATION_ATTEMPTS;
+  if (!raw?.trim()) return 1;
+  const value = Number(raw);
+  if (!Number.isInteger(value)) return 1;
+  return Math.max(1, Math.min(GENERATION_ATTEMPTS, value));
+}
+
+/**
+ * Playout floor for narrated turns: max(config, narration length). Short TTS
+ * holds the picture for the full floor instead of vanishing after 5-10s;
+ * long narration is preserved verbatim. This value only ever feeds
+ * `imageDuration` on image uploads — video uploads must omit `imageDuration`
+ * and keep their intrinsic duration (equal citizenship, no override).
+ */
+function broadcastImageFloor(): number {
+  const configured = Number(process.env.BROADCAST_IMAGE_DURATION_SECONDS ?? 12);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 12;
+}
+
+/**
+ * Image-only turns (narration unavailable) hold longer than the narrated
+ * floor: with no audio pacing the turn, the still should cover a full
+ * generation cycle or consumption outruns production and images blink.
+ * Tunable via BROADCAST_IMAGE_ONLY_DURATION_SECONDS (default 15).
+ */
 function imageOnlyDuration(): number {
-  const configured = Number(process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS || 15);
+  const configured = Number(process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS ?? 15);
   return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 15;
+}
+
+/** max(floor, speech) — the stored slot duration for one segment. */
+function slotDurationForSpeech(speechDurationSeconds?: number): number {
+  if (speechDurationSeconds === undefined) return imageOnlyDuration();
+  const floor = broadcastImageFloor();
+  if (!Number.isFinite(speechDurationSeconds)) return floor;
+  return Math.max(floor, speechDurationSeconds);
 }
 
 function toUploadAsset(buffer: Buffer, mimeType: string, filename: string): QueueUploadAsset {
@@ -367,10 +472,30 @@ async function fetchArchiveAsset(
   signal: AbortSignal,
 ): Promise<QueueUploadAsset> {
   const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`Archived ${kind} download failed (${response.status})`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const contentType = response.headers.get("content-type") || (kind === "image" ? "image/jpeg" : "audio/wav");
-  return toUploadAsset(buffer, contentType, `recovered-${generateUUID()}.${kind === "image" ? "jpg" : "wav"}`);
+  if (response.ok) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const contentType = response.headers.get("content-type") || (kind === "image" ? "image/jpeg" : "audio/wav");
+    return toUploadAsset(buffer, contentType, `recovered-${generateUUID()}.${kind === "image" ? "jpg" : "wav"}`);
+  }
+  if (response.status === 403) {
+    // GCS serves objects stored without a public ACL as 403 over plain HTTPS.
+    // Those are exactly the archive URLs this app persisted historically, so a
+    // raw 403 here would wedge canonical recovery on the same slot forever
+    // (see the "Skipping failed broadcast segment" loop). Fall back to an
+    // authenticated SDK read, which succeeds regardless of object ACLs.
+    // Steady-state playout never touches archives — this path only runs for
+    // post-restart recovery and the archived-image fallback.
+    const buffer = await downloadArchiveBuffer(url);
+    if (buffer && buffer.length > 0) {
+      logger.warn(
+        `Archived ${kind} required an authenticated read (public fetch 403); recovered via storage SDK`,
+        "broadcast",
+      );
+      const contentType = kind === "image" ? "image/jpeg" : "audio/wav";
+      return toUploadAsset(buffer, contentType, `recovered-${generateUUID()}.${kind === "image" ? "jpg" : "wav"}`);
+    }
+  }
+  throw new Error(`Archived ${kind} download failed (${response.status})`);
 }
 
 function assertArchiveMediaUrl(value: string, kind: string): string {

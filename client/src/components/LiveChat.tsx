@@ -148,8 +148,8 @@ export function LiveChat({
           <>
             <span className="flex-1">
               <div className="self-end text-white/90 flex shrink-0 items-center gap-1.5 text-xs" aria-label={`${numUsers} viewers`}>
-                <Users className="size-3.5" />
-                <span className="font-mono tabular-nums">{numUsers}</span>
+                <Users className="size-4" />
+                <span className="font-mono tabular-nums">{numUsers} watching</span>
                 {/* <span className="hidden sm:inline">{numUsers === '1' ? 'person' : 'people'}</span> */}
               </div>
               {isClosable && (

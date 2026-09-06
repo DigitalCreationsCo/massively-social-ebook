@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const blocks = vi.hoisted(() => ({ generateStoryBlock: vi.fn() }));
-const images = vi.hoisted(() => ({ archiveStoryImage: vi.fn(), generateStoryImageAsset: vi.fn() }));
+const images = vi.hoisted(() => ({ archiveStoryImage: vi.fn(), generateStoryImageAsset: vi.fn(), downloadArchiveBuffer: vi.fn() }));
 const speech = vi.hoisted(() => ({ archiveSpeechBuffer: vi.fn(), synthesizeNarrationBuffers: vi.fn() }));
 const storage = vi.hoisted(() => ({ createBlock: vi.fn(), getRandomImage: vi.fn() }));
 
@@ -17,9 +17,11 @@ describe("broadcast media slots", () => {
   afterEach(() => {
     vi.clearAllMocks();
     delete process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS;
+    delete process.env.BROADCAST_IMAGE_DURATION_SECONDS;
+    delete process.env.BROADCAST_NARRATION_ATTEMPTS;
   });
 
-  it("releases a generated image as an image-only slot after three failed TTS attempts", async () => {
+  it("releases a generated image as an image-only slot after a single failed TTS attempt", async () => {
     blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "The room is quiet.", dialogue: "The room is quiet." });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
     images.archiveStoryImage.mockResolvedValue("https://archive.example/scene.jpg");
@@ -34,7 +36,7 @@ describe("broadcast media slots", () => {
       new AbortController().signal,
     );
 
-    expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(3);
+    expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(1);
     expect(prepared.slots).toHaveLength(1);
     expect(prepared.slots[0]).toMatchObject({
       durationSeconds: 15,
@@ -71,7 +73,7 @@ describe("broadcast media slots", () => {
     ]);
   });
 
-  it("uses default 15 second duration when environment variable is not set", async () => {
+  it("uses default 15 second duration for image-only turns when no variable is set", async () => {
     blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "The room is quiet.", dialogue: "The room is quiet." });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
     images.archiveStoryImage.mockResolvedValue("https://archive.example/scene.jpg");
@@ -85,7 +87,7 @@ describe("broadcast media slots", () => {
       new AbortController().signal,
     );
 
-    expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(3);
+    expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(1);
     expect(prepared.slots).toHaveLength(1);
     expect(prepared.slots[0]).toMatchObject({
       durationSeconds: 15,
@@ -100,7 +102,44 @@ describe("broadcast media slots", () => {
     }));
   }, 5_000);
 
-  it("keeps one in-memory image asset for all ambient narration segments", async () => {
+  it("retries narration up to BROADCAST_NARRATION_ATTEMPTS when configured", async () => {
+    process.env.BROADCAST_NARRATION_ATTEMPTS = "3";
+    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "The room is quiet.", dialogue: "The room is quiet." });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    images.archiveStoryImage.mockResolvedValue("https://archive.example/scene.jpg");
+    speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("transient TTS flake"));
+    storage.createBlock.mockResolvedValue({ id: 7 });
+    try {
+      const prepared = await prepareCanonicalSlot(
+        "main",
+        { id: 3 } as any,
+        "",
+        new AbortController().signal,
+      );
+      expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(3);
+      expect(prepared.slots).toHaveLength(1);
+      expect(prepared.slots[0]?.audio).toBeUndefined();
+    } finally {
+      delete process.env.BROADCAST_NARRATION_ATTEMPTS;
+    }
+  }, 10_000);
+
+  it("ignores invalid BROADCAST_NARRATION_ATTEMPTS and uses a single attempt", async () => {
+    process.env.BROADCAST_NARRATION_ATTEMPTS = "banana";
+    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "The room is quiet.", dialogue: "The room is quiet." });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    images.archiveStoryImage.mockResolvedValue("https://archive.example/scene.jpg");
+    speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("Bark unavailable"));
+    storage.createBlock.mockResolvedValue({ id: 7 });
+    try {
+      await prepareCanonicalSlot("main", { id: 3 } as any, "", new AbortController().signal);
+      expect(speech.synthesizeNarrationBuffers).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.BROADCAST_NARRATION_ATTEMPTS;
+    }
+  }, 5_000);
+
+  it("holds short narrated images for the full floor instead of the TTS length", async () => {
     blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "One. Two.", dialogue: "One. Two." });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
     speech.synthesizeNarrationBuffers.mockResolvedValue([
@@ -113,11 +152,48 @@ describe("broadcast media slots", () => {
     expect(prepared).toMatchObject({
       sequence: 7,
       idempotencyPrefix: "channel:main:run:run-1:sequence:7",
-      totalDurationSeconds: 9,
-      segments: [{ segmentOrdinal: 0, durationSeconds: 4 }, { segmentOrdinal: 1, durationSeconds: 5 }],
+      contentId: "channel:main:run:run-1:sequence:7",
+      totalDurationSeconds: 24,
+      segments: [{ segmentOrdinal: 0, durationSeconds: 12 }, { segmentOrdinal: 1, durationSeconds: 12 }],
     });
     expect(prepared?.image.data.size).toBe(5);
     expect(prepared?.totalBytes).toBe(5 + 9 + 9);
+  });
+
+  it("preserves long narration verbatim instead of truncating to the floor", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "One.", dialogue: "One." });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    speech.synthesizeNarrationBuffers.mockResolvedValue([
+      { speech: { buffer: Buffer.from("audio-long"), durationSeconds: 18, extension: "wav", mimeType: "audio/wav" } },
+    ]);
+
+    const prepared = await prepareAmbientSlots("main", "", "run-1", 9, new AbortController().signal);
+
+    expect(prepared).toMatchObject({
+      totalDurationSeconds: 18,
+      segments: [{ segmentOrdinal: 0, durationSeconds: 18 }],
+    });
+  });
+
+  it("governs image-only turns by BROADCAST_IMAGE_ONLY_DURATION_SECONDS alone", async () => {
+    process.env.BROADCAST_IMAGE_DURATION_SECONDS = "20";
+    process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS = "15";
+    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "The room is quiet.", dialogue: "The room is quiet." });
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    images.archiveStoryImage.mockResolvedValue("https://archive.example/scene.jpg");
+    speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("Bark unavailable"));
+    storage.createBlock.mockResolvedValue({ id: 7 });
+    try {
+      const prepared = await prepareCanonicalSlot(
+        "main",
+        { id: 3 } as any,
+        "",
+        new AbortController().signal,
+      );
+      expect(prepared.slots[0]).toMatchObject({ durationSeconds: 15 });
+    } finally {
+      delete process.env.BROADCAST_IMAGE_DURATION_SECONDS;
+    }
   });
 
   it("uses an image-only ambient turn when narrative generation is unavailable", async () => {
@@ -204,6 +280,44 @@ describe("broadcast media slots", () => {
       const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 4, new AbortController().signal);
       expect(prepared?.image).toBeDefined();
       expect(storage.getRandomImage).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("recovers an archived image via SDK when public fetch returns 403", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
+    images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
+    storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("forbidden", { status: 403 }),
+    );
+    images.downloadArchiveBuffer.mockResolvedValueOnce(Buffer.from("sdk-bytes"));
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+    try {
+      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 5, new AbortController().signal);
+      expect(prepared?.image).toBeDefined();
+      expect(images.downloadArchiveBuffer).toHaveBeenCalledWith(
+        "https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg",
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("skips the turn when a 403 archive is unreadable even via SDK", async () => {
+    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
+    images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
+    storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/y.jpg");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("forbidden", { status: 403 }),
+    );
+    images.downloadArchiveBuffer.mockResolvedValue(null);
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+    try {
+      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 6, new AbortController().signal);
+      expect(prepared).toBeUndefined();
+      expect(images.downloadArchiveBuffer).toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
     }

@@ -263,6 +263,20 @@ function hostFromUrl(raw: string | undefined): string | undefined {
 }
 
 /**
+ * Trim optional free-form input; blank and missing both become `undefined` so
+ * downstream code sees "absent" as a single state, never `""` vs `" "` vs unset.
+ */
+function cleanString(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** Lowercase + dedupe a host list once, at creation — never per request. */
+function normalizeHostSet(hosts: readonly string[]): Set<string> {
+  return new Set(hosts.map((h) => h.toLowerCase()));
+}
+
+/**
  * Hosts for the NAP Lore server derived from configuration (DRY single source).
  *
  * Both variables describe the same server: `NAP_LORE_HTTP_URL` is the explicit
@@ -330,14 +344,18 @@ function isLoopback(hostname: string): boolean {
  * explicitly listed in IMAGE_REFERENCE_ALLOWED_HOSTS.
  */
 export function isAllowedImageUrl(url: URL, allowedHosts: readonly string[]): boolean {
+  return isAllowedImageUrlOnSet(url, normalizeHostSet(allowedHosts));
+}
+
+/** Hot-path variant taking an already-normalized set (see `normalizeHostSet`). */
+function isAllowedImageUrlOnSet(url: URL, normalizedHosts: ReadonlySet<string>): boolean {
   const protocol = url.protocol.toLowerCase();
   const hostname = url.hostname.toLowerCase();
   // Loopback must never be reachable from a production server, even when
   // explicitly listed in IMAGE_REFERENCE_ALLOWED_HOSTS.
   if (isLoopback(hostname) && process.env["NODE_ENV"] === "production") return false;
   if (protocol !== "https:" && protocol !== "http:") return false;
-  const normalized = new Set(allowedHosts.map((h) => h.toLowerCase()));
-  return normalized.has(hostname);
+  return normalizedHosts.has(hostname);
 }
 
 // ── Presign ────────────────────────────────────────────────────────────────
@@ -345,26 +363,24 @@ export function isAllowedImageUrl(url: URL, allowedHosts: readonly string[]): bo
 let cachedPresignFn: PresignFunction | null | undefined;
 
 function resolveBearerToken(explicit: PresignOptions = {}): string | undefined {
-  if (explicit.bearerToken?.trim()) return explicit.bearerToken.trim();
-  const tokenEnvName = explicit.tokenEnv?.trim() || process.env["NAP_TOKEN_ENV"]?.trim();
+  const bearerToken = cleanString(explicit.bearerToken);
+  if (bearerToken) return bearerToken;
+  const tokenEnvName = cleanString(explicit.tokenEnv) ?? cleanString(process.env["NAP_TOKEN_ENV"]);
   if (tokenEnvName) {
-    const fromNamed = process.env[tokenEnvName]?.trim();
+    const fromNamed = cleanString(process.env[tokenEnvName]);
     if (fromNamed) return fromNamed;
   }
-  const direct = process.env["NAP_LORE_HTTP_TOKEN"]?.trim()
-    || process.env["NAP_LORE_GRPC_TOKEN"]?.trim();
-  if (direct) return direct;
-  return undefined;
+  return cleanString(process.env["NAP_LORE_HTTP_TOKEN"]) ?? cleanString(process.env["NAP_LORE_GRPC_TOKEN"]);
 }
 
 export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOptions {
-  const repoPath = overrides.repoPath ?? process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
+  const repoPath = overrides.repoPath ?? cleanString(process.env["NAP_REPO_PATH"]) ?? cleanString(process.env["NAP_DIR"]);
   const hasExplicitRevision = overrides.branch !== undefined || overrides.commit !== undefined;
   const branch = hasExplicitRevision ? overrides.branch : undefined;
   const commit = hasExplicitRevision ? overrides.commit : undefined;
   const ttlRaw = overrides.ttlSeconds;
   const ttlSeconds = typeof ttlRaw === "number" && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.floor(ttlRaw) : undefined;
-  const httpUrl = overrides.httpUrl ?? process.env["NAP_LORE_HTTP_URL"]?.trim() ?? undefined;
+  const httpUrl = overrides.httpUrl ?? cleanString(process.env["NAP_LORE_HTTP_URL"]);
   const bearerToken = resolveBearerToken(overrides);
   const tokenEnv = overrides.tokenEnv ?? undefined;
   return {
@@ -384,9 +400,9 @@ export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOp
  * to hash mismatches between SDK and CLI operations.
  */
 export function validateServerConfiguration(): void {
-  const loreUrlBase = process.env["NAP_LORE_URL_BASE"]?.trim() ?? undefined;
-  const sdkHttpUrl = process.env["NAP_LORE_HTTP_URL"]?.trim() ?? undefined;
-  const repoPath = process.env["NAP_REPO_PATH"]?.trim() ?? process.env["NAP_DIR"]?.trim() ?? undefined;
+  const loreUrlBase = cleanString(process.env["NAP_LORE_URL_BASE"]);
+  const sdkHttpUrl = cleanString(process.env["NAP_LORE_HTTP_URL"]);
+  const repoPath = cleanString(process.env["NAP_REPO_PATH"]) ?? cleanString(process.env["NAP_DIR"]);
 
   // If no server URL is configured, we can't validate
   if (!loreUrlBase && !sdkHttpUrl && !repoPath) {
@@ -455,7 +471,7 @@ async function presignUrl(
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 5_000;
 const MAX_REDIRECTS = 3;
 
 const sharedReferenceCache = new Map<string, { buffer: Buffer; mimeType: string }>();
@@ -598,13 +614,14 @@ function skipReasonFromError(error: unknown): string {
 async function downloadOneUrl(
   initialUrl: string,
   allowedHosts: readonly string[],
-  allowedMimeTypes: readonly string[],
+  allowedMimes: ReadonlySet<string>,
   maxBytes: number,
   parentSignal: AbortSignal | undefined,
   timeoutMs: number,
   fetchFn: typeof fetch,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-  const allowedMimes = new Set(allowedMimeTypes.map((m) => m.toLowerCase()));
+  // Normalized once per reference: every redirect hop reuses this set.
+  const normalizedHosts = normalizeHostSet(allowedHosts);
   let current = initialUrl;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
@@ -615,7 +632,7 @@ async function downloadOneUrl(
     } catch {
       throw Object.assign(new Error("reference URL is malformed"), { code: "invalid_url" });
     }
-    if (!isAllowedImageUrl(url, allowedHosts)) {
+    if (!isAllowedImageUrlOnSet(url, normalizedHosts)) {
       const protocol = url.protocol.toLowerCase();
       if (protocol !== "https:" && protocol !== "http:") {
         throw Object.assign(new Error("reference URL must use HTTP or HTTPS"), { code: "invalid_protocol" });
@@ -693,7 +710,8 @@ export async function fetchReferenceImages(
     const hash = item.hash.trim();
     if (seenHashes.has(hash)) continue;
     seenHashes.add(hash);
-    ordered.push(item);
+    // Normalize once here: `hash` is trusted as trimmed/non-empty downstream.
+    ordered.push({ ...item, hash });
   }
 
   let presignFn = options.presignFn;
@@ -706,54 +724,64 @@ export async function fetchReferenceImages(
   }
 
   const collected: FetchedReferenceImage[] = [];
-  const collectedHashes = new Set<string>();
   const skips: ReferenceSkip[] = [];
 
   // Provider-agnostic MIME/size guard here; callers pass the active model's
   // limits via maxBytesPerImage/allowedMimeTypes when stricter enforcement
   // is needed. Defaults are conservative (Gemini 7 MB, image MIMEs).
+  // Normalized once: per-candidate checks below trust these sets.
   const maxBytes = options.maxBytesPerImage ?? GEMINI_MAX_BYTES;
-  const allowedMimeTypes = options.allowedMimeTypes ?? DEFAULT_MIMES;
+  const allowedMimes = new Set((options.allowedMimeTypes ?? DEFAULT_MIMES).map((m) => m.toLowerCase()));
 
+  // Fast path: serve cache hits synchronously in order.
+  const toFetch: SelectedImageRepresentation[] = [];
   for (const candidate of ordered) {
-    if (collected.length >= maxImages) break;
     if (options.signal?.aborted) throw options.signal.reason;
-    const hash = candidate.hash.trim();
-    if (collectedHashes.has(hash)) continue;
+    const hash = candidate.hash;
 
     const cached = cache.get(hash);
-    const cachedMimeOk = cached ? allowedMimeTypes.map((m) => m.toLowerCase()).includes(cached.mimeType.toLowerCase()) : false;
+    const cachedMimeOk = cached ? allowedMimes.has(cached.mimeType.toLowerCase()) : false;
     if (cached && cached.buffer.length > 0 && cached.buffer.length <= maxBytes && cachedMimeOk) {
-      collected.push({
-        buffer: cached.buffer,
-        mimeType: cached.mimeType,
-        hash,
-        entityId: candidate.entityId,
-        representationKey: candidate.representationKey,
-      });
-      collectedHashes.add(hash);
+      if (collected.length < maxImages) {
+        collected.push({
+          buffer: cached.buffer,
+          mimeType: cached.mimeType,
+          hash,
+          entityId: candidate.entityId,
+          representationKey: candidate.representationKey,
+        });
+      }
       continue;
     }
+    toFetch.push(candidate);
+  }
 
+  // Parallel presign+download for cache misses. Preserves original order
+  // when selecting up to maxImages successes (failures are skipped).
+  const fetchOne = async (
+    candidate: SelectedImageRepresentation,
+  ): Promise<{ fetched?: FetchedReferenceImage; skip?: ReferenceSkip }> => {
+    const hash = candidate.hash;
     let downloadUrl: string;
     try {
       downloadUrl = await presignUrl(candidate, options.presignOptions ?? {}, presignFn ?? null);
     } catch (error) {
       if (options.signal?.aborted) throw options.signal.reason;
-      skips.push({
-        entityId: candidate.entityId,
-        representationKey: candidate.representationKey,
-        hash,
-        reason: presignFailureReason(error),
-      });
-      continue;
+      return {
+        skip: {
+          entityId: candidate.entityId,
+          representationKey: candidate.representationKey,
+          hash,
+          reason: presignFailureReason(error),
+        },
+      };
     }
 
     try {
       const { buffer, mimeType } = await downloadOneUrl(
         downloadUrl,
         allowedHosts,
-        allowedMimeTypes,
+        allowedMimes,
         maxBytes,
         options.signal,
         timeoutMs,
@@ -764,15 +792,23 @@ export async function fetchReferenceImages(
         if (oldest) cache.delete(oldest);
       }
       cache.set(hash, { buffer, mimeType });
-      collected.push({ buffer, mimeType, hash, entityId: candidate.entityId, representationKey: candidate.representationKey });
-      collectedHashes.add(hash);
+      return {
+        fetched: { buffer, mimeType, hash, entityId: candidate.entityId, representationKey: candidate.representationKey },
+      };
     } catch (error) {
       if (options.signal?.aborted) throw options.signal.reason;
       const reason = skipReasonFromError(error);
-      // Abort/timeout of the parent signal must propagate; per-reference
-      // timeouts and validation failures only skip this candidate.
       if (reason === "aborted" && options.signal?.aborted) throw options.signal.reason;
-      skips.push({ entityId: candidate.entityId, representationKey: candidate.representationKey, hash, reason });
+      return { skip: { entityId: candidate.entityId, representationKey: candidate.representationKey, hash, reason } };
+    }
+  };
+
+  if (toFetch.length > 0 && collected.length < maxImages) {
+    const results = await Promise.all(toFetch.map((c) => fetchOne(c)));
+    for (const result of results) {
+      if (collected.length >= maxImages) break;
+      if (result.fetched) collected.push(result.fetched);
+      else if (result.skip) skips.push(result.skip);
     }
   }
 

@@ -129,7 +129,7 @@ Ambient material is staged and released immediately. Canonical material is
 archived for replay, staged during pre-roll, then released at the scheduled
 start. Image and TTS each receive three bounded attempts; exhausted image work
 skips the turn, while exhausted TTS releases the successful image for
-`BROADCAST_IMAGE_ONLY_DURATION_SECONDS` (five seconds by default).
+`BROADCAST_IMAGE_ONLY_DURATION_SECONDS` (twelve seconds by default).
 `TTS_HISTORY_PROMPT` is the server-only Bark speaker preset (default
 `Speaker 1 (en)`), not story context. This is intentionally a completed-media protocol, not raw-frame piping:
 it preserves durable backpressure, HLS continuity, and remote-process failure

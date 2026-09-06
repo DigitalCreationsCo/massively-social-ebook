@@ -246,7 +246,7 @@ export class PxProvider implements BasePxProvider {
       },
     });
     const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(new Error("PX enrichment timeout (>45000ms)")), 45_000);
+    const deadline = setTimeout(() => controller.abort(new Error("PX enrichment timeout (>12000ms)")), 12_000);
     const abortSignal = controller.signal;
     let client: Awaited<ReturnType<typeof createMCPClient>> | undefined;
     let stage = "MCP connection";

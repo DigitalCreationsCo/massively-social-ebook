@@ -31,7 +31,7 @@ export interface SpeechBuffer {
 }
 
 const AUDIO_DIR = path.resolve(process.cwd(), "server/public/audio");
-const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 25_000;
 
 export function parseTtsEventStream(payload: string): GradioFile[] {
   const files: GradioFile[] = [];
@@ -131,27 +131,30 @@ export async function synthesizeNarrationBuffers(
   if (!Number.isFinite(maxDurationSeconds) || maxDurationSeconds < 1 || maxDurationSeconds > 30) {
     throw new TypeError("maxDurationSeconds must be between 1 and 30");
   }
-  const initialSegments = splitNarration(text, Math.floor(maxDurationSeconds * 13));
-  const accepted: Array<{ text: string; speech: SpeechBuffer }> = [];
+  const initialSegments = splitNarration(text, Math.min(200, Math.floor(maxDurationSeconds * 13)));
 
-  const generateWithinLimit = async (segmentText: string): Promise<void> => {
+  const generateWithinLimit = async (
+    segmentText: string,
+  ): Promise<Array<{ text: string; speech: SpeechBuffer }>> => {
     options.signal?.throwIfAborted();
     const speech = await generateSpeechBuffer(segmentText, options.signal);
     if (speech.durationSeconds <= maxDurationSeconds) {
-      accepted.push({ text: segmentText, speech });
-      return;
+      return [{ text: segmentText, speech }];
     }
     const halves = splitInHalf(segmentText);
     if (!halves) {
       throw new Error(`Narration cannot be split below ${maxDurationSeconds} seconds`);
     }
-    await generateWithinLimit(halves[0]);
-    await generateWithinLimit(halves[1]);
+    const [first, second] = await Promise.all([
+      generateWithinLimit(halves[0]),
+      generateWithinLimit(halves[1]),
+    ]);
+    return [...first, ...second];
   };
 
-  for (const segment of initialSegments) await generateWithinLimit(segment);
+  const perSegment = await Promise.all(initialSegments.map((segment) => generateWithinLimit(segment)));
 
-  return accepted;
+  return perSegment.flat();
 }
 
 export async function archiveSpeechBuffer(speech: SpeechBuffer, objectName: string): Promise<string> {

@@ -154,6 +154,27 @@ export async function archiveStoryImage(
 }
 
 /**
+ * Authenticated fallback read for a persisted archive URL.
+ *
+ * Plain-HTTPS fetches of `storage.googleapis.com` URLs fail with 403 when the
+ * object was stored without a public ACL (the historical default here), which
+ * wedges canonical recovery (`hydrateCanonicalSlot`) on the same slot forever.
+ * Returns the bytes via the storage SDK when the URL addresses our bucket, or
+ * null when GCS is unconfigured / the URL is foreign / the read itself fails.
+ */
+export async function downloadArchiveBuffer(url: string): Promise<Buffer | null> {
+  const bucket = process.env.GOOGLE_CLOUD_BUCKET;
+  if (!bucket) return null;
+  try {
+    const gcs = getGcsImageStorage();
+    if (!gcs.ownsPublicUrl(url)) return null;
+    return await gcs.downloadToBuffer(url);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Uploads a pre-existing base64 image string to GCS.
  * Useful for the data-migration script or when the image was generated
  * outside of `generateAndUploadStoryImage`.

@@ -68,7 +68,7 @@ import {
 export interface IStorage {
   getCurrentBlock(channelId: string): Promise<Block | undefined>;
   getLastBlock(channelId: string): Promise<Block | undefined>;
-  createBlock(block: InsertBlock): Promise<Block>;
+  createBlock(block: InsertBlock, useEmbedding?: boolean): Promise<Block>;
   getBlocks(channelId?: string): Promise<Block[]>;
   updateBlock(id: number, data: Partial<InsertBlock>): Promise<Block>;
   deleteBlock(id: number): Promise<void>;
@@ -226,13 +226,15 @@ export class DatabaseStorage implements IStorage {
     return block;
   }
 
-  async createBlock(block: InsertBlock): Promise<Block> {
+  async createBlock(block: InsertBlock, useEmbedding = true): Promise<Block> {
     const [newBlock] = await db.insert(blocks).values(block).returning();
-    enqueueEmbeddingTask(
-      newBlock.id,
-      newBlock.content,
-      newBlock.title ?? undefined,
-    );
+    if (useEmbedding) {
+      enqueueEmbeddingTask(
+        newBlock.id,
+        newBlock.content,
+        newBlock.title ?? undefined,
+      );
+    }
     return newBlock;
   }
 
