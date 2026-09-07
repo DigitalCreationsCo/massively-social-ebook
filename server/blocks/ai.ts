@@ -7,11 +7,27 @@ import {
   createStoryBlockSystemInstructions,
 } from "../../prompts/storyblock.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
-import { NarrativeEngine } from "@portalshq/narrativeengine";
+import {
+  NarrativeEngine,
+  type GenerationProvider,
+  type GenerationProviderRequest,
+  type HybridCandidate,
+  type NarrativeBlock,
+  type NarrativeBlockInput,
+  type NarrativeContext,
+  type NarrativeLore,
+  type PxEnrichment,
+  type PxProviderRequest,
+} from "@portalshq/narrativeengine";
 import { RagProvider } from "./rag";
 import { PxProvider, characterRepresentationProperties } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
-import { getAiConfiguration, getImageModel, getLanguageModel } from "./ai-provider";
+import {
+  getAiConfiguration,
+  getHuggingFaceImageClient,
+  getImageModel,
+  getLanguageModel,
+} from "./ai-provider";
 import {
   getImageReferenceLimits,
   selectImageRepresentations,
@@ -26,17 +42,116 @@ export type { SelectedImageRepresentation };
 // Bounded context workflow: 12s cap, fallback to previousContext on timeout.
 const TIMEOUT_CONTEXT_MS = 12_000;
 
+interface SequentialWindowParameters {
+  batchId: string;
+  ordinal: number;
+  count: number;
+  previousContext: string;
+  sessionId?: number;
+}
+
+/**
+ * NarrativeEngine owns retrieval and batch orchestration here, but canonical
+ * persistence must wait for the matching image/audio. These temporary drafts
+ * therefore materialize only inside the engine result and are invalidated as
+ * soon as the caller extracts the ordered window.
+ *
+ * Identical concurrent reads are promise-deduplicated. generateBlocksBatch
+ * may ask for N contexts, but a sequential window still consumes one physical
+ * RAG snapshot rather than 4*N database queries.
+ */
+class ContextOnlyRagProvider extends RagProvider {
+  private readonly pendingReads = new Map<string, Promise<unknown>>();
+  private draftIndex = 0;
+
+  private dedupe<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const existing = this.pendingReads.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+    const pending = operation();
+    this.pendingReads.set(key, pending);
+    void pending.finally(() => {
+      if (this.pendingReads.get(key) === pending) this.pendingReads.delete(key);
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  override getBlockCount(channelId: string): Promise<number> {
+    return this.dedupe(`count:${channelId}`, () => super.getBlockCount(channelId));
+  }
+
+  override getLoreAtoms(channelId: string): Promise<NarrativeLore[]> {
+    return this.dedupe(`lore:${channelId}`, () => super.getLoreAtoms(channelId));
+  }
+
+  override getHybridSearchCandidates(channelId: string, query: string, limit: number): Promise<HybridCandidate<NarrativeBlock>[]> {
+    return this.dedupe(`hybrid:${channelId}:${limit}:${query}`, () => super.getHybridSearchCandidates(channelId, query, limit));
+  }
+
+  override getNotableEvents(channelId: string): Promise<NarrativeBlock[]> {
+    return this.dedupe(`notable:${channelId}`, () => super.getNotableEvents(channelId));
+  }
+
+  override getBlocksByIndices(channelId: string, indices: readonly number[]): Promise<NarrativeBlock[]> {
+    return this.dedupe(`indices:${channelId}:${indices.join(",")}`, () => super.getBlocksByIndices(channelId, indices));
+  }
+
+  override async insertBlock(channelId: string, draft: NarrativeBlockInput): Promise<NarrativeBlock> {
+    const index = ++this.draftIndex;
+    return {
+      ...draft,
+      id: `canonical-window-draft-${index}`,
+      index,
+      channelId,
+      content: draft.content,
+      happenedAt: typeof draft.happenedAt === "number" ? draft.happenedAt : Date.now(),
+    };
+  }
+}
+
+class DedupePxProvider extends PxProvider {
+  private readonly pending = new Map<string, Promise<PxEnrichment>>();
+
+  override enrichContext(request: PxProviderRequest<NarrativeBlock, NarrativeLore>): Promise<PxEnrichment> {
+    const key = `${request.channelId}:${request.inputQuery}:${request.chronologicalBlocks.map((block) => block.id).join(",")}`;
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    const pending = super.enrichContext(request);
+    this.pending.set(key, pending);
+    void pending.finally(() => {
+      if (this.pending.get(key) === pending) this.pending.delete(key);
+    }).catch(() => undefined);
+    return pending;
+  }
+}
+
+const generationProvider: GenerationProvider<NarrativeBlockInput, NarrativeBlock, NarrativeLore, SequentialWindowParameters> = {
+  async generateBlock(request) {
+    const [draft] = await generateSequentialWindowDrafts([request]);
+    if (!draft) throw new Error("Sequential window provider returned no draft.");
+    return draft;
+  },
+  generateBlocksBatch: generateSequentialWindowDrafts,
+};
+
 const engine = new NarrativeEngine({
-  dataProvider: new RagProvider(),
-  pxProvider: new PxProvider({
+  dataProvider: new ContextOnlyRagProvider(),
+  generationProvider,
+  pxProvider: new DedupePxProvider({
     getRequiredEntities,
     getRequiredEntityManifests,
   }),
   config: {
-    representationProperties: characterRepresentationProperties,
+    preferredEntityRepresentationProperties: characterRepresentationProperties,
+    blockRetrieval: {
+      maximumBlocks: 12,
+      steps: [
+        { takeNewestBlocks: 7 },
+        { addNotableBlocksUntilThereAre: 5 },
+      ],
+    },
     // PX is complementary only: a NAP/MCP/LLM hiccup must degrade to a
     // warning, never nuke the RAG chronologicalBlocks/lore already gathered.
-    pxErrorPolicy: "continue"
+    enrichmentFailureBehavior: "continue",
   }
  });
 
@@ -108,6 +223,126 @@ const storyBlockSchema = z.object({
       "Whether this block is notable. Only include for major plot points, discoveries, character changes, or significant story developments.",
     ),
 });
+
+function queuePromptLog(
+  channelId: string,
+  sessionId: number | undefined,
+  entry: Record<string, unknown>,
+  prefix = "prompt",
+): void {
+  void (async () => {
+    try {
+      const now = new Date();
+      const dateStr = now.toISOString().split("T")[0];
+      const timestampStr = now.toISOString().replace(/[:.]/g, "-");
+      const sessionStr = sessionId ? `${sessionId}` : "unknown";
+      const logDir = path.join(process.cwd(), "logs", "prompts", sessionStr, channelId, dateStr);
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.writeFile(
+        path.join(logDir, `${prefix}_${timestampStr}.json`),
+        `${JSON.stringify({ timestamp: now.toISOString(), sessionId, channelId, ...entry }, null, 2)}\n`,
+      );
+    } catch (error) {
+      logger.warn("Failed to persist prompt log", "blocks", error instanceof Error ? error : new Error(String(error)), {
+        channelId,
+        sessionId,
+        prefix,
+      });
+    }
+  })();
+}
+
+async function generateSequentialWindowDrafts(
+  requests: readonly GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters>[],
+): Promise<readonly NarrativeBlockInput[]> {
+  const first = requests[0];
+  if (!first) return [];
+  const count = requests.length;
+  const parameters = first.parameters;
+  const previousContext = parameters?.previousContext ?? first.context.inputQuery;
+  const storyGeneration = loadStoryGenerationConfig();
+  const systemInstructions = [
+    createStoryBlockSystemInstructions({
+      isResolving: false,
+      publicChoicesEnabled: storyGeneration.publicChoicesEnabled,
+    }),
+    `Compose exactly ${count} chronological story sections in one response.`,
+    "Block 1 continues the context. Each subsequent block must continue the previous block within this same response.",
+    "Do not produce alternative candidates. Block order is canonical and must never be reordered.",
+  ].join("\n\n");
+  const contextPrompt = createStoryBlockContextPrompt({
+    previousBlock: previousContext,
+    ragContext: first.context.prompt !== previousContext ? first.context.prompt : undefined,
+  });
+  const prompt = `context: ${contextPrompt}\n\nReturn all ${count} blocks.`;
+  const { provider, model } = getAiConfiguration().text;
+  const aiCall = logAiCall({
+    method: "generateText",
+    provider,
+    model,
+    parameters: {
+      channelId: first.context.channelId,
+      batchId: parameters?.batchId,
+      blockCount: count,
+      output: { format: "object", name: "sequential_story_window" },
+    },
+    instructions: systemInstructions,
+    prompt,
+  });
+
+  let response;
+  try {
+    response = await generateText({
+      model: getLanguageModel(),
+      instructions: systemInstructions,
+      prompt,
+      output: Output.object({
+        schema: z.object({ blocks: z.array(storyBlockSchema).length(count) }),
+        name: "sequential_story_window",
+        description: "A strictly ordered window of consecutive canonical story blocks.",
+      }),
+    });
+    if (response.output) {
+      logAiCallComplete("generateText", aiCall, {
+        output: "structured_batch",
+        blockCount: response.output.blocks.length,
+      });
+    }
+  } catch (error) {
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
+  }
+  if (!response.output || response.output.blocks.length !== count) {
+    const error = new Error(`Sequential story window returned ${response.output?.blocks.length ?? 0} blocks; expected ${count}.`);
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
+  }
+
+  queuePromptLog(first.context.channelId, parameters?.sessionId, {
+    batchId: parameters?.batchId,
+    blockCount: count,
+    previousContext,
+    enrichedContext: first.context.prompt !== previousContext ? first.context.prompt : undefined,
+    systemInstructions,
+    prompt,
+    response: response.output.blocks,
+  }, "batch_prompt");
+
+  return response.output.blocks.map((block, ordinal) => {
+    const draft: NarrativeBlockInput = {
+      ...block,
+      sessionId: parameters?.sessionId,
+      windowOrdinal: ordinal,
+      windowBatchId: parameters?.batchId,
+      isNotable: block.isNotable,
+    };
+    if (!storyGeneration.publicChoicesEnabled) {
+      delete draft.optionA;
+      delete draft.optionB;
+    }
+    return draft;
+  });
+}
 
 function getEngineSelectionConfig(): { representationProperties: readonly string[]; maxUniqueEntityRepresentations: number } {
   try {
@@ -200,12 +435,12 @@ export async function generateStoryBlock(channelId: string, previousContext: str
 }
 
 /**
- * Generate a bounded canonical chain from one RAG/PX retrieval snapshot.
+ * Generate a bounded canonical chain through NarrativeEngine's batch API.
  *
- * Text remains ordered because every draft becomes the next draft's immediate
- * context.  Media is intentionally not generated here: callers admit media
- * only for real canonical slots they have capacity to stage, so a text window
- * can never fill the prepared playback queue speculatively.
+ * The generation provider returns one validated ordered array so later items
+ * are authored with earlier items in the same model response. Media is
+ * intentionally not generated here: callers admit only the ordinary refill
+ * deficit, so text cannot fill the prepared playback queue speculatively.
  */
 export async function generateCanonicalStoryWindow(
   channelId: string,
@@ -213,46 +448,73 @@ export async function generateCanonicalStoryWindow(
   blockCount: number,
   sessionId?: number,
 ): Promise<StoryBlockResult[]> {
-  const count = Math.max(0, Math.min(5, Math.floor(blockCount)));
+  const configuredCount = Math.max(0, Math.min(5, Math.floor(blockCount)));
+  // Until winner promotion exists, a public decision is a hard lookahead
+  // boundary: never invent canonical descendants past an unresolved choice.
+  const count = loadStoryGenerationConfig().publicChoicesEnabled
+    ? Math.min(1, configuredCount)
+    : configuredCount;
   if (count === 0) return [];
-  let enrichedContext = previousContext;
-  let narrativeContext: unknown | undefined;
-  let imageRepresentations: SelectedImageRepresentation[] | undefined;
-  let contextFailure: ContextFailure | undefined;
+  const batchId = `${channelId}:${sessionId ?? "ambient"}:${Date.now()}`;
   try {
-    const resolved = await generateContextWithTimeout(channelId, previousContext);
-    enrichedContext = resolved.prompt;
-    narrativeContext = resolved.narrativeContext;
-    imageRepresentations = resolved.imageRepresentations;
+    const results = await engine.generateBlocksBatch(
+      Array.from({ length: count }, (_, ordinal) => ({
+        channelId,
+        inputQuery: previousContext,
+        parameters: {
+          batchId,
+          ordinal,
+          count,
+          previousContext,
+          ...(sessionId !== undefined ? { sessionId } : {}),
+        },
+      })),
+    );
+    if (results.length !== count) {
+      throw new Error(`NarrativeEngine returned ${results.length} canonical drafts; expected ${count}.`);
+    }
+    return results.map(({ block, context }) => {
+      const { representationProperties, maxUniqueEntityRepresentations } = getEngineSelectionConfig();
+      const imageRepresentations = selectImageRepresentations(
+        context.entities ?? [],
+        representationProperties,
+        maxUniqueEntityRepresentations,
+      );
+      return {
+        title: typeof block.title === "string" ? block.title : "Untitled",
+        content: block.content,
+        ...(typeof block.dialogue === "string" ? { dialogue: block.dialogue } : {}),
+        ...(block.optionA ? { optionA: block.optionA as StoryBlockResult["optionA"] } : {}),
+        ...(block.optionB ? { optionB: block.optionB as StoryBlockResult["optionB"] } : {}),
+        narrativeContext: context,
+        imageRepresentations,
+        selectedImageRepresentations: imageRepresentations,
+      };
+    });
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
-    logger.warn("[NLP] Canonical window context failed; using immediate context", "blocks", error, { channelId, sessionId });
-    contextFailure = { reason: "backend_error", name: error.name, message: error.message.slice(0, 500) };
-  }
-
-  const generated: StoryBlockResult[] = [];
-  let immediateContext = previousContext;
-  for (let index = 0; index < count; index += 1) {
-    // Preserve retrieved history while explicitly injecting the newest
-    // generated continuation, which NarrativeEngine could not know when its
-    // one context build began.
-    const contextualPrompt = index === 0
-      ? enrichedContext
-      : `${enrichedContext}\n\nSequential continuation generated in this window:\n${immediateContext}`;
-    const block = await buildBlockFromContext(
+    logger.warn("[NLP] NarrativeEngine canonical batch failed", "blocks", error, {
       channelId,
-      immediateContext,
-      contextualPrompt,
-      narrativeContext,
-      imageRepresentations,
-      index === count - 1,
       sessionId,
-      contextFailure,
-    );
-    generated.push(block);
-    immediateContext = block.content;
+      batchId,
+      blockCount: count,
+    });
+    queuePromptLog(channelId, sessionId, {
+      batchId,
+      blockCount: count,
+      previousContext,
+      contextFailure: {
+        reason: "backend_error",
+        name: error.name,
+        message: error.message.slice(0, 500),
+      },
+    }, "batch_failure");
+    throw error;
+  } finally {
+    // generateBlocksBatch materializes context-only drafts in the engine's
+    // cache. They are not canonical until media persistence succeeds.
+    engine.invalidateChannel(channelId);
   }
-  return generated;
 }
 
 /** Why the prompt fell back to immediate context (persisted in the prompt log). */
@@ -432,28 +694,48 @@ export async function generateStoryImage(description: string, options: GenerateS
     prompt: text,
   });
 
-  let response;
+  let base64Image: string | undefined;
   try {
-    response = await generateImage({
-      model: getImageModel(),
-      prompt,
-      n: 1,
-      aspectRatio: "16:9",
-      // Broadcast has an archived-image fallback. Do not spend its available
-      // playout buffer waiting through SDK retries when a provider is rate
-      // limited or out of quota.
-      maxRetries: 0,
-      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-    });
-    if (response.image?.base64) {
+    if (provider === "huggingface") {
+      const image = await getHuggingFaceImageClient().imageTextToImage(
+        {
+          provider: "fal-ai",
+          model,
+          ...(usable[0] ? { inputs: new Blob([usable[0]]) } : {}),
+          parameters: {
+            prompt: text,
+            // FLUX.2 supports target_size for image-to-image requests. It
+            // preserves the story artwork's required 16:9 framing.
+            target_size: { width: 1536, height: 864 },
+          },
+        },
+        {
+          retry_on_error: false,
+          ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+        },
+      );
+      base64Image = Buffer.from(await image.arrayBuffer()).toString("base64");
+    } else {
+      const response = await generateImage({
+        model: getImageModel(),
+        prompt,
+        n: 1,
+        aspectRatio: "16:9",
+        // Broadcast has an archived-image fallback. Do not spend its available
+        // playout buffer waiting through SDK retries when a provider is rate
+        // limited or out of quota.
+        maxRetries: 0,
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      });
+      base64Image = response.image?.base64;
+    }
+    if (base64Image) {
       logAiCallComplete("generateImage", aiCall, { image: "returned", references: usable.length });
     }
   } catch (error) {
     logAiCallFailure("generateImage", aiCall, error);
     throw error;
   }
-
-  const base64Image = response.image?.base64;
 
   if (!base64Image) {
     const error = new Error("No image data returned from the configured AI provider.");

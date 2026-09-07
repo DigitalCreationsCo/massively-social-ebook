@@ -5,7 +5,11 @@ const {
   mockGenerateImage,
   mockGetLanguageModel,
   mockGetImageModel,
+  mockGetHuggingFaceImageClient,
+  imageConfiguration,
   mockBuildContext,
+  mockGenerateBlocksBatch,
+  mockInvalidateChannel,
   engineOptions,
 } = vi.hoisted(() => ({
   engineOptions: { value: undefined as unknown },
@@ -13,9 +17,13 @@ const {
   mockGenerateImage: vi.fn(),
   mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
   mockGetImageModel: vi.fn(() => ({ provider: "test" })),
+  mockGetHuggingFaceImageClient: vi.fn(),
+  imageConfiguration: { provider: "test", model: "test-image-model" },
   mockBuildContext: vi.fn(({ inputQuery }: { inputQuery: string }) =>
     Promise.resolve({ prompt: inputQuery }),
   ),
+  mockGenerateBlocksBatch: vi.fn(),
+  mockInvalidateChannel: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -27,10 +35,11 @@ vi.mock("ai", () => ({
 vi.mock("./ai-provider", () => ({
   getAiConfiguration: () => ({
     text: { provider: "test", model: "test-text-model" },
-    image: { provider: "test", model: "test-image-model" },
+    image: imageConfiguration,
   }),
   getLanguageModel: mockGetLanguageModel,
   getImageModel: mockGetImageModel,
+  getHuggingFaceImageClient: mockGetHuggingFaceImageClient,
 }));
 
 vi.mock("./rag", () => ({ RagProvider: class {} }));
@@ -39,6 +48,8 @@ vi.mock("@portalshq/narrativeengine", () => ({
   NarrativeEngine: class {
     constructor(options: unknown) { engineOptions.value = options; }
     buildContext = mockBuildContext;
+    generateBlocksBatch = mockGenerateBlocksBatch;
+    invalidateChannel = mockInvalidateChannel;
   },
 }));
 
@@ -49,14 +60,38 @@ describe("AI Generators", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    imageConfiguration.provider = "test";
+    imageConfiguration.model = "test-image-model";
     mockBuildContext.mockImplementation(({ inputQuery }: { inputQuery: string }) =>
       Promise.resolve({ prompt: inputQuery }),
     );
+    mockGenerateBlocksBatch.mockImplementation(async (requests: Array<{ channelId: string; inputQuery: string; parameters: unknown }>) => {
+      const options = engineOptions.value as {
+        generationProvider: {
+          generateBlocksBatch: (requests: Array<{ context: unknown; parameters: unknown }>) => Promise<Array<Record<string, unknown>>>;
+        };
+      };
+      const contexts = await Promise.all(requests.map((request) => mockBuildContext(request)));
+      const drafts = await options.generationProvider.generateBlocksBatch(
+        requests.map((request, index) => ({ context: { ...contexts[index], channelId: request.channelId, inputQuery: request.inputQuery, entities: [] }, parameters: request.parameters })),
+      );
+      return drafts.map((block, index) => ({ block, context: contexts[index] }));
+    });
   });
 
   it("configures NarrativeEngine to prefer character sheets and fall back to portraits", () => {
     expect(engineOptions.value).toMatchObject({
-      config: { pxErrorPolicy: "continue", representationProperties: ["character_sheet", "portrait"] },
+      config: {
+        enrichmentFailureBehavior: "continue",
+        preferredEntityRepresentationProperties: ["character_sheet", "portrait"],
+        blockRetrieval: {
+          maximumBlocks: 12,
+          steps: [
+            { takeNewestBlocks: 7 },
+            { addNotableBlocksUntilThereAre: 5 },
+          ],
+        },
+      },
     });
   });
 
@@ -157,17 +192,21 @@ describe("AI Generators", () => {
       expect(result.title).toBe("Resolution Title");
     });
 
-    it("builds RAG/PX context once for a dependent canonical text window", async () => {
+    it("uses NarrativeEngine.generateBlocksBatch for one dependent canonical text window", async () => {
       mockBuildContext.mockResolvedValueOnce({ prompt: "Retrieved story history" });
-      mockGenerateText
-        .mockResolvedValueOnce({ output: { title: "One", content: "First continuation.", isNotable: false } })
-        .mockResolvedValueOnce({ output: { title: "Two", content: "Second continuation.", isNotable: false } });
+      mockGenerateText.mockResolvedValueOnce({ output: { blocks: [
+        { title: "One", content: "First continuation.", isNotable: false },
+        { title: "Two", content: "Second continuation.", isNotable: false },
+      ] } });
 
       const blocks = await generateCanonicalStoryWindow("scifi", "Previous block.", 2, 5);
 
       expect(blocks.map((block) => block.content)).toEqual(["First continuation.", "Second continuation."]);
-      expect(mockBuildContext).toHaveBeenCalledTimes(1);
-      expect(mockGenerateText.mock.calls[1][0].prompt).toContain("First continuation.");
+      expect(mockGenerateBlocksBatch).toHaveBeenCalledTimes(1);
+      expect(mockGenerateBlocksBatch.mock.calls[0][0]).toHaveLength(2);
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(mockGenerateText.mock.calls[0][0].instructions).toContain("chronological story sections");
+      expect(mockInvalidateChannel).toHaveBeenCalledWith("scifi");
     });
   });
 
@@ -257,6 +296,32 @@ describe("AI Generators", () => {
       await generateStoryImage("A scene", { abortSignal: controller.signal });
 
       expect(mockGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ abortSignal: controller.signal }));
+    });
+
+    it("uses Hugging Face FLUX.2 through fal-ai and converts its Blob response to raw base64", async () => {
+      imageConfiguration.provider = "huggingface";
+      imageConfiguration.model = "black-forest-labs/FLUX.2-dev";
+      const imageTextToImage = vi.fn().mockResolvedValue(new Blob([Buffer.from("hf-image")]));
+      mockGetHuggingFaceImageClient.mockReturnValue({ imageTextToImage });
+      const controller = new AbortController();
+
+      const result = await generateStoryImage("A scene", {
+        referenceImages: [Buffer.from([1, 2, 3]), Buffer.from([4, 5, 6])],
+        abortSignal: controller.signal,
+      });
+
+      expect(imageTextToImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "fal-ai",
+          model: "black-forest-labs/FLUX.2-dev",
+          parameters: expect.objectContaining({ target_size: { width: 1536, height: 864 } }),
+        }),
+        expect.objectContaining({ retry_on_error: false, signal: controller.signal }),
+      );
+      const request = imageTextToImage.mock.calls[0][0] as { inputs: Blob };
+      expect(Buffer.from(await request.inputs.arrayBuffer())).toEqual(Buffer.from([1, 2, 3]));
+      expect(result).toBe(Buffer.from("hf-image").toString("base64"));
+      expect(mockGenerateImage).not.toHaveBeenCalled();
     });
   });
 
