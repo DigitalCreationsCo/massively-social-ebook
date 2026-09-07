@@ -395,6 +395,15 @@ export const blocks = pgTable(
   (table) => {
     return {
       idxBlocksChannelId: index("idx_blocks_channel_id").on(table.channelId),
+      idxBlocksChannelSequence: index("idx_blocks_channel_sequence").on(
+        table.channelId,
+        table.id,
+      ),
+      idxBlocksChannelNotableSequence: index("idx_blocks_channel_notable_sequence").on(
+        table.channelId,
+        table.isNotable,
+        table.id,
+      ),
       idxBlocksSessionId: index("idx_blocks_session_id").on(table.sessionId),
       idxBlocksEmbedding: index("idx_blocks_embedding").using(
         "hnsw",

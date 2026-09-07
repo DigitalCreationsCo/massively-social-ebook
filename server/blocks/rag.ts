@@ -370,6 +370,123 @@ export class RagProvider
     }));
   }
 
+  /** Fast path for a recent-first NarrativeEngine retrieval recipe. */
+  async getNewestBlocks(channelId: string, limit: number): Promise<BaseNarrativeBlock[]> {
+    if (limit <= 0) return [];
+    if (this.options.sqlite) {
+      const rows = this.options.sqlite.prepare(
+        `SELECT b.*, (
+          SELECT COUNT(*) FROM blocks prior
+          WHERE prior.channel_id = b.channel_id AND prior.id <= b.id
+        ) AS narrative_index
+        FROM blocks b WHERE b.channel_id = ? ORDER BY b.id DESC LIMIT ?`,
+      ).all(channelId, limit) as SqliteBlockRow[];
+      return rows.map((row) => ({
+        id: row.id,
+        index: row.narrative_index ?? row.id,
+        channelId: row.channel_id,
+        title: row.title,
+        content: row.content,
+        imageUrl: row.image_url,
+        optionA: row.option_a,
+        optionB: row.option_b,
+        isNotable: Boolean(row.is_notable),
+        embedding: row.embedding ? JSON.parse(row.embedding) : null,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        happenedAt: toTimestamp(row.created_at),
+      }));
+    }
+
+    const { db } = await import("../db");
+    const result = await withRagDbSlot(() => db.execute(sql`
+      SELECT b.*, (
+        SELECT COUNT(*) FROM blocks prior
+        WHERE prior.channel_id = b.channel_id AND prior.id <= b.id
+      ) AS narrative_index
+      FROM blocks b WHERE b.channel_id = ${channelId}
+      ORDER BY b.id DESC LIMIT ${limit}
+    `));
+    return (result.rows as Array<Record<string, unknown>>).map((row) => ({
+      id: Number(row.id),
+      index: Number(row.narrative_index),
+      channelId: String(row.channel_id),
+      title: typeof row.title === "string" ? row.title : null,
+      content: String(row.content),
+      imageUrl: typeof row.image_url === "string" ? row.image_url : null,
+      optionA: row.option_a,
+      optionB: row.option_b,
+      isNotable: row.is_notable === true,
+      embedding: row.embedding,
+      createdAt: row.created_at ? new Date(String(row.created_at)) : null,
+      happenedAt: row.created_at ? new Date(String(row.created_at)).getTime() : 0,
+    }));
+  }
+
+  /** Fetch only the additional notable blocks required to fill a retrieval recipe. */
+  async getNewestNotableBlocks(
+    channelId: string,
+    limit: number,
+    excludeBlockIds: readonly string[] = [],
+  ): Promise<BaseNarrativeBlock[]> {
+    if (limit <= 0) return [];
+    const excluded = excludeBlockIds.map(Number).filter(Number.isSafeInteger);
+    if (this.options.sqlite) {
+      const exclusions = excluded.length > 0
+        ? ` AND b.id NOT IN (${excluded.map(() => "?").join(", ")})`
+        : "";
+      const rows = this.options.sqlite.prepare(
+        `SELECT b.*, (
+          SELECT COUNT(*) FROM blocks prior
+          WHERE prior.channel_id = b.channel_id AND prior.id <= b.id
+        ) AS narrative_index
+        FROM blocks b WHERE b.channel_id = ? AND b.is_notable = 1${exclusions}
+        ORDER BY b.id DESC LIMIT ?`,
+      ).all(channelId, ...excluded, limit) as SqliteBlockRow[];
+      return rows.map((row) => ({
+        id: row.id,
+        index: row.narrative_index ?? row.id,
+        channelId: row.channel_id,
+        title: row.title,
+        content: row.content,
+        imageUrl: row.image_url,
+        optionA: row.option_a,
+        optionB: row.option_b,
+        isNotable: true,
+        embedding: row.embedding ? JSON.parse(row.embedding) : null,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        happenedAt: toTimestamp(row.created_at),
+      }));
+    }
+
+    const excludedSql = excluded.length > 0
+      ? sql`AND b.id NOT IN (${sql.join(excluded.map((id) => sql`${id}`), sql`, `)})`
+      : sql``;
+    const { db } = await import("../db");
+    const result = await withRagDbSlot(() => db.execute(sql`
+      SELECT b.*, (
+        SELECT COUNT(*) FROM blocks prior
+        WHERE prior.channel_id = b.channel_id AND prior.id <= b.id
+      ) AS narrative_index
+      FROM blocks b
+      WHERE b.channel_id = ${channelId} AND b.is_notable = true ${excludedSql}
+      ORDER BY b.id DESC LIMIT ${limit}
+    `));
+    return (result.rows as Array<Record<string, unknown>>).map((row) => ({
+      id: Number(row.id),
+      index: Number(row.narrative_index),
+      channelId: String(row.channel_id),
+      title: typeof row.title === "string" ? row.title : null,
+      content: String(row.content),
+      imageUrl: typeof row.image_url === "string" ? row.image_url : null,
+      optionA: row.option_a,
+      optionB: row.option_b,
+      isNotable: true,
+      embedding: row.embedding,
+      createdAt: row.created_at ? new Date(String(row.created_at)) : null,
+      happenedAt: row.created_at ? new Date(String(row.created_at)).getTime() : 0,
+    }));
+  }
+
   async getBlocksByIndices(channelId: string, indices: readonly number[]): Promise<BaseNarrativeBlock[]> {
     if (indices.length === 0) return [];
 

@@ -55,6 +55,7 @@ describe("RagProvider SQLite integration", () => {
     provider = new RagProvider({
       sqlite: database,
       generateEmbedding: vi.fn().mockResolvedValue([1, 0]),
+      useEmbeddings: true,
     });
   });
 
@@ -95,6 +96,10 @@ describe("RagProvider SQLite integration", () => {
     await expect(provider.getNotableEvents("alpha")).resolves.toMatchObject([
       { id: 1, channelId: "alpha", isNotable: true },
     ]);
+    await expect(provider.getNewestBlocks("alpha", 1)).resolves.toMatchObject([
+      { id: 2, index: 2, channelId: "alpha" },
+    ]);
+    await expect(provider.getNewestNotableBlocks("alpha", 1, ["1"])).resolves.toEqual([]);
     await expect(provider.getBlocksByIndices("alpha", [2, 3])).resolves.toMatchObject([
       { id: 2, channelId: "alpha", content: "The council splits after a disputed vote." },
     ]);
