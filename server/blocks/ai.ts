@@ -145,8 +145,8 @@ const engine = new NarrativeEngine({
     blockRetrieval: {
       maximumBlocks: 12,
       steps: [
-        { takeNewestBlocks: 7 },
-        { addNotableBlocksUntilThereAre: 5 },
+        { takeNewestBlocks: 10 },
+        { addNotableBlocksUntilThereAre: 3 },
       ],
     },
     // PX is complementary only: a NAP/MCP/LLM hiccup must degrade to a
