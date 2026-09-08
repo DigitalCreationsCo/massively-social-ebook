@@ -5,7 +5,6 @@ const {
   mockGenerateImage,
   mockGetLanguageModel,
   mockGetImageModel,
-  mockGetGoogleGenAiImageClient,
   mockGetHuggingFaceImageClient,
   imageConfiguration,
   mockBuildContext,
@@ -18,7 +17,6 @@ const {
   mockGenerateImage: vi.fn(),
   mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
   mockGetImageModel: vi.fn(() => ({ provider: "test" })),
-  mockGetGoogleGenAiImageClient: vi.fn(),
   mockGetHuggingFaceImageClient: vi.fn(),
   imageConfiguration: { provider: "test", model: "test-image-model" },
   mockBuildContext: vi.fn(({ inputQuery }: { inputQuery: string }) =>
@@ -41,7 +39,6 @@ vi.mock("./ai-provider", () => ({
   }),
   getLanguageModel: mockGetLanguageModel,
   getImageModel: mockGetImageModel,
-  getGoogleGenAiImageClient: mockGetGoogleGenAiImageClient,
   getHuggingFaceImageClient: mockGetHuggingFaceImageClient,
 }));
 
@@ -324,23 +321,6 @@ describe("AI Generators", () => {
       const request = imageTextToImage.mock.calls[0][0] as { inputs: Blob };
       expect(Buffer.from(await request.inputs.arrayBuffer())).toEqual(Buffer.from([1, 2, 3]));
       expect(result).toBe(Buffer.from("hf-image").toString("base64"));
-      expect(mockGenerateImage).not.toHaveBeenCalled();
-    });
-
-    it("uses the direct Vertex GenAI client and includes every supported reference image", async () => {
-      imageConfiguration.provider = "google";
-      imageConfiguration.model = "gemini-2.5-flash-image";
-      const generateContent = vi.fn().mockResolvedValue({
-        candidates: [{ content: { parts: [{ inlineData: { data: "Z29vZ2xlLWltYWdl" } }] } }],
-      });
-      mockGetGoogleGenAiImageClient.mockReturnValue({ models: { generateContent } });
-      const refs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3]), Buffer.from([4])];
-
-      await expect(generateStoryImage("A scene", { referenceImages: refs })).resolves.toBe("Z29vZ2xlLWltYWdl");
-
-      const request = generateContent.mock.calls[0][0] as { contents: Array<{ parts: Array<{ inlineData?: { data: string } }> }> };
-      expect(request.config).toEqual(expect.objectContaining({ responseModalities: ["TEXT", "IMAGE"] }));
-      expect(request.contents[0].parts.filter((part) => part.inlineData)).toHaveLength(3);
       expect(mockGenerateImage).not.toHaveBeenCalled();
     });
   });
