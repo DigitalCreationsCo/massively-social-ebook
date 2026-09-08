@@ -5,6 +5,7 @@ const {
   mockGenerateImage,
   mockGetLanguageModel,
   mockGetImageModel,
+  mockGetGoogleGenAiImageClient,
   mockGetHuggingFaceImageClient,
   imageConfiguration,
   mockBuildContext,
@@ -17,6 +18,7 @@ const {
   mockGenerateImage: vi.fn(),
   mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
   mockGetImageModel: vi.fn(() => ({ provider: "test" })),
+  mockGetGoogleGenAiImageClient: vi.fn(),
   mockGetHuggingFaceImageClient: vi.fn(),
   imageConfiguration: { provider: "test", model: "test-image-model" },
   mockBuildContext: vi.fn(({ inputQuery }: { inputQuery: string }) =>
@@ -39,6 +41,7 @@ vi.mock("./ai-provider", () => ({
   }),
   getLanguageModel: mockGetLanguageModel,
   getImageModel: mockGetImageModel,
+  getGoogleGenAiImageClient: mockGetGoogleGenAiImageClient,
   getHuggingFaceImageClient: mockGetHuggingFaceImageClient,
 }));
 
@@ -114,7 +117,7 @@ describe("AI Generators", () => {
       expect(mockGenerateText.mock.calls[0][0].instructions).toContain(
         "Characters don't make stupid decisions",
       );
-      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Current story context:");
+      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Previous block text");
       expect(result.title).toBe("Test Title");
       expect(result.content).toBe("Test content here.");
       expect(result.optionA).toBeUndefined();
@@ -171,7 +174,7 @@ describe("AI Generators", () => {
 
       await generateStoryBlock("scifi", "The crew arrived.");
 
-      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("Story So Far");
+      expect(mockGenerateText.mock.calls[0][0].prompt).toContain("The crew arrived.");
     });
 
     it("removes options when resolving a story", async () => {
@@ -323,6 +326,23 @@ describe("AI Generators", () => {
       expect(result).toBe(Buffer.from("hf-image").toString("base64"));
       expect(mockGenerateImage).not.toHaveBeenCalled();
     });
+
+    it("uses the direct Vertex GenAI client and includes every supported reference image", async () => {
+      imageConfiguration.provider = "google";
+      imageConfiguration.model = "gemini-2.5-flash-image";
+      const generateContent = vi.fn().mockResolvedValue({
+        candidates: [{ content: { parts: [{ inlineData: { data: "Z29vZ2xlLWltYWdl" } }] } }],
+      });
+      mockGetGoogleGenAiImageClient.mockReturnValue({ models: { generateContent } });
+      const refs = [Buffer.from([1]), Buffer.from([2]), Buffer.from([3]), Buffer.from([4])];
+
+      await expect(generateStoryImage("A scene", { referenceImages: refs })).resolves.toBe("Z29vZ2xlLWltYWdl");
+
+      const request = generateContent.mock.calls[0][0] as { contents: Array<{ parts: Array<{ inlineData?: { data: string } }> }> };
+      expect(request.config).toEqual(expect.objectContaining({ responseModalities: ["TEXT", "IMAGE"] }));
+      expect(request.contents[0].parts.filter((part) => part.inlineData)).toHaveLength(3);
+      expect(mockGenerateImage).not.toHaveBeenCalled();
+    });
   });
 
   describe("generateContextWithTimeout / StoryBlockResult context", () => {
@@ -385,8 +405,8 @@ describe("AI Generators", () => {
       try {
         mockBuildContext.mockImplementationOnce(() => new Promise(() => undefined));
         const pending = generateContextWithTimeout("chan", "q");
-        const assertion = expect(pending).rejects.toThrow("Context generation timeout (>12000ms)");
-        await vi.advanceTimersByTimeAsync(12000);
+        const assertion = expect(pending).rejects.toThrow("Context generation timeout (>15000ms)");
+        await vi.advanceTimersByTimeAsync(15000);
         await assertion;
       } finally {
         vi.useRealTimers();
@@ -394,6 +414,6 @@ describe("AI Generators", () => {
           Promise.resolve({ prompt: inputQuery }),
         );
       }
-    });
+    }, 10000);
   });
 });

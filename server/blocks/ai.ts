@@ -6,6 +6,7 @@ import {
   createStoryBlockContextPrompt,
   createStoryBlockSystemInstructions,
 } from "../../prompts/storyblock.prompt";
+import { composeEntitiesPrompt } from "../../prompts/entity-to-prose.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
 import {
   NarrativeEngine,
@@ -24,6 +25,7 @@ import { PxProvider, characterRepresentationProperties } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
 import {
   getAiConfiguration,
+  getGoogleGenAiImageClient,
   getHuggingFaceImageClient,
   getImageModel,
   getLanguageModel,
@@ -39,8 +41,8 @@ import { loadStoryGenerationConfig } from "../story-generation-config";
 
 export type { SelectedImageRepresentation };
 
-// Bounded context workflow: 12s cap, fallback to previousContext on timeout.
-const TIMEOUT_CONTEXT_MS = 12_000;
+// Bounded context workflow: 15s cap, fallback to previousContext on timeout.
+const TIMEOUT_CONTEXT_MS = 15_000;
 
 interface SequentialWindowParameters {
   batchId: string;
@@ -201,6 +203,62 @@ export interface ContextWithReferences {
   imageRepresentations: SelectedImageRepresentation[];
 }
 
+/**
+ * Creates a prompt string from narrative context using entity-to-prose for entity formatting.
+ * This function gives the application control over prompt creation instead of relying on
+ * NarrativeEngine's built-in prompt generation.
+ */
+function createPromptFromNarrativeContext(
+  narrativeContext: unknown,
+  inputQuery: string
+): string {
+  const context = narrativeContext as {
+    entities?: readonly unknown[];
+    chronologicalBlocks?: readonly { content: string; index: number }[];
+    loreAtoms?: readonly { content: string }[];
+    metadata?: { totalBlockCount: number };
+  };
+  
+  const sections: string[] = [];
+  
+  // Convert entities to prose using entity-to-prose
+  const entities = context.entities ?? [];
+  if (entities.length > 0) {
+    try {
+      const entitiesProse = composeEntitiesPrompt(entities as any[]);
+      if (entitiesProse) {
+        sections.push(entitiesProse);
+      }
+    } catch (error) {
+      console.warn("Failed to convert entities to prose, using fallback:", error);
+      // Fallback to simple JSON if entity-to-prose fails
+      sections.push(`Entities:\n${JSON.stringify(entities)}`);
+    }
+  }
+  
+  // Format chronological blocks using storyblock patterns
+  if (context.chronologicalBlocks && context.chronologicalBlocks.length > 0) {
+    const oldestFirst = [...context.chronologicalBlocks].reverse();
+    const totalBlockCount = context.metadata?.totalBlockCount ?? oldestFirst.length;
+    const blockLines = oldestFirst.map((block) => {
+      const offset = Math.max(1, totalBlockCount - block.index + 1);
+      const unit = offset === 1 ? "beat" : "beats";
+      return `${offset} ${unit} ago: ${block.content}`;
+    });
+    sections.push(`Historical context:\n${blockLines.join('\n')}`);
+  }
+  
+  // Format lore atoms
+  if (context.loreAtoms && context.loreAtoms.length > 0) {
+    sections.push(`Essential facts of the story: ${context.loreAtoms.map((atom) => atom.content).join(" ")}`);
+  }
+  
+  // Add the input query
+  sections.push(inputQuery);
+  
+  return sections.join('\n\n');
+}
+
 const storyBlockSchema = z.object({
   title: z.string().describe("A short, engaging title for this block."),
   content: z.string().describe("The story content, max 3 sentences."),
@@ -223,6 +281,17 @@ const storyBlockSchema = z.object({
       "Whether this block is notable. Only include for major plot points, discoveries, character changes, or significant story developments.",
     ),
 });
+
+// ponytail: naive JSON extractor (fence + slice), upgrade to streaming parser if models return truncated JSON
+function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) return JSON.parse(fence[1].trim());
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+  return JSON.parse(trimmed);
+}
 
 function queuePromptLog(
   channelId: string,
@@ -270,11 +339,24 @@ async function generateSequentialWindowDrafts(
     "Block 1 continues the context. Each subsequent block must continue the previous block within this same response.",
     "Do not produce alternative candidates. Block order is canonical and must never be reordered.",
   ].join("\n\n");
+  
+  // Create our own context prompt using entity-to-prose
+  const narrativeContext = first.context as { entities?: readonly unknown[] };
+  const entities = narrativeContext.entities ?? [];
+  let entitiesProse = "";
+  if (entities.length > 0) {
+    try {
+      entitiesProse = composeEntitiesPrompt(entities as any[]);
+    } catch (error) {
+      console.warn("Failed to convert entities to prose for batch generation:", error);
+    }
+  }
+  
   const contextPrompt = createStoryBlockContextPrompt({
     previousBlock: previousContext,
-    ragContext: first.context.prompt !== previousContext ? first.context.prompt : undefined,
+    ragContext: entitiesProse || undefined,
   });
-  const prompt = `context: ${contextPrompt}\n\nReturn all ${count} blocks.`;
+  const prompt = `${contextPrompt}\n\nReturn all ${count} blocks.`;
   const { provider, model } = getAiConfiguration().text;
   const aiCall = logAiCall({
     method: "generateText",
@@ -290,9 +372,9 @@ async function generateSequentialWindowDrafts(
     prompt,
   });
 
-  let response;
+  let response: { output?: { blocks: z.infer<typeof storyBlockSchema>[] }; text?: string } | undefined;
   try {
-    response = await generateText({
+    const structured = await generateText({
       model: getLanguageModel(),
       instructions: systemInstructions,
       prompt,
@@ -302,6 +384,7 @@ async function generateSequentialWindowDrafts(
         description: "A strictly ordered window of consecutive canonical story blocks.",
       }),
     });
+    response = structured;
     if (response.output) {
       logAiCallComplete("generateText", aiCall, {
         output: "structured_batch",
@@ -309,11 +392,24 @@ async function generateSequentialWindowDrafts(
       });
     }
   } catch (error) {
-    logAiCallFailure("generateText", aiCall, error);
-    throw error;
+    logger.warn("[NLP] structured batch failed, falling back to JSON parse", "blocks", error instanceof Error ? error : new Error(String(error)), { channelId: first.context.channelId, batchId: parameters?.batchId });
+    try {
+      const fallback = await generateText({
+        model: getLanguageModel(),
+        instructions: `${systemInstructions}\n\nRespond with valid JSON only. No markdown, no explanation. Schema: {"blocks": [{"title": string, "content": string, "dialogue"?: string, "optionA"?: {"label": string, "description": string}, "optionB"?: {"label": string, "description": string}, "isNotable": boolean}]}`,
+        prompt: `${prompt}\n\nReturn JSON: {"blocks": [...]}`,
+      });
+      const parsed = extractJson(fallback.text) as { blocks: unknown };
+      const validated = z.object({ blocks: z.array(storyBlockSchema).length(count) }).parse(parsed);
+      response = { output: validated, text: fallback.text };
+      logAiCallComplete("generateText", aiCall, { output: "json_fallback_batch", blockCount: validated.blocks.length });
+    } catch (fallbackError) {
+      logAiCallFailure("generateText", aiCall, fallbackError);
+      throw fallbackError instanceof Error ? fallbackError : error;
+    }
   }
-  if (!response.output || response.output.blocks.length !== count) {
-    const error = new Error(`Sequential story window returned ${response.output?.blocks.length ?? 0} blocks; expected ${count}.`);
+  if (!response?.output || response.output.blocks.length !== count) {
+    const error = new Error(`Sequential story window returned ${response?.output?.blocks.length ?? 0} blocks; expected ${count}.`);
     logAiCallFailure("generateText", aiCall, error);
     throw error;
   }
@@ -371,10 +467,10 @@ export async function generateContextWithTimeout(channelId: string, inputQuery: 
   try {
     const contextPromise = engine
       .buildContext({ channelId, inputQuery })
-      .then((context) => {
+      .then((narrativeContext) => {
         // Select exclusively from nested entity representations. The deprecated
         // top-level `context.representations` list is never consulted.
-        const entities = (context as { entities?: readonly unknown[] }).entities ?? [];
+        const entities = (narrativeContext as { entities?: readonly unknown[] }).entities ?? [];
         const { representationProperties, maxUniqueEntityRepresentations } = getEngineSelectionConfig();
         const imageRepresentations = selectImageRepresentations(
           entities,
@@ -387,9 +483,20 @@ export async function generateContextWithTimeout(channelId: string, inputQuery: 
           pairs: imageRepresentations.map((r) => `${r.entityId}#${r.representationKey}`),
           hashes: imageRepresentations.map((r) => r.hash),
         });
+        
+        // Create our own prompt instead of using engine's prompt
+        let prompt: string;
+        try {
+          prompt = createPromptFromNarrativeContext(narrativeContext, inputQuery);
+        } catch (error) {
+          console.warn("Failed to create application prompt, falling back to engine prompt:", error);
+          // Fallback to engine's prompt if our creation fails
+          prompt = (narrativeContext as { prompt: string }).prompt;
+        }
+        
         return {
-          prompt: (context as { prompt: string }).prompt,
-          narrativeContext: context,
+          prompt,
+          narrativeContext,
           imageRepresentations,
         };
       });
@@ -559,9 +666,9 @@ async function buildBlockFromContext(
     prompt: contextPrompt,
   });
 
-  let response;
+  let response: { output?: z.infer<typeof storyBlockSchema>; text?: string } | undefined;
   try {
-    response = await generateText({
+    const structured = await generateText({
       model: getLanguageModel(),
       instructions: systemInstructions,
       prompt: contextPrompt,
@@ -571,6 +678,7 @@ async function buildBlockFromContext(
         description: "The next block in the interactive story.",
       }),
     });
+    response = structured;
     if (response.output) {
       logAiCallComplete("generateText", aiCall, {
         output: "structured",
@@ -578,11 +686,24 @@ async function buildBlockFromContext(
       });
     }
   } catch (error) {
-    logAiCallFailure("generateText", aiCall, error);
-    throw error;
+    logger.warn("[NLP] structured block failed, falling back to JSON parse", "blocks", error instanceof Error ? error : new Error(String(error)), { channelId });
+    try {
+      const fallback = await generateText({
+        model: getLanguageModel(),
+        instructions: `${systemInstructions}\n\nRespond with valid JSON only. No markdown, no explanation. Schema: {"title": string, "content": string, "dialogue"?: string, "optionA"?: {"label": string, "description": string}, "optionB"?: {"label": string, "description": string}, "isNotable": boolean}`,
+        prompt: `${contextPrompt}\n\nReturn JSON: {"title": "...", "content": "..."}`,
+      });
+      const parsed = extractJson(fallback.text) as unknown;
+      const validated = storyBlockSchema.parse(parsed);
+      response = { output: validated, text: fallback.text };
+      logAiCallComplete("generateText", aiCall, { output: "json_fallback", response: validated });
+    } catch (fallbackError) {
+      logAiCallFailure("generateText", aiCall, fallbackError);
+      throw fallbackError instanceof Error ? fallbackError : error;
+    }
   }
 
-  if (!response.output) {
+  if (!response?.output) {
     const error = new Error("Failed to generate story block: No structured output returned.");
     logAiCallFailure("generateText", aiCall, error);
     throw error;
@@ -650,6 +771,13 @@ export interface GenerateStoryImageOptions {
   abortSignal?: AbortSignal;
 }
 
+function toBase64ReferenceImage(image: NonNullable<GenerateStoryImageOptions["referenceImages"]>[number]): string {
+  if (typeof image === "string") {
+    return image.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+  }
+  return Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64");
+}
+
 /**
  * Generates an image via the configured AI SDK image provider and returns raw base64.
  *
@@ -696,7 +824,31 @@ export async function generateStoryImage(description: string, options: GenerateS
 
   let base64Image: string | undefined;
   try {
-    if (provider === "huggingface") {
+    if (provider === "google") {
+      const response = await getGoogleGenAiImageClient().models.generateContent({
+        model,
+        contents: [{
+          role: "user",
+          parts: [
+            { text },
+            ...usable.map((image) => ({
+              inlineData: {
+                mimeType: "image/png",
+                data: toBase64ReferenceImage(image),
+              },
+            })),
+          ],
+        }],
+        config: {
+          responseModalities: ["TEXT", "IMAGE"],
+          imageConfig: { aspectRatio: "16:9" },
+          ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        },
+      });
+      base64Image = response.candidates
+        ?.flatMap((candidate) => candidate.content?.parts ?? [])
+        .find((part) => part.inlineData?.data)?.inlineData?.data;
+    } else if (provider === "huggingface") {
       const image = await getHuggingFaceImageClient().imageTextToImage(
         {
           provider: "fal-ai",
