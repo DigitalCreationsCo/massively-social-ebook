@@ -25,7 +25,6 @@ import { PxProvider, characterRepresentationProperties } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
 import {
   getAiConfiguration,
-  getGoogleGenAiImageClient,
   getHuggingFaceImageClient,
   getImageModel,
   getLanguageModel,
@@ -824,31 +823,7 @@ export async function generateStoryImage(description: string, options: GenerateS
 
   let base64Image: string | undefined;
   try {
-    if (provider === "google") {
-      const response = await getGoogleGenAiImageClient().models.generateContent({
-        model,
-        contents: [{
-          role: "user",
-          parts: [
-            { text },
-            ...usable.map((image) => ({
-              inlineData: {
-                mimeType: "image/png",
-                data: toBase64ReferenceImage(image),
-              },
-            })),
-          ],
-        }],
-        config: {
-          responseModalities: ["TEXT", "IMAGE"],
-          imageConfig: { aspectRatio: "16:9" },
-          ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-        },
-      });
-      base64Image = response.candidates
-        ?.flatMap((candidate) => candidate.content?.parts ?? [])
-        .find((part) => part.inlineData?.data)?.inlineData?.data;
-    } else if (provider === "huggingface") {
+    if (provider === "huggingface") {
       const image = await getHuggingFaceImageClient().imageTextToImage(
         {
           provider: "fal-ai",
