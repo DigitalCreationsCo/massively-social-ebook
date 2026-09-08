@@ -87,8 +87,8 @@ describe("AI Generators", () => {
         blockRetrieval: {
           maximumBlocks: 12,
           steps: [
-            { takeNewestBlocks: 10 },
-            { addNotableBlocksUntilThereAre: 3 },
+            { takeNewestBlocks: 7 },
+            { addNotableBlocksUntilThereAre: 5 },
           ],
         },
       },

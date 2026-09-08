@@ -146,8 +146,8 @@ const engine = new NarrativeEngine({
     blockRetrieval: {
       maximumBlocks: 12,
       steps: [
-        { takeNewestBlocks: 10 },
-        { addNotableBlocksUntilThereAre: 3 },
+        { takeNewestBlocks: 7 },
+        { addNotableBlocksUntilThereAre: 5 },
       ],
     },
     // PX is complementary only: a NAP/MCP/LLM hiccup must degrade to a
@@ -281,17 +281,6 @@ const storyBlockSchema = z.object({
     ),
 });
 
-// ponytail: naive JSON extractor (fence + slice), upgrade to streaming parser if models return truncated JSON
-function extractJson(text: string): unknown {
-  const trimmed = text.trim();
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence?.[1]) return JSON.parse(fence[1].trim());
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
-  return JSON.parse(trimmed);
-}
-
 function queuePromptLog(
   channelId: string,
   sessionId: number | undefined,
@@ -371,9 +360,9 @@ async function generateSequentialWindowDrafts(
     prompt,
   });
 
-  let response: { output?: { blocks: z.infer<typeof storyBlockSchema>[] }; text?: string } | undefined;
+  let response;
   try {
-    const structured = await generateText({
+    response = await generateText({
       model: getLanguageModel(),
       instructions: systemInstructions,
       prompt,
@@ -383,7 +372,6 @@ async function generateSequentialWindowDrafts(
         description: "A strictly ordered window of consecutive canonical story blocks.",
       }),
     });
-    response = structured;
     if (response.output) {
       logAiCallComplete("generateText", aiCall, {
         output: "structured_batch",
@@ -391,24 +379,11 @@ async function generateSequentialWindowDrafts(
       });
     }
   } catch (error) {
-    logger.warn("[NLP] structured batch failed, falling back to JSON parse", "blocks", error instanceof Error ? error : new Error(String(error)), { channelId: first.context.channelId, batchId: parameters?.batchId });
-    try {
-      const fallback = await generateText({
-        model: getLanguageModel(),
-        instructions: `${systemInstructions}\n\nRespond with valid JSON only. No markdown, no explanation. Schema: {"blocks": [{"title": string, "content": string, "dialogue"?: string, "optionA"?: {"label": string, "description": string}, "optionB"?: {"label": string, "description": string}, "isNotable": boolean}]}`,
-        prompt: `${prompt}\n\nReturn JSON: {"blocks": [...]}`,
-      });
-      const parsed = extractJson(fallback.text) as { blocks: unknown };
-      const validated = z.object({ blocks: z.array(storyBlockSchema).length(count) }).parse(parsed);
-      response = { output: validated, text: fallback.text };
-      logAiCallComplete("generateText", aiCall, { output: "json_fallback_batch", blockCount: validated.blocks.length });
-    } catch (fallbackError) {
-      logAiCallFailure("generateText", aiCall, fallbackError);
-      throw fallbackError instanceof Error ? fallbackError : error;
-    }
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
   }
-  if (!response?.output || response.output.blocks.length !== count) {
-    const error = new Error(`Sequential story window returned ${response?.output?.blocks.length ?? 0} blocks; expected ${count}.`);
+  if (!response.output || response.output.blocks.length !== count) {
+    const error = new Error(`Sequential story window returned ${response.output?.blocks.length ?? 0} blocks; expected ${count}.`);
     logAiCallFailure("generateText", aiCall, error);
     throw error;
   }
@@ -665,9 +640,9 @@ async function buildBlockFromContext(
     prompt: contextPrompt,
   });
 
-  let response: { output?: z.infer<typeof storyBlockSchema>; text?: string } | undefined;
+  let response;
   try {
-    const structured = await generateText({
+    response = await generateText({
       model: getLanguageModel(),
       instructions: systemInstructions,
       prompt: contextPrompt,
@@ -677,7 +652,6 @@ async function buildBlockFromContext(
         description: "The next block in the interactive story.",
       }),
     });
-    response = structured;
     if (response.output) {
       logAiCallComplete("generateText", aiCall, {
         output: "structured",
@@ -685,24 +659,11 @@ async function buildBlockFromContext(
       });
     }
   } catch (error) {
-    logger.warn("[NLP] structured block failed, falling back to JSON parse", "blocks", error instanceof Error ? error : new Error(String(error)), { channelId });
-    try {
-      const fallback = await generateText({
-        model: getLanguageModel(),
-        instructions: `${systemInstructions}\n\nRespond with valid JSON only. No markdown, no explanation. Schema: {"title": string, "content": string, "dialogue"?: string, "optionA"?: {"label": string, "description": string}, "optionB"?: {"label": string, "description": string}, "isNotable": boolean}`,
-        prompt: `${contextPrompt}\n\nReturn JSON: {"title": "...", "content": "..."}`,
-      });
-      const parsed = extractJson(fallback.text) as unknown;
-      const validated = storyBlockSchema.parse(parsed);
-      response = { output: validated, text: fallback.text };
-      logAiCallComplete("generateText", aiCall, { output: "json_fallback", response: validated });
-    } catch (fallbackError) {
-      logAiCallFailure("generateText", aiCall, fallbackError);
-      throw fallbackError instanceof Error ? fallbackError : error;
-    }
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
   }
 
-  if (!response?.output) {
+  if (!response.output) {
     const error = new Error("Failed to generate story block: No structured output returned.");
     logAiCallFailure("generateText", aiCall, error);
     throw error;
@@ -768,13 +729,6 @@ export interface GenerateStoryImageOptions {
   /** Original candidate count before provider-limit slicing (for logging). */
   candidateCount?: number;
   abortSignal?: AbortSignal;
-}
-
-function toBase64ReferenceImage(image: NonNullable<GenerateStoryImageOptions["referenceImages"]>[number]): string {
-  if (typeof image === "string") {
-    return image.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
-  }
-  return Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64");
 }
 
 /**
