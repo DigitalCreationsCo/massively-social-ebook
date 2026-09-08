@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { generateImage, generateText, Output } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import {
   createStoryBlockContextPrompt,
@@ -25,6 +25,7 @@ import { PxProvider, characterRepresentationProperties } from "./px";
 import { logAiCall, logAiCallComplete, logAiCallFailure } from "../ai-call-logger";
 import {
   getAiConfiguration,
+  generateProviderImage,
   getHuggingFaceImageClient,
   getImageModel,
   getLanguageModel,
@@ -752,7 +753,6 @@ export async function generateStoryImage(description: string, options: GenerateS
   const limits = getImageReferenceLimits(provider, model);
   const candidates = options.referenceImages ?? [];
   const usable = candidates.slice(0, limits.maxImages);
-  const prompt = usable.length > 0 ? { text, images: usable } : text;
 
   logger.info("[ImageGen] generating image", "blocks", {
     provider,
@@ -777,39 +777,11 @@ export async function generateStoryImage(description: string, options: GenerateS
 
   let base64Image: string | undefined;
   try {
-    if (provider === "huggingface") {
-      const image = await getHuggingFaceImageClient().imageTextToImage(
-        {
-          provider: "fal-ai",
-          model,
-          ...(usable[0] ? { inputs: new Blob([usable[0]]) } : {}),
-          parameters: {
-            prompt: text,
-            // FLUX.2 supports target_size for image-to-image requests. It
-            // preserves the story artwork's required 16:9 framing.
-            target_size: { width: 1536, height: 864 },
-          },
-        },
-        {
-          retry_on_error: false,
-          ...(options.abortSignal ? { signal: options.abortSignal } : {}),
-        },
-      );
-      base64Image = Buffer.from(await image.arrayBuffer()).toString("base64");
-    } else {
-      const response = await generateImage({
-        model: getImageModel(),
-        prompt,
-        n: 1,
-        aspectRatio: "16:9",
-        // Broadcast has an archived-image fallback. Do not spend its available
-        // playout buffer waiting through SDK retries when a provider is rate
-        // limited or out of quota.
-        maxRetries: 0,
-        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-      });
-      base64Image = response.image?.base64;
-    }
+    base64Image = await generateProviderImage({
+      text,
+      ...(usable.length > 0 ? { referenceImages: usable } : {}),
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    });
     if (base64Image) {
       logAiCallComplete("generateImage", aiCall, { image: "returned", references: usable.length });
     }

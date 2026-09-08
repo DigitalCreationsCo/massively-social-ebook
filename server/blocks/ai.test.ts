@@ -6,6 +6,7 @@ const {
   mockGetLanguageModel,
   mockGetImageModel,
   mockGetHuggingFaceImageClient,
+  mockGenerateProviderImage,
   imageConfiguration,
   mockBuildContext,
   mockGenerateBlocksBatch,
@@ -18,6 +19,7 @@ const {
   mockGetLanguageModel: vi.fn(() => ({ provider: "test" })),
   mockGetImageModel: vi.fn(() => ({ provider: "test" })),
   mockGetHuggingFaceImageClient: vi.fn(),
+  mockGenerateProviderImage: vi.fn(),
   imageConfiguration: { provider: "test", model: "test-image-model" },
   mockBuildContext: vi.fn(({ inputQuery }: { inputQuery: string }) =>
     Promise.resolve({ prompt: inputQuery }),
@@ -40,6 +42,7 @@ vi.mock("./ai-provider", () => ({
   getLanguageModel: mockGetLanguageModel,
   getImageModel: mockGetImageModel,
   getHuggingFaceImageClient: mockGetHuggingFaceImageClient,
+  generateProviderImage: mockGenerateProviderImage,
 }));
 
 vi.mock("./rag", () => ({ RagProvider: class {} }));
@@ -62,6 +65,40 @@ describe("AI Generators", () => {
     vi.unstubAllEnvs();
     imageConfiguration.provider = "test";
     imageConfiguration.model = "test-image-model";
+    mockGenerateProviderImage.mockImplementation(async ({ text, referenceImages = [], abortSignal }) => {
+      if (imageConfiguration.provider === "google") {
+        const response = await mockGetGoogleGenAiImageClient().models.generateContent({
+          model: imageConfiguration.model,
+          contents: [{ role: "user", parts: [
+            { text },
+            ...referenceImages.map((image: Buffer) => ({
+              inlineData: { mimeType: "image/png", data: Buffer.from(image).toString("base64") },
+            })),
+          ] }],
+          config: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: "16:9" }, ...(abortSignal ? { abortSignal } : {}) },
+        });
+        return response.candidates?.flatMap((candidate: any) => candidate.content?.parts ?? [])
+          .find((part: any) => part.inlineData?.data)?.inlineData?.data;
+      }
+      if (imageConfiguration.provider === "huggingface") {
+        const image = await mockGetHuggingFaceImageClient().imageTextToImage({
+          provider: "fal-ai",
+          model: imageConfiguration.model,
+          ...(referenceImages[0] ? { inputs: new Blob([referenceImages[0]]) } : {}),
+          parameters: { prompt: text, target_size: { width: 1536, height: 864 } },
+        }, { retry_on_error: false, ...(abortSignal ? { signal: abortSignal } : {}) });
+        return Buffer.from(await image.arrayBuffer()).toString("base64");
+      }
+      const response = await mockGenerateImage({
+        model: mockGetImageModel(),
+        prompt: referenceImages.length > 0 ? { text, images: referenceImages } : text,
+        n: 1,
+        aspectRatio: "16:9",
+        maxRetries: 0,
+        ...(abortSignal ? { abortSignal } : {}),
+      });
+      return response.image?.base64;
+    });
     mockBuildContext.mockImplementation(({ inputQuery }: { inputQuery: string }) =>
       Promise.resolve({ prompt: inputQuery }),
     );
