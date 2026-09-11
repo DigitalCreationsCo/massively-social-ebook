@@ -12,7 +12,7 @@ import { storage } from "../storage";
 import {
   finishCanonicalSlot,
   hydrateCanonicalSlot,
-  prepareAmbientSlots,
+  prepareAmbientTurnFromText,
   prepareCanonicalSlot,
   slotsFromBlock,
   type CanonicalText,
@@ -20,7 +20,7 @@ import {
   type PreparedBroadcastSlot,
 } from "./media-slots";
 import { AmbientPipeline, type AmbientPipelineStatus } from "./ambient-pipeline";
-import { generateCanonicalStoryWindow } from "../blocks/ai";
+import { generateAmbientStoryWindow, generateCanonicalStoryWindow } from "../blocks/ai";
 
 type DesiredState = "running" | "stopped";
 type BroadcastMode = "stopped" | "waiting_for_streamer" | "ambient" | "preparing" | "episode";
@@ -88,6 +88,11 @@ export class BroadcastCoordinator {
   private streamerFailureCount = 0;
   /** Ordered text already admitted for the current canonical refill only. */
   private canonicalTextWindow: { sessionId: number; texts: CanonicalText[] } | undefined;
+  /** Ambient b-roll ephemeral window (never persisted as blocks). */
+  private ambientWindow: CanonicalText[] = [];
+  /** 2-block tail for ambient ephemeral continuity (persisted via systemSettings for cross-restart). */
+  private ambientChainTail: string[] = [];
+  private ambientChainLoaded = false;
 
   constructor(
     readonly channelId: string,
@@ -127,6 +132,9 @@ export class BroadcastCoordinator {
     this.desiredState = "stopped";
     this.mode = "stopped";
     this.canonicalTextWindow = undefined;
+    this.ambientWindow = [];
+    // Keep ambientChainTail persisted for next start; require reload on next pipeline
+    this.ambientChainLoaded = false;
     await storage.setSystemSetting(this.desiredSettingKey(), "stopped");
     this.abortController?.abort(new Error("Broadcast stopped by operator"));
     await this.producerPromise?.catch(() => undefined);
@@ -141,6 +149,8 @@ export class BroadcastCoordinator {
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error(`Broadcast restarted by ${trigger}`));
     this.canonicalTextWindow = undefined;
+    this.ambientWindow = [];
+    this.ambientChainLoaded = false;
     this.hasStoredDesiredState = true;
     this.desiredState = "running";
     this.runId = generateUUID();
@@ -155,6 +165,8 @@ export class BroadcastCoordinator {
   /** Stop local work for process shutdown without changing the persisted desired state. */
   async shutdown(): Promise<void> {
     this.canonicalTextWindow = undefined;
+    this.ambientWindow = [];
+    this.ambientChainLoaded = false;
     this.abortController?.abort(new Error("Broadcast process shutting down"));
     await this.producerPromise?.catch(() => undefined);
     await this.disposeAmbientPipeline(new Error("Broadcast process shutting down"));
@@ -246,8 +258,7 @@ export class BroadcastCoordinator {
 
         this.mode = "ambient";
         this.sessionStatus = scheduled ? "scheduled" : "none";
-        const lastCanonical = await storage.getLastBlock(this.channelId);
-        const pipeline = this.ensureAmbientPipeline(lastCanonical?.content || session?.description || "", signal);
+        const pipeline = this.ensureAmbientPipeline(signal);
         const next = await storage.getNextSession(this.channelId);
         const revision = pipeline.currentRevision();
         const released = await pipeline.releaseNextSafe(next?.scheduledStart.getTime() ?? null, signal);
@@ -285,28 +296,22 @@ export class BroadcastCoordinator {
     }
   }
 
-  private ensureAmbientPipeline(previousCanonicalContext: string, signal: AbortSignal): AmbientPipeline {
+  private ensureAmbientPipeline(signal: AbortSignal): AmbientPipeline {
     if (this.ambientPipeline) return this.ambientPipeline;
-    // A generated narration may have multiple TTS segments.  The pipeline's
-    // sequence is deliberately a *delivery-slot* sequence, while this counter
-    // remains the idempotency sequence for a single AI generation turn.
-    // Keeping the remaining segments locally means each one gets independent
-    // staging, release, monitoring, and failure handling.
     const pendingSegments: PreparedAmbientTurn[] = [];
-    // Narrowed generation mutex: prepareChain is held only during the fast check
-    // and shift of pendingSegments or generationSequence reservation (< 1 microsecond).
-    // Media generation runs outside the lock so multiple ambient turns generate in parallel.
     let prepareChain: Promise<void> = Promise.resolve();
-    // Commit chain: ensures completed turns append their segments to pendingSegments
-    // in strict generationSequence order, guaranteeing split-sibling contiguity.
     let commitChain: Promise<void> = Promise.resolve();
+    // Serializes ambient text window replenishment so concurrent workers share one LLM batch.
+    let windowChain: Promise<void> = Promise.resolve();
     const pipeline = new AmbientPipeline({
       initialSequence: this.ambientSequence,
       generateTurn: async (sequence, workerSignal) => {
         await this.requireStreamerAvailable(workerSignal);
         let next: PreparedAmbientTurn | undefined;
         let generationSequence: number | undefined;
+        let nextText: CanonicalText | undefined;
 
+        // 1) Fast path: pending split segments
         const previous = prepareChain;
         let release!: () => void;
         prepareChain = new Promise<void>((resolve) => { release = resolve; });
@@ -315,6 +320,7 @@ export class BroadcastCoordinator {
           workerSignal.throwIfAborted();
           next = pendingSegments.shift();
           if (!next) {
+            // Reserve generation idempotency outside window lock — window fetch below will fill nextText
             generationSequence = this.ambientSequence++;
           }
         } finally {
@@ -323,12 +329,52 @@ export class BroadcastCoordinator {
 
         if (next) return { ...next, sequence };
 
-        // Media preparation runs OUTSIDE prepareChain: multiple workers generate in parallel.
-        const turnPromise = prepareAmbientSlots(
+        // 2) Ambient text window — batched, ephemeral, world-grounded (never canonical)
+        // Serialize window admit so one LLM batch feeds multiple workers.
+        const prevWindow = windowChain;
+        let windowRelease!: () => void;
+        windowChain = new Promise<void>((resolve) => { windowRelease = resolve; });
+        await prevWindow;
+        try {
+          workerSignal.throwIfAborted();
+          if (this.ambientWindow.length === 0) {
+            await this.loadAmbientChain();
+            const tail = this.ambientChainTail.join("\n\n");
+            const need = 3;
+            try {
+              const texts = await generateAmbientStoryWindow(this.channelId, tail, need);
+              if (texts.length > 0) this.ambientWindow.push(...texts);
+            } catch (cause) {
+              logger.warn(
+                `Ambient window unavailable for ${this.channelId}; using fallback b-roll`,
+                "broadcast",
+                cause instanceof Error ? cause : new Error(String(cause)),
+              );
+              const fallback = tail.slice(0, 300) || "A quiet ambient scene between chapters — soft light, familiar voices.";
+              this.ambientWindow.push({ title: "Ambient interlude", content: fallback });
+            }
+          }
+          nextText = this.ambientWindow.shift();
+          if (nextText) {
+            // Ephemeral chain advances immediately (cross-restart via systemSettings)
+            this.ambientChainTail.push(nextText.content);
+            if (this.ambientChainTail.length > 2) this.ambientChainTail.shift();
+            void this.persistAmbientChainTail().catch(() => undefined);
+          } else {
+            return undefined;
+          }
+        } finally {
+          windowRelease();
+        }
+
+        if (!nextText || generationSequence === undefined) return undefined;
+
+        // 3) Media preparation runs OUTSIDE locks: multiple workers generate in parallel.
+        const turnPromise = prepareAmbientTurnFromText(
           this.channelId,
-          previousCanonicalContext,
+          nextText,
           this.runId!,
-          generationSequence!,
+          generationSequence,
           workerSignal,
         );
 
@@ -906,6 +952,42 @@ export class BroadcastCoordinator {
 
   private cursorSettingKey(sessionId: number): string {
     return `broadcast:${this.channelId}:session:${sessionId}:cursor`;
+  }
+
+  private ambientChainKey(): string {
+    return `broadcast:${this.channelId}:ambient:chain`;
+  }
+
+  private async loadAmbientChain(): Promise<void> {
+    if (this.ambientChainLoaded) return;
+    const raw = await storage.getSystemSetting(this.ambientChainKey());
+    if (!raw) {
+      this.ambientChainTail = [];
+      this.ambientChainLoaded = true;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        this.ambientChainTail = parsed.filter((v) => typeof v === "string" && v.length > 0).slice(-2);
+      } else if (typeof parsed === "string" && parsed.length > 0) {
+        // Legacy single-string value → migrate to tail
+        this.ambientChainTail = [parsed];
+      } else {
+        this.ambientChainTail = [];
+      }
+    } catch {
+      // Legacy plain text or corrupted → treat as single tail
+      this.ambientChainTail = raw.trim() ? [raw.slice(0, 1200)] : [];
+    }
+    this.ambientChainLoaded = true;
+  }
+
+  private async persistAmbientChainTail(): Promise<void> {
+    // Bounded: 2 × 1200 chars max, JSON array
+    const tail = this.ambientChainTail.slice(-2).map((s) => s.slice(0, 1200));
+    this.ambientChainTail = tail;
+    await storage.setSystemSetting(this.ambientChainKey(), JSON.stringify(tail));
   }
 }
 

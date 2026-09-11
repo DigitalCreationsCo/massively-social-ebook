@@ -14,9 +14,9 @@ import {
   type SelectedImageRepresentation,
 } from "./image-references";
 import { logger } from "../logger";
-import { presignRepresentation } from "@portalshq/nap-sdk";
+import { presignRepresentation } from "@portalshq/px";
 
-vi.mock("@portalshq/nap-sdk", () => ({ presignRepresentation: vi.fn() }));
+vi.mock("@portalshq/px", () => ({ presignRepresentation: vi.fn() }));
 
 function signedResult(url = "https://storage.googleapis.com/bucket/portrait.png?token=x") {
   return { url, expires_at: 999, revision: "r", repository_id: "repo",
@@ -52,7 +52,7 @@ function imageResponse(body: Uint8Array, mime = "image/png") {
 describe("selectImageRepresentations", () => {
   it("selects by ordered preference", () => {
     const entities = [
-      entity("nap://repo/character/hero", {
+      entity("px://repo/character/hero", {
         a: validRep("hash-a"),
         b: validRep("hash-b"),
       }),
@@ -64,11 +64,11 @@ describe("selectImageRepresentations", () => {
   });
 
   it("prefers a character sheet and falls back to the portrait", () => {
-    const both = entity("nap://repo/character/hero", {
+    const both = entity("px://repo/character/hero", {
       portrait: validRep("portrait-hash"),
       character_sheet: validRep("sheet-hash"),
     });
-    const portraitOnly = entity("nap://repo/character/legacy", {
+    const portraitOnly = entity("px://repo/character/legacy", {
       portrait: validRep("legacy-portrait-hash"),
     });
     const result = selectImageRepresentations(
@@ -85,7 +85,7 @@ describe("selectImageRepresentations", () => {
 
   it("selects first valid entry when preference list is empty", () => {
     const entities = [
-      entity("nap://repo/character/hero", {
+      entity("px://repo/character/hero", {
         first: validRep("hash-1"),
         second: validRep("hash-2"),
       }),
@@ -97,7 +97,7 @@ describe("selectImageRepresentations", () => {
 
   it("selects nothing when preferred properties are missing", () => {
     const entities = [
-      entity("nap://repo/character/hero", {
+      entity("px://repo/character/hero", {
         other: validRep("hash-other"),
       }),
     ];
@@ -107,7 +107,7 @@ describe("selectImageRepresentations", () => {
 
   it("skips malformed entries", () => {
     const entities = [
-      entity("nap://repo/character/hero", {
+      entity("px://repo/character/hero", {
         bad1: { format: "png" },
         bad2: { hash: "hash-x" },
         bad3: "not-an-object",
@@ -124,30 +124,30 @@ describe("selectImageRepresentations", () => {
 
   it("selects at most one per entity", () => {
     const entities = [
-      entity("nap://repo/character/a", { x: validRep("h1"), y: validRep("h2") }),
-      entity("nap://repo/character/b", { x: validRep("h3") }),
+      entity("px://repo/character/a", { x: validRep("h1"), y: validRep("h2") }),
+      entity("px://repo/character/b", { x: validRep("h3") }),
     ];
     const result = selectImageRepresentations(entities, [], 5);
     expect(result).toHaveLength(2);
-    expect(result.filter((r) => r.entityId === "nap://repo/character/a")).toHaveLength(1);
+    expect(result.filter((r) => r.entityId === "px://repo/character/a")).toHaveLength(1);
   });
 
   it("respects maxUniqueEntityRepresentations", () => {
     const entities = [
-      entity("nap://repo/character/a", { x: validRep("h1") }),
-      entity("nap://repo/character/b", { x: validRep("h2") }),
-      entity("nap://repo/character/c", { x: validRep("h3") }),
+      entity("px://repo/character/a", { x: validRep("h1") }),
+      entity("px://repo/character/b", { x: validRep("h2") }),
+      entity("px://repo/character/c", { x: validRep("h3") }),
     ];
     const result = selectImageRepresentations(entities, [], 1);
     expect(result).toHaveLength(1);
-    expect(result[0]?.entityId).toBe("nap://repo/character/a");
+    expect(result[0]?.entityId).toBe("px://repo/character/a");
   });
 
   it("deduplicates by content-addressed hash", () => {
     const entities = [
-      entity("nap://repo/character/a", { x: validRep("same-hash") }),
-      entity("nap://repo/character/b", { x: validRep("same-hash") }),
-      entity("nap://repo/character/c", { x: validRep("other-hash") }),
+      entity("px://repo/character/a", { x: validRep("same-hash") }),
+      entity("px://repo/character/b", { x: validRep("same-hash") }),
+      entity("px://repo/character/c", { x: validRep("other-hash") }),
     ];
     const result = selectImageRepresentations(entities, [], 5);
     expect(result.map((r) => r.hash).sort()).toEqual(["other-hash", "same-hash"]);
@@ -216,14 +216,14 @@ describe("resolveAllowedHosts / isAllowedImageUrl", () => {
     expect(hosts).toContain("my-bucket.storage.googleapis.com");
   });
 
-  it("derives the Lore host from either NAP variable", () => {
+  it("derives the Lore host from either PX variable", () => {
     vi.stubEnv("IMAGE_REFERENCE_ALLOWED_HOSTS", "");
-    vi.stubEnv("NAP_LORE_HTTP_URL", "");
-    vi.stubEnv("NAP_LORE_URL_BASE", "lore://100.105.14.118:41337");
+    vi.stubEnv("PX_LORE_HTTP_URL", "");
+    vi.stubEnv("PX_LORE_URL_BASE", "lore://100.105.14.118:41337");
     expect(resolveAllowedHosts()).toContain("100.105.14.118");
 
-    vi.stubEnv("NAP_LORE_URL_BASE", "");
-    vi.stubEnv("NAP_LORE_HTTP_URL", "http://100.105.14.118:41339");
+    vi.stubEnv("PX_LORE_URL_BASE", "");
+    vi.stubEnv("PX_LORE_HTTP_URL", "http://100.105.14.118:41339");
     expect(resolveAllowedHosts()).toContain("100.105.14.118");
   });
 
@@ -269,17 +269,17 @@ describe("fetchReferenceImages", () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const fetchFn = vi.fn(async () => imageResponse(bytes));
     const result = await fetchReferenceImages(
-      [selected("nap://repo/character/hero", "reference_image", "hash-1")],
+      [selected("px://repo/character/hero", "reference_image", "hash-1")],
       { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"], maxImages: 3 },
     );
-    expect(presignFn).toHaveBeenCalledWith("nap://repo/character/hero", "reference_image", expect.anything());
+    expect(presignFn).toHaveBeenCalledWith("px://repo/character/hero", "reference_image", expect.anything());
     expect(result).toHaveLength(1);
     expect(result[0]?.buffer).toBeInstanceOf(Buffer);
     expect([...result[0]!.buffer]).toEqual([1, 2, 3, 4]);
     expect(result[0]?.mimeType).toBe("image/png");
   });
 
-  it.each(["nap://25th-chapter/character/nathan-gunn", "25th-chapter/character/nathan-gunn"])(
+  it.each(["px://25th-chapter/character/nathan-gunn", "25th-chapter/character/nathan-gunn"])(
     "presigns entity %s and its manifest key through the SDK with filename metadata",
     async (entityId) => {
       vi.mocked(presignRepresentation).mockResolvedValue(signedResult());
@@ -289,14 +289,14 @@ describe("fetchReferenceImages", () => {
         entity(entityId, { item: validRep("item-hash", "jpg", "item.jpg"),
           portrait: validRep("portrait-hash", "png", "portrait.png") }),
       ], ["portrait"], 1);
-      const presignOptions = { repoPath: "/tmp/nap", branch: "main", ttlSeconds: 900,
+      const presignOptions = { repoPath: "/tmp/px", branch: "main", ttlSeconds: 900,
         httpUrl: "https://lore.example.test", tokenEnv: "REFERENCE_TOKEN" };
       const result = await fetchReferenceImages(references, {
         presignOptions, fetchFn, allowedHosts: ["storage.googleapis.com"],
       });
       expect(await loadPresignFunction()).toBe(presignRepresentation);
       expect(presignRepresentation).toHaveBeenCalledWith(entityId, "portrait", {
-        repoPath: "/tmp/nap", branch: "main", ttlSeconds: 900,
+        repoPath: "/tmp/px", branch: "main", ttlSeconds: 900,
         httpUrl: "https://lore.example.test", bearerToken: "test-token",
       });
       expect(fetchFn).toHaveBeenCalledWith(signedResult().url, expect.anything());
@@ -311,7 +311,7 @@ describe("fetchReferenceImages", () => {
       for (const presignFn of [null, vi.fn(async () => { throw new Error("unavailable"); }),
         vi.fn(async () => signedResult(""))]) {
         const result = await fetchReferenceImages([
-          selected("nap://repo/character/hero", "portrait", "hash-uri", uri),
+          selected("px://repo/character/hero", "portrait", "hash-uri", uri),
         ], { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] });
         expect(result).toEqual([]);
       }
@@ -323,8 +323,8 @@ describe("fetchReferenceImages", () => {
     [{ commit: "pinned" }, "main", "old", { commit: "pinned" }],
     [{ branch: "feature" }, "main", "old", { branch: "feature" }],
   ])("explicit revision overrides environment defaults", (overrides, branch, commit, expected) => {
-    vi.stubEnv("NAP_BRANCH", branch);
-    vi.stubEnv("NAP_COMMIT", commit);
+    vi.stubEnv("PX_BRANCH", branch);
+    vi.stubEnv("PX_COMMIT", commit);
     const resolved = resolvePresignOptions(overrides);
     expect({ branch: resolved.branch, commit: resolved.commit }).toEqual(expected);
   });
@@ -345,18 +345,18 @@ describe("fetchReferenceImages", () => {
   it("rejects conflicting revisions before requesting a URL", async () => {
     const presignFn = vi.fn(async () => signedResult());
     const result = await fetchReferenceImages([
-      selected("nap://repo/character/hero", "portrait", "hash-revision", "portrait.png"),
+      selected("px://repo/character/hero", "portrait", "hash-revision", "portrait.png"),
     ], { presignFn, presignOptions: { branch: "main", commit: "abc123" } });
     expect(result).toEqual([]);
     expect(presignFn).not.toHaveBeenCalled();
   });
 
   it("uses the documented Lore token environment variables", () => {
-    vi.stubEnv("NAP_TOKEN_ENV", "");
-    vi.stubEnv("NAP_LORE_HTTP_TOKEN", "http-token");
-    vi.stubEnv("NAP_LORE_GRPC_TOKEN", "grpc-token");
+    vi.stubEnv("PX_TOKEN_ENV", "");
+    vi.stubEnv("PX_LORE_HTTP_TOKEN", "http-token");
+    vi.stubEnv("PX_LORE_GRPC_TOKEN", "grpc-token");
     expect(resolvePresignOptions().bearerToken).toBe("http-token");
-    vi.stubEnv("NAP_LORE_HTTP_TOKEN", "");
+    vi.stubEnv("PX_LORE_HTTP_TOKEN", "");
     expect(resolvePresignOptions().bearerToken).toBe("grpc-token");
     expect(resolvePresignOptions({ bearerToken: "explicit" }).bearerToken).toBe("explicit");
   });
@@ -379,9 +379,9 @@ describe("fetchReferenceImages", () => {
     });
     const result = await fetchReferenceImages(
       [
-        selected("nap://r/character/a", "bad1", "h-bad1"),
-        selected("nap://r/character/b", "good1", "h-good1"),
-        selected("nap://r/character/c", "good2", "h-good2"),
+        selected("px://r/character/a", "bad1", "h-bad1"),
+        selected("px://r/character/b", "good1", "h-good1"),
+        selected("px://r/character/c", "good2", "h-good2"),
       ],
       { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"], maxImages: 2 },
     );
@@ -415,10 +415,10 @@ describe("fetchReferenceImages", () => {
     });
     const result = await fetchReferenceImages(
       [
-        selected("nap://evil-host/character/a", "k", "h1"),
-        selected("nap://redirect/character/a", "k", "h2"),
-        selected("nap://mime/character/a", "k", "h3"),
-        selected("nap://big/character/a", "k", "h4"),
+        selected("px://evil-host/character/a", "k", "h1"),
+        selected("px://redirect/character/a", "k", "h2"),
+        selected("px://mime/character/a", "k", "h3"),
+        selected("px://big/character/a", "k", "h4"),
       ],
       {
         presignFn,
@@ -436,7 +436,7 @@ describe("fetchReferenceImages", () => {
     const presignFn = vi.fn(async () => signedResult("http://100.105.14.118:41339/r/image.png?token=x"));
     const fetchFn = vi.fn(async () => imageResponse(new Uint8Array([1, 2, 3])));
     const result = await fetchReferenceImages(
-      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      [selected("px://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
       { presignFn, fetchFn, allowedHosts: ["100.105.14.118"], maxImages: 3 },
     );
     expect(result).toHaveLength(1);
@@ -455,7 +455,7 @@ describe("fetchReferenceImages", () => {
       return imageResponse(new Uint8Array([4, 5]));
     });
     const result = await fetchReferenceImages(
-      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      [selected("px://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
       { presignFn, fetchFn, allowedHosts: ["100.105.14.118", "storage.googleapis.com"], maxImages: 3 },
     );
     expect(result).toHaveLength(1);
@@ -467,7 +467,7 @@ describe("fetchReferenceImages", () => {
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
     const fetchFn = vi.fn(async () => new Response(pngBytes as BodyInit, { status: 200 }));
     const result = await fetchReferenceImages(
-      [selected("nap://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
+      [selected("px://25th-chapter/character/claire-cole", "character_sheet", "blake3:abc")],
       { presignFn, fetchFn, allowedHosts: ["100.105.14.118"] },
     );
     expect(result).toHaveLength(1);
@@ -479,7 +479,7 @@ describe("fetchReferenceImages", () => {
     const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
     const fetchFn = vi.fn(async () => imageResponse(jpegBytes, "application/octet-stream"));
     const result = await fetchReferenceImages(
-      [selected("nap://r/character/a", "k", "h-octet")],
+      [selected("px://r/character/a", "k", "h-octet")],
       { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] },
     );
     expect(result).toHaveLength(1);
@@ -490,7 +490,7 @@ describe("fetchReferenceImages", () => {
     const presignFn = vi.fn(async () => signedResult());
     const fetchFn = vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]) as BodyInit, { status: 200 }));
     const result = await fetchReferenceImages(
-      [selected("nap://r/character/a", "k", "h-garbage")],
+      [selected("px://r/character/a", "k", "h-garbage")],
       { presignFn, fetchFn, allowedHosts: ["storage.googleapis.com"] },
     );
     expect(result).toEqual([]);
@@ -501,7 +501,7 @@ describe("fetchReferenceImages", () => {
     controller.abort(new Error("broadcast stopped"));
     const fetchFn = vi.fn(async () => imageResponse(new Uint8Array([1])));
     await expect(
-      fetchReferenceImages([selected("nap://r/character/a", "k", "h1", "https://storage.googleapis.com/b/a.png")], {
+      fetchReferenceImages([selected("px://r/character/a", "k", "h1", "https://storage.googleapis.com/b/a.png")], {
         presignFn: null,
         fetchFn,
         allowedHosts: ["storage.googleapis.com"],
@@ -515,7 +515,7 @@ describe("fetchReferenceImages", () => {
       throw new Error("down");
     });
     const result = await fetchReferenceImages(
-      [selected("nap://r/character/a", "k", "h1", "https://storage.googleapis.com/b/a.png")],
+      [selected("px://r/character/a", "k", "h1", "https://storage.googleapis.com/b/a.png")],
       { presignFn: null, fetchFn, allowedHosts: ["storage.googleapis.com"] },
     );
     expect(result).toEqual([]);
@@ -534,7 +534,7 @@ describe("fetchReferenceImages", () => {
         format: "png",
       }));
       const fetchFn = vi.fn(async () => imageResponse(new Uint8Array([5, 6])));
-      await fetchReferenceImages([selected("nap://r/character/hero", "k", "hash-log-1")], {
+      await fetchReferenceImages([selected("px://r/character/hero", "k", "hash-log-1")], {
         presignFn,
         fetchFn,
         allowedHosts: ["storage.googleapis.com"],
@@ -542,7 +542,7 @@ describe("fetchReferenceImages", () => {
       expect(info).toHaveBeenCalled();
       const logged = JSON.stringify(info.mock.calls);
       expect(logged).toContain("hash-log-1");
-      expect(logged).toContain("nap://r/character/hero#k");
+      expect(logged).toContain("px://r/character/hero#k");
       expect(logged).not.toContain("super-secret");
       expect(logged).not.toContain("secret.png");
     } finally {
@@ -554,7 +554,7 @@ describe("fetchReferenceImages", () => {
     const big = new Uint8Array(100).fill(7);
     const fetchFn = vi.fn(async () => imageResponse(big));
     const result = await fetchReferenceImages(
-      [selected("nap://r/character/a", "k", "h-cap", "https://storage.googleapis.com/b/a.png")],
+      [selected("px://r/character/a", "k", "h-cap", "https://storage.googleapis.com/b/a.png")],
       { presignFn: async () => signedResult(), fetchFn, allowedHosts: ["storage.googleapis.com"], maxBytesPerImage: 10 },
     );
     expect(result).toEqual([]);
@@ -567,10 +567,10 @@ describe("validateServerConfiguration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.NAP_LORE_URL_BASE;
-    delete process.env.NAP_LORE_HTTP_URL;
-    delete process.env.NAP_REPO_PATH;
-    delete process.env.NAP_DIR;
+    delete process.env.PX_LORE_URL_BASE;
+    delete process.env.PX_LORE_HTTP_URL;
+    delete process.env.PX_REPO_PATH;
+    delete process.env.PX_DIR;
   });
 
   it("warns when no server configuration is found", () => {
@@ -578,7 +578,7 @@ describe("validateServerConfiguration", () => {
     try {
       validateServerConfiguration();
       expect(warn).toHaveBeenCalledWith(
-        "[ImageRefs] No NAP server configuration found. Set NAP_LORE_URL_BASE or NAP_LORE_HTTP_URL.",
+        "[ImageRefs] No PX server configuration found. Set PX_LORE_URL_BASE or PX_LORE_HTTP_URL.",
         "broadcast",
       );
     } finally {
@@ -590,14 +590,14 @@ describe("validateServerConfiguration", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     try {
-      process.env.NAP_LORE_HTTP_URL = "http://remote.example.com:41339";
-      process.env.NAP_REPO_PATH = "/tmp/nap";
+      process.env.PX_LORE_HTTP_URL = "http://remote.example.com:41339";
+      process.env.PX_REPO_PATH = "/tmp/px";
       validateServerConfiguration();
       expect(warn).toHaveBeenCalledWith(
-        "[ImageRefs] Both NAP_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.",
+        "[ImageRefs] Both PX_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.",
         "broadcast",
         expect.objectContaining({
-          repoPath: "/tmp/nap",
+          repoPath: "/tmp/px",
           loreUrlBase: "http://remote.example.com:41339",
         }),
       );
@@ -610,10 +610,10 @@ describe("validateServerConfiguration", () => {
   it("logs when using Lore URL base", () => {
     const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     try {
-      process.env.NAP_LORE_URL_BASE = "lore://100.105.14.118:41337";
+      process.env.PX_LORE_URL_BASE = "lore://100.105.14.118:41337";
       validateServerConfiguration();
       expect(info).toHaveBeenCalledWith(
-        "[ImageRefs] NAP server configuration: using Lore URL base",
+        "[ImageRefs] PX server configuration: using Lore URL base",
         "broadcast",
         { loreUrlBase: "lore://100.105.14.118:41337" },
       );
@@ -625,10 +625,10 @@ describe("validateServerConfiguration", () => {
   it("logs when using Lore HTTP URL", () => {
     const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     try {
-      process.env.NAP_LORE_HTTP_URL = "http://remote.example.com:41339";
+      process.env.PX_LORE_HTTP_URL = "http://remote.example.com:41339";
       validateServerConfiguration();
       expect(info).toHaveBeenCalledWith(
-        "[ImageRefs] NAP server configuration: using Lore HTTP URL",
+        "[ImageRefs] PX server configuration: using Lore HTTP URL",
         "broadcast",
         { httpUrl: "http://remote.example.com:41339" },
       );
@@ -640,12 +640,12 @@ describe("validateServerConfiguration", () => {
   it("logs when using local repository", () => {
     const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     try {
-      process.env.NAP_REPO_PATH = "/tmp/nap";
+      process.env.PX_REPO_PATH = "/tmp/px";
       validateServerConfiguration();
       expect(info).toHaveBeenCalledWith(
-        "[ImageRefs] NAP server configuration: using local repository",
+        "[ImageRefs] PX server configuration: using local repository",
         "broadcast",
-        { repoPath: "/tmp/nap" },
+        { repoPath: "/tmp/px" },
       );
     } finally {
       info.mockRestore();

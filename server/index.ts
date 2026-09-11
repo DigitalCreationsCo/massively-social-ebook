@@ -199,7 +199,7 @@ declare module "express-session" {
       try {
         validateServerConfiguration();
       } catch (error) {
-        logger.warn("Could not validate NAP server configuration at startup", "server", error);
+        logger.warn("Could not validate PX server configuration at startup", "server", error);
       }
     },
   );

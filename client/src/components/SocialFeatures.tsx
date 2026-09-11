@@ -1,8 +1,8 @@
 export const SocialFeatures = () => {
   return (
-    <section className="w-full px-6 py-24">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center space-y-4 mb-16">
+    <section className="w-full px-3 py-6">
+      <div className="max-w-content mx-auto">
+        <div className="text-center space-y-2 mb-4">
           <p className="text-xs tracking-[0.4em] text-primary/60 uppercase">
             Community
           </p>
@@ -15,7 +15,7 @@ export const SocialFeatures = () => {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid md:grid-cols-3 gap-2">
           {[
             {
               title: "Watch Notes",
@@ -38,7 +38,7 @@ export const SocialFeatures = () => {
           ].map((feature) => (
             <div
               key={feature.title}
-              className="p-8 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-sm space-y-4"
+              className="p-3 rounded-md border border-white/10 bg-black/40 backdrop-blur-sm space-y-2"
             >
               <div className="flex items-center gap-2">
                 <span className="px-2 py-1 text-xs font-mono bg-green-500/20 text-green-400 rounded">

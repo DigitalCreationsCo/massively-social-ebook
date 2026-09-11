@@ -368,7 +368,7 @@ describe("AI Generators", () => {
         prompt: "enriched prompt",
         entities: [
           {
-            id: "nap://repo/character/hero",
+            id: "px://repo/character/hero",
             name: "Hero",
             type: "character",
             representations: {
@@ -388,7 +388,7 @@ describe("AI Generators", () => {
       expect(result.imageRepresentations).toHaveLength(1);
       expect(result.selectedImageRepresentations).toHaveLength(1);
       expect(result.imageRepresentations?.[0]).toMatchObject({
-        entityId: "nap://repo/character/hero",
+        entityId: "px://repo/character/hero",
         representationKey: "reference_image",
         hash: "hash-hero",
       });

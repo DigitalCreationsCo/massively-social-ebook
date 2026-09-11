@@ -16,7 +16,7 @@ vi.mock("./ai-provider", () => ({ getLanguageModel: mocks.model }));
 import { createPxPrompt, PxProvider } from "./px";
 import { selectImageRepresentations } from "./image-references";
 
-const uri = "nap://test/character/captain";
+const uri = "px://test/character/captain";
 const manifest = { id: uri, name: "Captain", entity_type: "character" };
 const entity = { ...manifest, type: "character" };
 const request = {
@@ -24,7 +24,7 @@ const request = {
   representationProperties: [], maxUniqueEntityRepresentations: 5,
 };
 const inputSchema = z.object({ uri: z.string(), branch: z.string().optional() });
-const enrich = () => new PxProvider({ loadSkill: async () => "# NAP skill" }).enrichContext(request);
+const enrich = () => new PxProvider({ loadSkill: async () => "# PX skill" }).enrichContext(request);
 
 function result(content: LanguageModelV4GenerateResult["content"], reason: "stop" | "tool-calls" = "stop"): LanguageModelV4GenerateResult {
   return {
@@ -36,7 +36,7 @@ function result(content: LanguageModelV4GenerateResult["content"], reason: "stop
   };
 }
 const call = () => result([{
-  type: "tool-call", toolCallId: "resolve-1", toolName: "nap_resolve",
+  type: "tool-call", toolCallId: "resolve-1", toolName: "px_resolve",
   input: JSON.stringify({ uri, branch: "main" }),
 }], "tool-calls");
 const answer = (text = JSON.stringify({ entities: [entity] })) => result([{ type: "text", text }]);
@@ -50,12 +50,12 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.create.mockResolvedValue({ listTools: mocks.list, toolsFromDefinitions: mocks.tools, close: mocks.close });
   mocks.list.mockResolvedValue({ tools: [
-    { name: "nap_set", inputSchema: { type: "object" } },
-    { name: "nap_resolve", inputSchema: z.toJSONSchema(inputSchema) },
+    { name: "px_set", inputSchema: { type: "object" } },
+    { name: "px_resolve", inputSchema: z.toJSONSchema(inputSchema) },
   ] });
   mocks.tools.mockReturnValue({
-    nap_resolve: { inputSchema, description: "Resolve manifest", execute: mocks.execute },
-    nap_set: { inputSchema, execute: vi.fn() },
+    px_resolve: { inputSchema, description: "Resolve manifest", execute: mocks.execute },
+    px_set: { inputSchema, execute: vi.fn() },
   });
   mocks.execute.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(manifest) }] });
   modelWith([call(), answer()]);
@@ -63,22 +63,22 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("PX MCP integration with the real AI SDK loop", () => {
-  it("exposes only nap_resolve and feeds its result into the final structured generation", async () => {
+  it("exposes only px_resolve and feeds its result into the final structured generation", async () => {
     const model = modelWith([call(), answer()]);
     expect(await enrich()).toEqual({ entities: [entity] });
     expect(model.doGenerateCalls).toHaveLength(2);
     for (const args of model.doGenerateCalls) {
-      expect(args.tools?.map(tool => tool.name)).toEqual(["nap_resolve"]);
+      expect(args.tools?.map(tool => tool.name)).toEqual(["px_resolve"]);
       expect(args.tools?.[0]).toMatchObject({ inputSchema: { required: ["uri"] } });
     }
     expect(model.doGenerateCalls[1].prompt).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "tool", content: expect.arrayContaining([
-        expect.objectContaining({ type: "tool-result", toolName: "nap_resolve" }),
+        expect.objectContaining({ type: "tool-result", toolName: "px_resolve" }),
       ]) }),
     ]));
     expect(mocks.execute).toHaveBeenCalledWith({ uri, format: "json" }, expect.anything());
     expect(mocks.close).toHaveBeenCalledOnce();
-    expect(mocks.tools).toHaveBeenCalledWith({ tools: [expect.objectContaining({ name: "nap_resolve" })] });
+    expect(mocks.tools).toHaveBeenCalledWith({ tools: [expect.objectContaining({ name: "px_resolve" })] });
   });
 
   it("does not connect during construction", () => {
@@ -86,9 +86,20 @@ describe("PX MCP integration with the real AI SDK loop", () => {
     expect(mocks.create).not.toHaveBeenCalled();
   });
 
+  it("canonicalizes a legacy URI before resolving it", async () => {
+    const legacyCall = result([{
+      type: "tool-call", toolCallId: "legacy-resolve", toolName: "px_resolve",
+      input: JSON.stringify({ uri: "nap://test/character/captain" }),
+    }], "tool-calls");
+    modelWith([legacyCall, answer()]);
+
+    await expect(enrich()).resolves.toEqual({ entities: [entity] });
+    expect(mocks.execute).toHaveBeenCalledWith({ uri, format: "json" }, expect.anything());
+  });
+
   it("reports a missing tool and closes the client", async () => {
     mocks.tools.mockReturnValue({});
-    await expect(enrich()).rejects.toThrow("PX MCP tool discovery failed: The MCP server does not expose an executable nap_resolve tool.");
+    await expect(enrich()).rejects.toThrow("PX MCP tool discovery failed: The MCP server does not expose an executable px_resolve tool.");
     expect(mocks.model).not.toHaveBeenCalled();
     expect(mocks.close).toHaveBeenCalledOnce();
   });
@@ -113,16 +124,16 @@ describe("PX MCP integration with the real AI SDK loop", () => {
     if (kind === "MCP error") {
       mocks.execute.mockResolvedValue({ isError: true, content: [{ type: "text", text: cause.message }] });
     } else mocks.execute.mockRejectedValue(cause);
-    await expect(enrich()).rejects.toThrow(`PX nap_resolve resolution for ${uri} failed: Lore state unreadable`);
+    await expect(enrich()).rejects.toThrow(`PX px_resolve resolution for ${uri} failed: Lore state unreadable`);
     expect(model.doGenerateCalls).toHaveLength(1);
     expect(mocks.close).toHaveBeenCalledOnce();
   });
 
   it("stops after invalid tool arguments", async () => {
     const invalidCall = call();
-    invalidCall.content = [{ type: "tool-call", toolName: "nap_resolve", toolCallId: "bad", input: "{}" }];
+    invalidCall.content = [{ type: "tool-call", toolName: "px_resolve", toolCallId: "bad", input: "{}" }];
     const model = modelWith([invalidCall, answer()]);
-    await expect(enrich()).rejects.toThrow("PX nap_resolve resolution failed:");
+    await expect(enrich()).rejects.toThrow("PX px_resolve resolution failed:");
     expect(model.doGenerateCalls).toHaveLength(1);
     expect(mocks.execute).not.toHaveBeenCalled();
   });
@@ -171,9 +182,9 @@ describe("PX MCP integration with the real AI SDK loop", () => {
   });
 });
 
-// Match the actual NAP wire shape, not a model-generated NarrativeEntity.
+// Match the actual PX wire shape, not a model-generated NarrativeEntity.
 const claire = {
-  id: "nap://25th-chapter/character/claire-cole",
+  id: "px://25th-chapter/character/claire-cole",
   name: "Claire Cole", entity_type: "character", version: 6,
   properties: {
     bio: "Claire Cole is a major crimes detective whose career was built on noticing the detail everyone else dismisses. Direct, intuitive, and unafraid to distrust an official narrative, she recognizes that the case is leaving clues designed to be seen—but not explained. Her partnership with Nathan asks her to turn instinct into proof before the conspiracy closes around them.",
@@ -187,7 +198,7 @@ const claire = {
   references: {},
 };
 const profileProvider = () => new PxProvider({
-  loadSkill: async () => "# NAP skill",
+  loadSkill: async () => "# PX skill",
   requiredEntitiesByChannel: { "25th-chapter": [claire.id] },
 });
 const storyRequest = {
@@ -196,7 +207,7 @@ const storyRequest = {
   loreAtoms: [{ id: 1, happenedAt: 1, content: "Claire is a detective." }],
 };
 
-describe("canonical NAP profiles", () => {
+describe("canonical PX profiles", () => {
   beforeEach(() => {
     mocks.execute.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(claire) }] });
   });
@@ -219,7 +230,7 @@ describe("canonical NAP profiles", () => {
   it("preserves the full manifest instead of the model's abbreviated or fabricated profile", async () => {
     modelWith([answer(JSON.stringify({ entities: [
       { id: claire.id, name: "Wrong name", type: "wrong type", properties: { bio: "Wrong biography" } },
-      { id: "nap://25th-chapter/character/invented", name: "Invented", type: "character" },
+      { id: "px://25th-chapter/character/invented", name: "Invented", type: "character" },
     ] }))]);
     expect((await profileProvider().enrichContext(storyRequest)).entities)
       .toEqual([{ ...claire, type: "character" }]);
@@ -235,10 +246,10 @@ describe("canonical NAP profiles", () => {
   it.each([
     { content: [{ type: "text", text: "not JSON" }] },
     { content: [{ type: "text", text: JSON.stringify({ ...claire, entity_type: undefined }) }] },
-    { content: [{ type: "text", text: JSON.stringify({ ...claire, id: "nap://wrong/character/other" }) }] },
+    { content: [{ type: "text", text: JSON.stringify({ ...claire, id: "px://wrong/character/other" }) }] },
   ])("rejects a malformed or mismatched manifest", async response => {
     mocks.execute.mockResolvedValue(response);
-    await expect(profileProvider().enrichContext(storyRequest)).rejects.toThrow(`PX nap_resolve resolution for ${claire.id} failed:`);
+    await expect(profileProvider().enrichContext(storyRequest)).rejects.toThrow(`PX px_resolve resolution for ${claire.id} failed:`);
     expect(mocks.model).not.toHaveBeenCalled();
     expect(mocks.close).toHaveBeenCalledOnce();
   });
@@ -252,7 +263,7 @@ describe("canonical NAP profiles", () => {
   it("keeps startup-cached required profiles when live PX is unavailable", async () => {
     mocks.create.mockRejectedValue(new Error("PX unavailable"));
     const provider = new PxProvider({
-      loadSkill: async () => "# NAP skill",
+      loadSkill: async () => "# PX skill",
       getRequiredEntities: () => [claire.id],
       getRequiredEntityManifests: () => [claire],
     });
@@ -265,7 +276,7 @@ describe("canonical NAP profiles", () => {
 
   it("deduplicates configured profiles and repeated model tool calls", async () => {
     const toolCall = result([{
-      type: "tool-call", toolName: "nap_resolve", toolCallId: "again", input: JSON.stringify({ uri: claire.id }),
+      type: "tool-call", toolName: "px_resolve", toolCallId: "again", input: JSON.stringify({ uri: claire.id }),
     }], "tool-calls");
     modelWith([toolCall, answer('{}')]);
     const provider = new PxProvider({ loadSkill: async () => "skill", requiredEntitiesByChannel: { "25th-chapter": [claire.id, claire.id] } });
@@ -281,7 +292,7 @@ describe("canonical NAP profiles", () => {
 
   it("enforces the entity limit across distinct tool calls", async () => {
     const secondCall = result([{
-      type: "tool-call", toolName: "nap_resolve", toolCallId: "other", input: JSON.stringify({ uri }),
+      type: "tool-call", toolName: "px_resolve", toolCallId: "other", input: JSON.stringify({ uri }),
     }], "tool-calls");
     modelWith([secondCall]);
     await expect(profileProvider().enrichContext({ ...storyRequest, maxUniqueEntityRepresentations: 1 }))
@@ -293,7 +304,7 @@ describe("canonical NAP profiles", () => {
 
 describe("MCP diagnostics and deadlines", () => {
   it("accepts a canonical JSON manifest surrounded by CLI log lines", async () => {
-    const withNestedId = { ...claire, references: { partner: { id: "nap://test/character/partner" } } };
+    const withNestedId = { ...claire, references: { partner: { id: "px://test/character/partner" } } };
     const text = '\u001b[33m WARN lore command took > 5s\u001b[0m\n' + JSON.stringify(withNestedId, null, 2) + '\nINFO done';
     mocks.execute.mockResolvedValue({ content: [{ type: "text", text }] });
     modelWith([answer('{}')]);
@@ -307,7 +318,7 @@ describe("MCP diagnostics and deadlines", () => {
     await expect(profileProvider().enrichContext(storyRequest)).rejects.toThrow("multiple manifest objects");
   });
 
-  it("finds nap_resolve on a later discovery page", async () => {
+  it("finds px_resolve on a later discovery page", async () => {
     mocks.list.mockResolvedValueOnce({ tools: [], nextCursor: "next-page" });
     await enrich();
     expect(mocks.list).toHaveBeenNthCalledWith(2, expect.objectContaining({ params: { cursor: "next-page" } }));
@@ -329,13 +340,13 @@ describe("MCP diagnostics and deadlines", () => {
   });
 });
 
-// Opt-in read-only smoke test. Ordinary unit tests never start a NAP process.
-it.skipIf(process.env.NAP_MCP_SMOKE !== "1")("preserves a live Claire manifest when the model returns no profile", async () => {
+// Opt-in read-only smoke test. Ordinary unit tests never start a PX process.
+it.skipIf(process.env.PX_MCP_SMOKE !== "1")("preserves a live Claire manifest when the model returns no profile", async () => {
   const actualMcp = await vi.importActual<typeof import("@ai-sdk/mcp")>("@ai-sdk/mcp");
   const actualStdio = await vi.importActual<typeof import("@modelcontextprotocol/sdk/client/stdio.js")>("@modelcontextprotocol/sdk/client/stdio.js");
   mocks.create.mockImplementation(config => actualMcp.createMCPClient({
     ...config,
-    transport: new actualStdio.StdioClientTransport({ command: "/bin/sh", args: ["-lc", "exec nap-mcp-server"] }),
+    transport: new actualStdio.StdioClientTransport({ command: "/bin/sh", args: ["-lc", "exec px-mcp-server"] }),
   }));
   modelWith([answer('{"entities":[]}')]);
   const output = await profileProvider().enrichContext(storyRequest);

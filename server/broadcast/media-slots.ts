@@ -185,39 +185,17 @@ export async function finishCanonicalSlot(
   };
 }
 
-/** Generate a non-canonical ambient turn without archiving or changing narrative context. */
-export async function prepareAmbientSlots(
+/** Ambient b-roll turn from pre-generated window text — no canonical reads/writes. */
+export async function prepareAmbientTurnFromText(
   channelId: string,
-  previousCanonicalContext: string,
+  generated: { title: string; content: string; dialogue?: string; imageRepresentations?: readonly SelectedImageRepresentation[]; selectedImageRepresentations?: readonly SelectedImageRepresentation[] },
   runId: string,
   sequence: number,
   signal: AbortSignal,
 ): Promise<PreparedAmbientTurn | undefined> {
   signal.throwIfAborted();
-  let generated: Awaited<ReturnType<typeof generateStoryBlock>>;
-  try {
-    generated = await retryGeneration(
-      "ambient narrative text",
-      () => generateStoryBlock(channelId, previousCanonicalContext, false),
-      signal,
-    );
-  } catch (cause) {
-    // Ambient is deliberately non-canonical. A provider failure should not
-    // blank the stream when the channel already has an archived image that
-    // generateImageWithFallback can reuse.
-    logger.warn(
-      `Ambient narrative unavailable for ${channelId}; attempting an image-only fallback turn`,
-      "broadcast",
-      asError(cause),
-    );
-    generated = {
-      title: "Ambient interlude",
-      content: previousCanonicalContext.trim().slice(0, 300) || "A quiet ambient scene between chapters.",
-      dialogue: undefined,
-    };
-  }
-  const ambientReferences = generated.imageRepresentations ?? generated.selectedImageRepresentations ?? [];
-  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "ambient", signal, ambientReferences);
+  const ambientReferences = (generated as any).imageRepresentations ?? (generated as any).selectedImageRepresentations ?? [];
+  const media = await generateTurnMedia(channelId, generated.title, generated.content, generated.dialogue, "ambient", signal, ambientReferences as readonly SelectedImageRepresentation[]);
   if (!media.image) return undefined;
   const idempotencyPrefix = `channel:${channelId}:run:${runId}:sequence:${sequence}`;
   const image = toUploadAsset(
@@ -228,10 +206,6 @@ export async function prepareAmbientSlots(
   const narration = media.narration.length > 0 ? media.narration : [undefined];
   const segments = narration.map((item, segmentOrdinal) => ({
     segmentOrdinal,
-    // Unified image floor: max(config, audio). Short voice clips hold the
-    // image for the full floor; long narration is never cut to fit it.
-    // Video (when present) keeps its intrinsic duration elsewhere — this
-    // floor only ever feeds imageDuration, never a video duration.
     durationSeconds: slotDurationForSpeech(item?.speech.durationSeconds),
     ...(item ? {
       audio: toUploadAsset(item.speech.buffer, item.speech.mimeType, `narration-${segmentOrdinal}.${item.speech.extension}`),

@@ -14,7 +14,7 @@
 
 /** Top-level entity keys that are pure infrastructure — never useful to a language model. */
 const OMIT_TOP_LEVEL = new Set([
-  'id',              // nap:// protocol URI — model cannot resolve
+  'id',              // px:// protocol URI — model cannot resolve
   'version',         // document versioning
   'references',      // cross-entity links (empty in practice)
   'representations', // image hashes and file URIs
@@ -34,7 +34,7 @@ const OMIT_PROPERTY_KEYS = new Set([
  */
 const isNoiseString = (val) =>
   typeof val === 'string' &&
-  (/^(nap:|blake3:|https?:|\.\/|\/mnt\/)/.test(val) ||
+  (/^(px:|blake3:|https?:|\.\/|\/mnt\/)/.test(val) ||
    /\.(png|jpg|jpeg|webp|pdf|svg)$/i.test(val));
 
 // ─── Value Formatter ──────────────────────────────────────────────────────────

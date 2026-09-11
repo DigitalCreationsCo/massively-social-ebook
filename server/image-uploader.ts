@@ -1,7 +1,7 @@
 import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import { GCPStorageManager } from "./storage-manager";
 import { generateStoryImage } from "./blocks/ai";
-import { admitImageProviderWork } from "./blocks/provider-budget";
+import { admitBatchImageWork, admitImageProviderWork } from "./blocks/provider-budget";
 import { getAiConfiguration } from "./blocks/ai-provider";
 import {
   fetchReferenceImages,
@@ -138,6 +138,95 @@ export async function generateStoryImageAsset(
       ...(options.signal ? { abortSignal: options.signal } : {}),
     }),
     options.signal,
+  );
+  const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
+  const buffer = Buffer.from(normalized, "base64");
+  if (buffer.length === 0) throw new Error("Image generator returned empty image data");
+  return { buffer, mimeType: "image/jpeg", filename: `story-${generateUUID()}.jpg` };
+}
+
+export interface StoryImageBatchItem {
+  description: string;
+  imageRepresentations?: readonly SelectedImageRepresentation[];
+}
+
+export interface StoryImageBatchOptions {
+  /** Broadcast abort signal, forwarded through downloads + generation. */
+  signal?: AbortSignal;
+  /** Max parallel generations (default 4, max 8). Pacing is enforced by the batch budget lane. */
+  concurrency?: number;
+}
+
+/**
+ * Generate 4-8 different story images concurrently without tripping rate limits.
+ *
+ * Each item resolves references then generates through `admitBatchImageWork`
+ * (paced parallelism + shared 429 cooldown). Per-item failures resolve to
+ * `undefined` so one bad prompt never fails the batch — callers fall back to
+ * an archived visual, same as the single-image path. Results align with input
+ * order. Aborts propagate: remaining items resolve `undefined`.
+ */
+export async function generateStoryImageAssetsBatch(
+  items: readonly StoryImageBatchItem[],
+  options: StoryImageBatchOptions = {},
+): Promise<(GeneratedStoryImage | undefined)[]> {
+  const results: (GeneratedStoryImage | undefined)[] = new Array(items.length).fill(undefined);
+  if (items.length === 0) return results;
+  const rawConcurrency = options.concurrency ?? 4;
+  const concurrency = Math.max(1, Math.min(Number.isFinite(rawConcurrency) ? rawConcurrency : 4, 8, items.length));
+  let next = 0;
+  const workers = Array.from({ length: concurrency }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      const item = items[index]!;
+      try {
+        results[index] = await generateOneBatchAsset(item, options.signal);
+      } catch (error) {
+        if (options.signal?.aborted) return;
+        // ponytail: per-item failure is non-fatal by design; caller falls back to archive
+        results[index] = undefined;
+        void error;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function generateOneBatchAsset(
+  item: StoryImageBatchItem,
+  signal?: AbortSignal,
+): Promise<GeneratedStoryImage> {
+  signal?.throwIfAborted();
+  const selected = item.imageRepresentations ?? [];
+  const { provider, model } = getAiConfiguration().image;
+  const limits = getImageReferenceLimits(provider, model);
+
+  let referenceImages: Buffer[] | undefined;
+  let referenceHashes: string[] | undefined;
+  let candidateCount = 0;
+
+  if (selected.length > 0) {
+    candidateCount = selected.length;
+    const fetched = await fetchReferenceImages(selected, {
+      ...(signal ? { signal } : {}),
+      maxImages: limits.maxImages,
+      maxBytesPerImage: limits.maxBytesPerImage,
+      allowedMimeTypes: limits.allowedMimeTypes,
+    });
+    if (fetched.length > 0) {
+      referenceImages = fetched.map((f) => f.buffer);
+      referenceHashes = fetched.map((f) => f.hash);
+    }
+  }
+
+  const base64Data = await admitBatchImageWork(
+    () => generateStoryImage(item.description, {
+      ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
+      ...(signal ? { abortSignal: signal } : {}),
+    }),
+    signal,
   );
   const normalized = base64Data.replace(/^data:image\/[^;]+;base64,/, "");
   const buffer = Buffer.from(normalized, "base64");

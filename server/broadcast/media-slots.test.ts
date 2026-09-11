@@ -11,7 +11,7 @@ vi.mock("../media/tts-service", () => speech);
 vi.mock("../storage", () => ({ storage }));
 vi.mock("../logger", () => ({ logger: { warn: vi.fn(), error: vi.fn() } }));
 
-import { prepareAmbientSlots, prepareCanonicalSlot, slotsFromBlock } from "./media-slots";
+import { prepareAmbientTurnFromText, prepareCanonicalSlot, slotsFromBlock } from "./media-slots";
 
 describe("broadcast media slots", () => {
   afterEach(() => {
@@ -140,14 +140,13 @@ describe("broadcast media slots", () => {
   }, 5_000);
 
   it("holds short narrated images for the full floor instead of the TTS length", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "One. Two.", dialogue: "One. Two." });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
     speech.synthesizeNarrationBuffers.mockResolvedValue([
       { speech: { buffer: Buffer.from("audio-one"), durationSeconds: 4, extension: "wav", mimeType: "audio/wav" } },
       { speech: { buffer: Buffer.from("audio-two"), durationSeconds: 5, extension: "wav", mimeType: "audio/wav" } },
     ]);
 
-    const prepared = await prepareAmbientSlots("main", "", "run-1", 7, new AbortController().signal);
+    const prepared = await prepareAmbientTurnFromText("main", { title: "A door opens", content: "One. Two.", dialogue: "One. Two." }, "run-1", 7, new AbortController().signal);
 
     expect(prepared).toMatchObject({
       sequence: 7,
@@ -161,13 +160,12 @@ describe("broadcast media slots", () => {
   });
 
   it("preserves long narration verbatim instead of truncating to the floor", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "A door opens", content: "One.", dialogue: "One." });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
     speech.synthesizeNarrationBuffers.mockResolvedValue([
       { speech: { buffer: Buffer.from("audio-long"), durationSeconds: 18, extension: "wav", mimeType: "audio/wav" } },
     ]);
 
-    const prepared = await prepareAmbientSlots("main", "", "run-1", 9, new AbortController().signal);
+    const prepared = await prepareAmbientTurnFromText("main", { title: "A door opens", content: "One.", dialogue: "One." }, "run-1", 9, new AbortController().signal);
 
     expect(prepared).toMatchObject({
       totalDurationSeconds: 18,
@@ -196,35 +194,25 @@ describe("broadcast media slots", () => {
     }
   });
 
-  it("uses an image-only ambient turn when narrative generation is unavailable", async () => {
-    vi.useFakeTimers();
-    try {
-      blocks.generateStoryBlock.mockRejectedValue(new Error("Structured output unavailable"));
-      images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
-      speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("Bark unavailable"));
+  it("uses an image-only ambient turn when TTS is unavailable (media fallback)", async () => {
+    images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "scene.jpg" });
+    speech.synthesizeNarrationBuffers.mockRejectedValue(new Error("Bark unavailable"));
 
-      const pending = prepareAmbientSlots("main", "Prior scene.", "run-1", 8, new AbortController().signal);
-      await Promise.resolve();
-      await Promise.resolve();
-      await vi.runAllTimersAsync();
-      const prepared = await pending;
+    const prepared = await prepareAmbientTurnFromText("main", { title: "Ambient interlude", content: "Prior scene.", dialogue: undefined }, "run-1", 8, new AbortController().signal);
 
-      expect(prepared).toMatchObject({
-        sequence: 8,
-        segments: [{ segmentOrdinal: 0, durationSeconds: 15 }],
-      });
-      expect(prepared?.segments[0]?.audio).toBeUndefined();
-      expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
-        expect.stringContaining("Ambient interlude"),
-        expect.objectContaining({ imageRepresentations: [], signal: expect.anything() }),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(prepared).toMatchObject({
+      sequence: 8,
+      segments: [{ segmentOrdinal: 0, durationSeconds: 15 }],
+    });
+    expect(prepared?.segments[0]?.audio).toBeUndefined();
+    expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
+      expect.stringContaining("Prior scene"),
+      expect.objectContaining({ imageRepresentations: [], signal: expect.anything() }),
+    );
   });
 
   it("forwards identical selected references through canonical generation", async () => {
-    const refs = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const refs = [{ entityId: "px://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
     const signal = new AbortController().signal;
     blocks.generateStoryBlock.mockResolvedValue({
       title: "T",
@@ -246,18 +234,12 @@ describe("broadcast media slots", () => {
   });
 
   it("forwards identical selected references through ambient generation", async () => {
-    const refs = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const refs = [{ entityId: "px://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
     const signal = new AbortController().signal;
-    blocks.generateStoryBlock.mockResolvedValue({
-      title: "T",
-      content: "C",
-      dialogue: "D",
-      selectedImageRepresentations: refs,
-    });
     images.generateStoryImageAsset.mockResolvedValue({ buffer: Buffer.from("image"), mimeType: "image/jpeg", filename: "s.jpg" });
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
 
-    await prepareAmbientSlots("main", "ctx", "run-1", 3, signal);
+    await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", selectedImageRepresentations: refs }, "run-1", 3, signal);
 
     expect(images.generateStoryImageAsset).toHaveBeenCalledWith(
       expect.any(String),
@@ -266,7 +248,6 @@ describe("broadcast media slots", () => {
   });
 
   it("preserves archived-image fallback when generation exhausts retries", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
     images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
     storage.getRandomImage.mockResolvedValue("https://archive.example/fallback.jpg");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -277,7 +258,7 @@ describe("broadcast media slots", () => {
     );
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
     try {
-      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 4, new AbortController().signal);
+      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 4, new AbortController().signal);
       expect(prepared?.image).toBeDefined();
       expect(storage.getRandomImage).toHaveBeenCalled();
     } finally {
@@ -286,7 +267,6 @@ describe("broadcast media slots", () => {
   });
 
   it("repeats the most recent canonical image before choosing a random fallback", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
     images.generateStoryImageAsset.mockRejectedValue(new Error("quota exhausted"));
     storage.getLastBlock.mockResolvedValue({ imageUrl: "https://archive.example/latest.jpg" });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -297,7 +277,7 @@ describe("broadcast media slots", () => {
     );
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
     try {
-      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 40, new AbortController().signal);
+      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 40, new AbortController().signal);
       expect(prepared?.image).toBeDefined();
       expect(storage.getLastBlock).toHaveBeenCalledWith("main");
       expect(storage.getRandomImage).not.toHaveBeenCalled();
@@ -308,7 +288,6 @@ describe("broadcast media slots", () => {
   });
 
   it("recovers an archived image via SDK when public fetch returns 403", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
     images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
     storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -317,7 +296,7 @@ describe("broadcast media slots", () => {
     images.downloadArchiveBuffer.mockResolvedValueOnce(Buffer.from("sdk-bytes"));
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
     try {
-      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 5, new AbortController().signal);
+      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 5, new AbortController().signal);
       expect(prepared?.image).toBeDefined();
       expect(images.downloadArchiveBuffer).toHaveBeenCalledWith(
         "https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg",
@@ -328,7 +307,6 @@ describe("broadcast media slots", () => {
   });
 
   it("skips the turn when a 403 archive is unreadable even via SDK", async () => {
-    blocks.generateStoryBlock.mockResolvedValue({ title: "T", content: "C", dialogue: "D", imageRepresentations: [] });
     images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
     storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/y.jpg");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -337,7 +315,7 @@ describe("broadcast media slots", () => {
     images.downloadArchiveBuffer.mockResolvedValue(null);
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
     try {
-      const prepared = await prepareAmbientSlots("main", "ctx", "run-1", 6, new AbortController().signal);
+      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 6, new AbortController().signal);
       expect(prepared).toBeUndefined();
       expect(images.downloadArchiveBuffer).toHaveBeenCalled();
     } finally {

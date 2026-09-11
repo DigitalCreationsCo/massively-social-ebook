@@ -26,7 +26,7 @@ vi.mock("./blocks/image-references", async (importOriginal) => {
   };
 });
 
-import { generateStoryImageAsset, generateAndUploadStoryImage, archiveStoryImage } from "./image-uploader";
+import { generateStoryImageAsset, generateAndUploadStoryImage, archiveStoryImage, generateStoryImageAssetsBatch } from "./image-uploader";
 
 describe("image-uploader reference forwarding", () => {
   beforeEach(() => {
@@ -42,11 +42,11 @@ describe("image-uploader reference forwarding", () => {
 
   it("fetches reference buffers and forwards them to generation", async () => {
     const fetched = [
-      { buffer: Buffer.from([1, 2]), mimeType: "image/png", hash: "h1", entityId: "nap://r/character/a", representationKey: "k" },
+      { buffer: Buffer.from([1, 2]), mimeType: "image/png", hash: "h1", entityId: "px://r/character/a", representationKey: "k" },
     ];
     mockFetchReferenceImages.mockResolvedValueOnce(fetched as never);
 
-    const selected = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const selected = [{ entityId: "px://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
     const signal = new AbortController().signal;
 
     await generateStoryImageAsset("a scene", { imageRepresentations: selected as never, signal });
@@ -70,7 +70,7 @@ describe("image-uploader reference forwarding", () => {
 
   it("degrades to text-to-image when no usable reference remains", async () => {
     mockFetchReferenceImages.mockResolvedValueOnce([]);
-    const selected = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const selected = [{ entityId: "px://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
 
     await generateStoryImageAsset("a scene", { imageRepresentations: selected as never });
 
@@ -87,6 +87,41 @@ describe("image-uploader reference forwarding", () => {
     expect(mockGenerateStoryImage).toHaveBeenCalledWith("a scene", expect.objectContaining({}));
   });
 
+  describe("generateStoryImageAssetsBatch", () => {
+    beforeEach(() => {
+      vi.stubEnv("IMAGE_BATCH_INTERVAL_MS", "0");
+    });
+
+    it("generates one asset per description, aligned with input order", async () => {
+      const assets = await generateStoryImageAssetsBatch(
+        [{ description: "a" }, { description: "b" }, { description: "c" }],
+        { concurrency: 2 },
+      );
+
+      expect(assets).toHaveLength(3);
+      expect(mockGenerateStoryImage).toHaveBeenCalledTimes(3);
+      for (const asset of assets) {
+        expect(asset?.buffer).toEqual(Buffer.from("hello"));
+        expect(asset?.mimeType).toBe("image/jpeg");
+      }
+      expect(mockGenerateStoryImage).toHaveBeenNthCalledWith(3, "c", expect.objectContaining({}));
+      const described = mockGenerateStoryImage.mock.calls.map((call) => call[0]).sort();
+      expect(described).toEqual(["a", "b", "c"]);
+    });
+
+    it("resolves undefined for failed items without failing the batch", async () => {
+      mockGenerateStoryImage.mockRejectedValueOnce(new Error("provider down"));
+
+      const assets = await generateStoryImageAssetsBatch(
+        [{ description: "bad" }, { description: "good" }],
+        { concurrency: 2 },
+      );
+
+      expect(assets[0]).toBeUndefined();
+      expect(assets[1]?.buffer).toEqual(Buffer.from("hello"));
+    });
+  });
+
   it("forwards references and signal through generateAndUpload", async () => {
     const { getGcsImageStorage } = await import("./image-uploader");
     void getGcsImageStorage;
@@ -98,8 +133,8 @@ describe("image-uploader reference forwarding", () => {
     vi.stubEnv("GOOGLE_CLOUD_BUCKET", "b");
     vi.stubEnv("GOOGLE_CLOUD_PROJECT", "p");
 
-    const selected = [{ entityId: "nap://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
-    const fetched = [{ buffer: Buffer.from([1]), mimeType: "image/png", hash: "h1", entityId: "nap://r/character/a", representationKey: "k" }];
+    const selected = [{ entityId: "px://r/character/a", representationKey: "k", hash: "h1", format: "png" }];
+    const fetched = [{ buffer: Buffer.from([1]), mimeType: "image/png", hash: "h1", entityId: "px://r/character/a", representationKey: "k" }];
     mockFetchReferenceImages.mockResolvedValueOnce(fetched as never);
 
     const url = await generateAndUploadStoryImage("desc", "chan", "block", { imageRepresentations: selected as never });

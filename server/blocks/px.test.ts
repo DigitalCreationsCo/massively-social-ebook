@@ -9,9 +9,9 @@ const request = {
 
 describe("PX prompt and enrichment contract", () => {
   it("provides configured URIs alongside prose and prioritizes required entities", () => {
-    const prompt = createPxPrompt(request, ["nap://25th-chapter/character/claire-cole"]);
-    expect(prompt).toContain("nap_resolve");
-    expect(prompt).toContain("nap://25th-chapter/character/claire-cole");
+    const prompt = createPxPrompt(request, ["px://25th-chapter/character/claire-cole"]);
+    expect(prompt).toContain("px_resolve");
+    expect(prompt).toContain("px://25th-chapter/character/claire-cole");
     expect(prompt).toContain("Required entities are an exception");
     expect(prompt).toContain("Claire investigates.");
   });
@@ -31,7 +31,7 @@ describe("PX prompt and enrichment contract", () => {
 
   it("accepts canonical nested properties and representations", () => {
     const entity = {
-      id: "nap://test/character/日本語-ヒーロー", name: "Hero", type: "character",
+      id: "px://test/character/日本語-ヒーロー", name: "Hero", type: "character",
       properties: { traits: ["perceptive"], nested: { active: true } },
       representations: { portrait: { hash: "blake3:abc", format: "png", uri: "portrait.png" } },
     };

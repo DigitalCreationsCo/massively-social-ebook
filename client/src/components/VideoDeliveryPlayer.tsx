@@ -299,7 +299,7 @@ export function VideoDeliveryPlayer({
   return (
     <div
       ref={containerRef}
-      className={cn("group relative isolate aspect-video", isFullScreen ? "rounded-none border-none" : "", className)}
+      className={cn("group relative isolate", isFullScreen ? "rounded-none border-none" : "", className)}
       role={isUnavailable ? undefined : "group"}
       aria-label={isUnavailable ? undefined : "Video delivery player"}
       tabIndex={isUnavailable ? undefined : 0}
@@ -368,9 +368,9 @@ export function VideoDeliveryPlayer({
       )}
 
       {isUnavailable ? (
-        <div className="relative flex size-full flex-col items-center justify-center px-8 text-center">
-          <span className="mb-5 font-mono text-[10px] uppercase tracking-[0.32em] text-white/75">Signal pending</span>
-          <h1 className="max-w-lg font-serif font-semibold text-3xl leading-tight text-white sm:text-4xl">This channel is preparing to air.</h1>
+        <div className="relative flex size-full flex-col items-center justify-center px-3 text-center">
+          <span className="mb-2 font-mono text-[10px] uppercase tracking-[0.32em] text-white/75">Signal pending</span>
+          <h1 className="max-w-lg font-serif font-semibold text-2xl leading-tight text-white sm:text-3xl">This channel is preparing to air.</h1>
         </div>
       ) : (
         <>

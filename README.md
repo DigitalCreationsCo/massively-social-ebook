@@ -46,7 +46,7 @@ embedded in the registry:
       "controlEndpoint": "https://streamer.example.com",
       "queueTokenEnv": "BROADCAST_QUEUE_TOKEN",
       "requiredEntities": [
-        "nap://your-channel-id/character/lead"
+        "px://your-channel-id/character/lead"
       ],
       "youtube": {
         "liveChatId": "youtube-live-chat-id",
@@ -171,14 +171,14 @@ fan-out adapter and one elected provider-connector leader.
 
 Channel IDs are application keys, queue slot prefixes, and API path parameters.
 Use a single URL-path-safe identifier such as `25th-chapter`; do not use a
-`nap://` URI as a channel ID. The NAP resolver accepts the bare repository ID.
+`px://` URI as a channel ID. The PX resolver accepts the bare repository ID.
 
-To migrate an existing `nap://25th-chapter` channel, stop that broadcast, run a
+To migrate an existing `px://25th-chapter` channel, stop that broadcast, run a
 dry run, then apply the migration:
 
 ```bash
-DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter
-DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter --apply
+DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from px://25th-chapter --to 25th-chapter
+DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from px://25th-chapter --to 25th-chapter --apply
 ```
 
 The migration renames FK-backed channel rows, moves broadcast desired-state and

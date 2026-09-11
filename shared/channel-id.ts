@@ -1,7 +1,7 @@
 /**
  * The single default channel key used in browser routes, API requests, and
- * queue slot identities. It is deliberately a URL-path-safe NAP repository
- * identifier, not a `nap://` URI.
+ * queue slot identities. It is deliberately a URL-path-safe PX repository
+ * identifier, not a `px://` URI.
  */
 export const DEFAULT_CHANNEL_ID = "25th-chapter";
 

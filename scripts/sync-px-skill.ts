@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const NAP_SDK_PACKAGE = "@portalshq/nap-sdk";
+const PX_SDK_PACKAGE = "@portalshq/px";
 const GENERATED_SKILL_DIRECTORY = path.resolve("server/blocks/generated");
 const GENERATED_SKILL_PATH = path.join(GENERATED_SKILL_DIRECTORY, "px-skill.md");
 const GENERATED_METADATA_PATH = path.join(GENERATED_SKILL_DIRECTORY, "px-skill.json");
@@ -29,14 +29,14 @@ function normalizeGitHubRepository(repository: NpmPackageMetadata["repository"])
   const repositoryUrl = typeof repository === "string" ? repository : repository?.url;
   const match = repositoryUrl?.match(/github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?$/);
   if (!match) {
-    throw new Error(`The ${NAP_SDK_PACKAGE} package does not declare a GitHub repository.`);
+    throw new Error(`The ${PX_SDK_PACKAGE} package does not declare a GitHub repository.`);
   }
   return match[1];
 }
 
 function assertGitCommit(commit: string | undefined): asserts commit is string {
   if (!commit || !/^[a-f0-9]{40}$/i.test(commit)) {
-    throw new Error(`The ${NAP_SDK_PACKAGE} package metadata does not declare a valid gitHead.`);
+    throw new Error(`The ${PX_SDK_PACKAGE} package metadata does not declare a valid gitHead.`);
   }
 }
 
@@ -50,11 +50,11 @@ async function fetchText(url: string, headers: HeadersInit = {}): Promise<string
   return await response.text();
 }
 
-async function readNapSdkVersion(): Promise<string> {
+async function readPxSdkVersion(): Promise<string> {
   const lockfile = JSON.parse(await readFile("package-lock.json", "utf8")) as PackageLock;
-  const version = lockfile.packages?.[`node_modules/${NAP_SDK_PACKAGE}`]?.version;
+  const version = lockfile.packages?.[`node_modules/${PX_SDK_PACKAGE}`]?.version;
   if (!version) {
-    throw new Error(`Unable to find ${NAP_SDK_PACKAGE} in package-lock.json.`);
+    throw new Error(`Unable to find ${PX_SDK_PACKAGE} in package-lock.json.`);
   }
   return version;
 }
@@ -67,9 +67,9 @@ async function writeAtomically(destination: string, content: string): Promise<vo
 
 export async function syncPxSkill(): Promise<void> {
   const skillPath = requireEnvironmentVariable("PX_SKILL_GITHUB_PATH").replace(/^\/+/, "");
-  const sdkVersion = await readNapSdkVersion();
+  const sdkVersion = await readPxSdkVersion();
   const packageMetadata = JSON.parse(
-    await fetchText(`https://registry.npmjs.org/${encodeURIComponent(NAP_SDK_PACKAGE)}/${sdkVersion}`),
+    await fetchText(`https://registry.npmjs.org/${encodeURIComponent(PX_SDK_PACKAGE)}/${sdkVersion}`),
   ) as NpmPackageMetadata;
   assertGitCommit(packageMetadata.gitHead);
 
@@ -89,7 +89,7 @@ export async function syncPxSkill(): Promise<void> {
   await writeAtomically(
     GENERATED_METADATA_PATH,
     `${JSON.stringify({
-      package: NAP_SDK_PACKAGE,
+      package: PX_SDK_PACKAGE,
       packageVersion: sdkVersion,
       repository,
       commit: packageMetadata.gitHead,

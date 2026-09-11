@@ -22,7 +22,7 @@ export function SpeakerButton({
       onClick={onClick}
       disabled={isPending}
       className={cn(
-        "flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200",
+        "flex items-center justify-center w-4 h-4 rounded-full transition-all duration-200",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         isSpeaking &&
           "text-primary bg-primary/10 [&_svg]:animate-pulse",
@@ -41,11 +41,11 @@ export function SpeakerButton({
       }
     >
       {isPending ? (
-        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+        <Loader2 className="w-2.5 h-2.5 animate-spin" aria-hidden="true" />
       ) : isSpeaking ? (
-        <Volume2 className="w-4 h-4" aria-hidden="true" />
+        <Volume2 className="w-2.5 h-2.5" aria-hidden="true" />
       ) : (
-        <Volume className="w-4 h-4" aria-hidden="true" />
+        <Volume className="w-2.5 h-2.5" aria-hidden="true" />
       )}
     </button>
   );

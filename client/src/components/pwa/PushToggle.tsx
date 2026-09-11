@@ -14,9 +14,9 @@ export function PushToggle() {
       <>
         {/* <button
         disabled
-        className="flex items-center gap-2 text-sm text-green-500 font-medium px-3 py-1.5 border border-green-500/20 bg-green-500/10 rounded-full"
+        className="flex items-center gap-2 text-green-500 font-medium px-2 border border-green-500/20 bg-green-500/10 rounded-full"
       >
-        <Bell className="w-4 h-4" />
+        <Bell className="w-3 h-3" />
         <span>Updates On</span>
       </button> */}
       </>
@@ -27,12 +27,12 @@ export function PushToggle() {
     <button
       onClick={subscribeUser}
       disabled={isLoading}
-      className="flex self-end items-center gap-2 text-sm font-medium px-1.5 border-primary/20 rounded-full transition-colors"
+      className="flex self-end items-center gap-2 font-medium px-2 border-primary/20 rounded-full transition-colors"
     >
       {isLoading ? (
-        <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
       ) : (
-        <BellOff className="w-4 h-4" />
+        <BellOff className="w-3 h-3" />
       )}
       <span>Turn on notifications</span>
     </button>

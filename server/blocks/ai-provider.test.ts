@@ -36,7 +36,7 @@ vi.mock("@ai-sdk/google", () => ({ createGoogleGenerativeAI: mockCreateGoogle })
 vi.mock("@ai-sdk/openai", () => ({ createOpenAI: mockCreateOpenAI }));
 vi.mock("ai-sdk-provider-opencode-sdk", () => ({ createOpencode: mockCreateOpenCode }));
 
-import { getEmbeddingModel, getImageModel, getLanguageModel } from "./ai-provider";
+import { getEmbeddingModel, getImageModel, getLanguageModel, getAiConfiguration, generateProviderImage } from "./ai-provider";
 
 describe("AI SDK provider selection", () => {
   beforeEach(() => {
@@ -95,5 +95,71 @@ describe("AI SDK provider selection", () => {
     vi.stubEnv("AI_IMAGE_PROVIDER", "opencode");
 
     expect(() => getImageModel()).toThrow("OpenCode does not expose an AI SDK image model");
+  });
+
+  it("defaults openrouter image model to meta/muse-image", () => {
+    vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
+
+    expect(getAiConfiguration().image).toEqual({ provider: "openrouter", model: "meta/muse-image" });
+  });
+
+  it("rejects OpenRouter for getImageModel (direct Images API client)", () => {
+    vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
+    vi.stubEnv("AI_IMAGE_MODEL", "meta/muse-image");
+
+    expect(() => getImageModel()).toThrow("direct Images API");
+  });
+
+  describe("generateProviderImage via OpenRouter Images API", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
+      vi.stubEnv("AI_IMAGE_MODEL", "meta/muse-image");
+      vi.stubEnv("OPENROUTER_API_KEY", "or-key");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts to /api/v1/images and returns stripped base64", async () => {
+      const fetchMock = vi.fn(async () =>
+        new Response(JSON.stringify({ data: [{ b64_json: "aGVsbG8=" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(generateProviderImage({ text: "a scene" })).resolves.toBe("aGVsbG8=");
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit & { body: string }];
+      expect(url).toBe("https://openrouter.ai/api/v1/images");
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer or-key");
+      expect(JSON.parse(init.body)).toMatchObject({
+        model: "meta/muse-image",
+        prompt: "a scene",
+        aspect_ratio: "16:9",
+        output_format: "jpeg",
+      });
+    });
+
+    it("sends reference images as input_references", async () => {
+      const fetchMock = vi.fn(async () =>
+        new Response(JSON.stringify({ data: [{ b64_json: "aGVsbG8=" }] }), { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await generateProviderImage({ text: "edit", referenceImages: [Buffer.from([1, 2])] });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit & { body: string }];
+      const body = JSON.parse(init.body);
+      expect(body.input_references).toHaveLength(1);
+      expect(body.input_references[0].image_url.url).toMatch(/^data:image\/png;base64,/);
+    });
+
+    it("throws with the status on API failure (feeds the 429 cooldown)", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429 })));
+
+      await expect(generateProviderImage({ text: "x" })).rejects.toThrow("429");
+    });
   });
 });

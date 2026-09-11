@@ -11,16 +11,33 @@ export interface ProviderBudgetStatus {
   nextImageStartAt?: number;
   queued: number;
   active: number;
+  batchQueued: number;
+  batchActive: number;
 }
 
 const IMAGE_CONCURRENCY = 1;
 const COOLDOWN_MS = 90_000;
 /** Deliberate provider budget: no more than one image start per 15 seconds. */
 const IMAGE_START_INTERVAL_MS = 15_000;
+/**
+ * Batch lane for multi-image fan-out (OpenRouter Images API): paced parallelism
+ * instead of the strict single lane above. Env-tunable without a code change.
+ */
+function batchImageConcurrency(): number {
+  const raw = Number.parseInt(process.env.IMAGE_BATCH_CONCURRENCY ?? "4", 10);
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 8) : 4;
+}
+function batchImageStartIntervalMs(): number {
+  const raw = Number.parseInt(process.env.IMAGE_BATCH_INTERVAL_MS ?? "1000", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1000;
+}
 let active = 0;
 let cooldownUntil = 0;
 let nextImageStartAt = 0;
 const waiting: Array<() => void> = [];
+let batchActive = 0;
+let batchNextStartAt = 0;
+const batchWaiting: Array<() => void> = [];
 
 export class ProviderBudgetUnavailableError extends Error {
   constructor(readonly retryAt: number) {
@@ -33,9 +50,11 @@ export function getImageProviderBudgetStatus(now = Date.now()): ProviderBudgetSt
   return {
     healthy: now >= cooldownUntil,
     ...(now < cooldownUntil ? { retryAt: cooldownUntil } : {}),
-    ...(nextImageStartAt > now ? { nextImageStartAt } : {}),
+    ...(Math.max(nextImageStartAt, batchNextStartAt) > now ? { nextImageStartAt: Math.max(nextImageStartAt, batchNextStartAt) } : {}),
     queued: waiting.length,
     active,
+    batchQueued: batchWaiting.length,
+    batchActive,
   };
 }
 
@@ -98,6 +117,54 @@ async function acquire(signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Batch lane: paced parallelism for multi-image fan-out (4-8 different prompts).
+ * Shares the cooldown with the single lane, so a 429 on either lane cools both.
+ * Pacing (concurrency + start interval) is env-tunable: IMAGE_BATCH_CONCURRENCY
+ * (default 4, max 8), IMAGE_BATCH_INTERVAL_MS (default 1000).
+ */
+export async function admitBatchImageWork<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
+  if (Date.now() < cooldownUntil) throw new ProviderBudgetUnavailableError(cooldownUntil);
+  await acquireBatch(signal);
+  try {
+    signal?.throwIfAborted();
+    if (Date.now() < cooldownUntil) throw new ProviderBudgetUnavailableError(cooldownUntil);
+    await waitUntil(batchNextStartAt, signal);
+    signal?.throwIfAborted();
+    if (Date.now() < cooldownUntil) throw new ProviderBudgetUnavailableError(cooldownUntil);
+    batchNextStartAt = Date.now() + batchImageStartIntervalMs();
+    return await operation();
+  } catch (cause) {
+    if (isBudgetFailure(cause)) cooldownUntil = Date.now() + COOLDOWN_MS;
+    throw cause;
+  } finally {
+    batchActive -= 1;
+    batchWaiting.shift()?.();
+  }
+}
+
+async function acquireBatch(signal?: AbortSignal): Promise<void> {
+  if (batchActive < batchImageConcurrency()) {
+    batchActive += 1;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const wake = () => {
+      signal?.removeEventListener("abort", abort);
+      batchActive += 1;
+      resolve();
+    };
+    const abort = () => {
+      const index = batchWaiting.indexOf(wake);
+      if (index >= 0) batchWaiting.splice(index, 1);
+      reject(signal?.reason ?? new Error("Image provider admission aborted"));
+    };
+    batchWaiting.push(wake);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 function isBudgetFailure(cause: unknown): boolean {
   const message = cause instanceof Error ? cause.message : String(cause);
   return /(?:429|quota|resource exhausted|rate.?limit|too many requests)/i.test(message);
@@ -109,4 +176,7 @@ export function resetImageProviderBudgetForTests(): void {
   cooldownUntil = 0;
   nextImageStartAt = 0;
   waiting.length = 0;
+  batchActive = 0;
+  batchNextStartAt = 0;
+  batchWaiting.length = 0;
 }

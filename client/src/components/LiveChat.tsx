@@ -44,17 +44,6 @@ export function LiveChat({
   const isEffectivelyOpen = isOpen || keepOpen;
   const isClosable = !keepOpen;
 
-  // ── Auto-scroll to newest message ──────────────────────────────────────
-  // requestAnimationFrame defers the scroll until after framer-motion has
-  // updated the DOM, preventing a scroll-before-paint glitch.
-  useEffect(() => {
-    if (!isEffectivelyOpen) return;
-    const raf = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [history, isEffectivelyOpen]);
-
   // ── Focus input when chat opens ────────────────────────────────────────
   // Small delay lets the spring animation settle before triggering the
   // keyboard (avoids a race on iOS that can mis-position the viewport).
@@ -106,7 +95,6 @@ export function LiveChat({
       layout
       className={cn(
         "flex flex-col overflow-hidden",
-        "border-t-0 sm:border-t border-white/[0.07]",
         isEffectivelyOpen
           ? "flex-1 min-h-0" // fills remaining space in bottom zone
           : "flex-shrink-0", // collapses to peek-bar height
@@ -123,7 +111,7 @@ export function LiveChat({
         type="button"
         onClick={isClosable ? onToggle : undefined}
         className={cn(
-          "flex-shrink-0 h-11 w-full flex items-center gap-2.5 px-5 text-left",
+          "flex-shrink-0 h-5 w-full flex items-center gap-2 p-4 text-left",
           "border-b border-white/[0.05]",
           isClosable
             ? "cursor-pointer active:bg-white/[0.03] transition-colors"
@@ -147,8 +135,8 @@ export function LiveChat({
           // Open state: label
           <>
             <span className="flex-1">
-              <div className="self-end text-white/90 flex shrink-0 items-center gap-1.5 text-xs" aria-label={`${numUsers} viewers`}>
-                <Users className="size-4" />
+              <div className="self-end flex shrink-0 items-center gap-2 text-sm" aria-label={`${numUsers} viewers`}>
+                <Users className="size-3" />
                 <span className="font-mono tabular-nums">{numUsers} watching</span>
                 {/* <span className="hidden sm:inline">{numUsers === '1' ? 'person' : 'people'}</span> */}
               </div>
@@ -161,7 +149,7 @@ export function LiveChat({
             </span>
             {isClosable && (
               <ChevronDown
-                className="size-3.5 text-white/25 flex-shrink-0"
+                className="size-2.5 text-white/25 flex-shrink-0"
                 aria-hidden="true"
               />
             )}
@@ -184,7 +172,7 @@ export function LiveChat({
             ) : (
               <>
                 <MessageCircle
-                  className="size-3.5 text-white/30 flex-shrink-0"
+                  className="size-2.5 text-white/30 flex-shrink-0"
                   aria-hidden="true"
                 />
                 <span className="flex-1 text-xs text-white/35">
@@ -202,7 +190,7 @@ export function LiveChat({
 
             {/* Chevron pointing up = "open chat" */}
             <ChevronDown
-              className="size-3.5 text-white/20 flex-shrink-0 rotate-180"
+              className="size-2.5 text-white/20 flex-shrink-0 rotate-180"
               aria-hidden="true"
             />
           </>
@@ -226,7 +214,7 @@ export function LiveChat({
             style={{ touchAction: "pan-y" }}
             onTouchMove={(e) => e.stopPropagation()}
           >
-            <div className="flex flex-col gap-2 px-5 py-4">
+            <div className="flex flex-col gap-1.5 px-4">
               <AnimatePresence initial={false} mode="popLayout">
                 {history.length === 0 ? (
                   <motion.p
@@ -281,14 +269,14 @@ export function LiveChat({
              ────────────────────────────────────────────────────────────── */}
           <form
             onSubmit={handleSubmit}
-            className="flex-shrink-0 flex items-center gap-4 p-5 pr-4"
+            className="flex-shrink-0 flex items-center gap-2 p-2 pr-2"
           >
             <Input
               ref={inputRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Say something…"
-              className={cn("flex-1", "h-12")}
+              className="flex-1"
               maxLength={200}
               autoComplete="off"
               autoCorrect="off"
@@ -301,14 +289,14 @@ export function LiveChat({
               size="icon"
               disabled={!inputText.trim()}
               className={cn(
-                "rounded-full flex-shrink-0 h-12 w-12 p-0! m-0!",
+                "rounded-full flex-shrink-0 h-5 w-5 p-0! m-0!",
                 "bg-white/20 text-white",
                 "disabled:opacity-20 disabled:bg-transparent disabled:border border-none",
                 "transition-all duration-20",
               )}
               aria-label="Send message"
             >
-              <ArrowUp className="" />
+              <ArrowUp className="size-4" />
             </Button>
           </form>
         </>

@@ -39,7 +39,7 @@
     "@portalshq/capability-queue-broadcast": "^0.1.7",
     "@portalshq/capability-realtime-fanout": "^0.1.6",
     "@portalshq/capability-video-delivery": "^0.1.6",
-    "@portalshq/nap-sdk": "^0.8.14",
+    "@portalshq/px": "^0.8.19",
     "@portalshq/narrativeengine": "^0.8.15",
     "@portalshq/runtime-core": "^0.0.7",
     "@radix-ui/react-accordion": "^1.2.4",

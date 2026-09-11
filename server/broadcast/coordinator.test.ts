@@ -14,13 +14,16 @@ const storageMock = vi.hoisted(() => ({
 const mediaMock = vi.hoisted(() => ({
   slotsFromBlock: vi.fn(),
   hydrateCanonicalSlot: vi.fn(),
-  prepareAmbientSlots: vi.fn(),
+  prepareAmbientTurnFromText: vi.fn(),
   prepareCanonicalSlot: vi.fn(),
   prepareCanonicalText: vi.fn(),
   finishCanonicalSlot: vi.fn(),
 }));
 
-const blocksMock = vi.hoisted(() => ({ generateCanonicalStoryWindow: vi.fn() }));
+const blocksMock = vi.hoisted(() => ({
+  generateCanonicalStoryWindow: vi.fn(),
+  generateAmbientStoryWindow: vi.fn(async (_channelId: string, _tail: string, _need: number) => [{ title: "Ambient", content: `b-roll-${Math.random()}` }]),
+}));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("./media-slots", () => mediaMock);
@@ -107,7 +110,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
-    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => ambientTurn(sequence));
+    mediaMock.prepareAmbientTurnFromText.mockImplementation(async (_channelId: string, _generated: any, _runId: string, sequence: number) => ambientTurn(sequence));
     const client = {
       health: vi.fn().mockResolvedValue({ ok: true }),
       getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
@@ -136,7 +139,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
-    mediaMock.prepareAmbientSlots
+    mediaMock.prepareAmbientTurnFromText
       .mockResolvedValueOnce({
         ...ambientTurn(0),
         segments: [
@@ -332,7 +335,7 @@ describe("BroadcastCoordinator", () => {
     await flushMicrotasks();
     expect(client.health).toHaveBeenCalledOnce();
     expect(client.getPlayback).not.toHaveBeenCalled();
-    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientTurnFromText).not.toHaveBeenCalled();
     expect(mediaMock.prepareCanonicalSlot).not.toHaveBeenCalled();
     expect(mediaMock.prepareCanonicalText).not.toHaveBeenCalled();
     expect(mediaMock.finishCanonicalSlot).not.toHaveBeenCalled();
@@ -364,7 +367,7 @@ describe("BroadcastCoordinator", () => {
     const producing = (coordinator as any).produce(controller.signal);
 
     await flushMicrotasks();
-    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientTurnFromText).not.toHaveBeenCalled();
     expect(coordinator.getStatus()).toMatchObject({
       mode: "waiting_for_streamer",
       streamer: {
@@ -514,7 +517,7 @@ describe("BroadcastCoordinator", () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(client.health).toHaveBeenCalledOnce();
-    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientTurnFromText).not.toHaveBeenCalled();
     expect(coordinator.getStatus()).toMatchObject({ desiredState: "stopped", mode: "stopped" });
   });
 
@@ -558,7 +561,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getNextSession.mockResolvedValue(undefined);
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
-    mediaMock.prepareAmbientSlots.mockImplementation(async () => {
+    mediaMock.prepareAmbientTurnFromText.mockImplementation(async () => {
       controller.abort(new Error("one ambient iteration is enough for this test"));
       return undefined;
     });
@@ -568,7 +571,7 @@ describe("BroadcastCoordinator", () => {
 
     await flushMicrotasks();
     expect(client.health).toHaveBeenCalledOnce();
-    expect(mediaMock.prepareAmbientSlots).not.toHaveBeenCalled();
+    expect(mediaMock.prepareAmbientTurnFromText).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2_000);
     await flushMicrotasks();
     await producing;
@@ -577,7 +580,7 @@ describe("BroadcastCoordinator", () => {
     expect(client.getPlayback).toHaveBeenCalledTimes(3);
     // Both generators probe, but the first preparation aborts the run before
     // the second can start generating — a single producer, no duplicate work.
-    expect(mediaMock.prepareAmbientSlots).toHaveBeenCalledOnce();
+    expect(mediaMock.prepareAmbientTurnFromText).toHaveBeenCalledOnce();
     expect(coordinator.getStatus().streamer.state).toBe("available");
   });
 
@@ -664,7 +667,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
 
-    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => {
+    mediaMock.prepareAmbientTurnFromText.mockImplementation(async (_channelId: string, _generated: any, _runId: string, sequence: number) => {
       activeGenerations += 1;
       maxConcurrentGenerations = Math.max(maxConcurrentGenerations, activeGenerations);
       try {
@@ -774,7 +777,7 @@ describe("BroadcastCoordinator", () => {
     storageMock.getActiveSession.mockResolvedValue(undefined);
     storageMock.getLastBlock.mockResolvedValue(undefined);
 
-    mediaMock.prepareAmbientSlots.mockImplementation(async (_channelId: string, _context: string, _runId: string, sequence: number) => {
+    mediaMock.prepareAmbientTurnFromText.mockImplementation(async (_channelId: string, _generated: any, _runId: string, sequence: number) => {
       if (sequence === 0) return await gen0Deferred.promise;
       if (sequence === 1) return await gen1Deferred.promise;
       return undefined;

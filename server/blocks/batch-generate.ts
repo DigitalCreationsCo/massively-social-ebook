@@ -18,7 +18,7 @@
 
 import { storage } from "../storage";
 import { generateStoryBlock } from "./ai";
-import { generateAndUploadStoryImage } from "../image-uploader";
+import { archiveStoryImage, generateStoryImageAssetsBatch } from "../image-uploader";
 import { logger } from "../logger";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -95,6 +95,13 @@ export async function batchGenerateBlocks(
 
   let currentContext = previousContext;
 
+  // Phase 1: sequential text — each block's content depends on the previous
+  // block's output for narrative continuity, so this cannot be parallelized.
+  const drafts: Array<{
+    block: Awaited<ReturnType<typeof generateStoryBlock>>;
+    imageDescription: string;
+  }> = [];
+
   for (let i = 0; i < blockCount; i++) {
     // Check for cancellation
     if (signal?.aborted) {
@@ -110,7 +117,6 @@ export async function batchGenerateBlocks(
     const blockNumber = i + 1;
 
     try {
-      // Step 1: Generate the story block content via AI
       // The last block (i === blockCount - 1) is the resolution block
       const isLastBlock = i === blockCount - 1;
       const block = await generateStoryBlock(
@@ -126,50 +132,13 @@ export async function batchGenerateBlocks(
         { sessionId, blockNumber, title: block.title },
       );
 
-      // Step 2: Generate an image for the block
-      let imageUrl: string | null = null;
-      try {
-        // Use the block content and title as the image prompt description
-        const imageDescription = `${block.title}: ${block.content.slice(0, 200)}`;
-        imageUrl = await generateAndUploadStoryImage(
-          imageDescription,
-          channelId,
-          "block",
-          {
-            imageRepresentations: block.imageRepresentations ?? block.selectedImageRepresentations ?? [],
-            ...(signal ? { signal } : {}),
-          },
-        );
-      } catch (imgErr) {
-        // Image generation is non-fatal — log and continue with no image
-        logger.warn(
-          `[BatchGen] Image generation failed for block ${blockNumber} (session ${sessionId}): ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
-          "blocks",
-        );
-      }
-
-      // Step 3: Persist the block (unless dry run)
-      if (!dryRun) {
-        await storage.createBlock({
-          channelId,
-          sessionId,
-          title: block.title,
-          content: block.content,
-          dialogue: block.dialogue ?? null,
-          imageUrl,
-          optionA: block.optionA ?? null,
-          optionB: block.optionB ?? null,
-          ttsEnabled: true,
-          audioUrl: null,
-          isNotable: false, // We don't set isNotable during batch gen; the replay system marks notable blocks separately
-        },
-        options.useEmbedding ?? false,
-      );
-
-        // Update the narrative context for the next block
-        currentContext = block.content;
-      }
-
+      drafts.push({
+        block,
+        imageDescription: `${block.title}: ${block.content.slice(0, 200)}`,
+      });
+      // Thread the narrative context forward immediately so a later image-batch
+      // failure never breaks continuity.
+      currentContext = block.content;
       result.blocksGenerated++;
 
       logger.debug(
@@ -193,6 +162,78 @@ export async function batchGenerateBlocks(
       if (err instanceof Error && err.message.includes("quota")) {
         logger.error("[BatchGen] Quota error — aborting batch generation", "blocks");
         break;
+      }
+    }
+  }
+
+  // Phase 2: batched images — 4-8 different prompts through the paced batch
+  // lane (concurrency + start interval + shared 429 cooldown). Per-item
+  // failures are non-fatal: the block persists with no image.
+  const imageUrls: (string | null)[] = new Array(drafts.length).fill(null);
+  if (!signal?.aborted && drafts.length > 0) {
+    try {
+      const assets = await generateStoryImageAssetsBatch(
+        drafts.map((draft) => ({
+          description: draft.imageDescription,
+          imageRepresentations:
+            draft.block.imageRepresentations ?? draft.block.selectedImageRepresentations ?? [],
+        })),
+        { ...(signal ? { signal } : {}) },
+      );
+      await Promise.all(assets.map(async (asset, index) => {
+        if (!asset) return;
+        try {
+          imageUrls[index] = await archiveStoryImage(asset, channelId, "block");
+        } catch (imgErr) {
+          logger.warn(
+            `[BatchGen] Image upload failed for block ${index + 1} (session ${sessionId}): ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
+            "blocks",
+          );
+        }
+      }));
+    } catch (imgErr) {
+      logger.warn(
+        `[BatchGen] Image batch failed for session ${sessionId} (continuing without images): ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
+        "blocks",
+      );
+    }
+  }
+
+  // Phase 3: persist (unless dry run)
+  if (!dryRun) {
+    for (let i = 0; i < drafts.length; i++) {
+      if (signal?.aborted) {
+        result.errors.push(`Cancelled before persisting block ${i + 1}`);
+        break;
+      }
+      const draft = drafts[i]!;
+      try {
+        await storage.createBlock({
+          channelId,
+          sessionId,
+          title: draft.block.title,
+          content: draft.block.content,
+          dialogue: draft.block.dialogue ?? null,
+          imageUrl: imageUrls[i] ?? null,
+          optionA: draft.block.optionA ?? null,
+          optionB: draft.block.optionB ?? null,
+          ttsEnabled: true,
+          audioUrl: null,
+          isNotable: false, // We don't set isNotable during batch gen; the replay system marks notable blocks separately
+        },
+        options.useEmbedding ?? false,
+        );
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          `[BatchGen] Failed to persist block ${i + 1}/${drafts.length} for session ${sessionId}`,
+          "blocks",
+          err instanceof Error ? err : new Error(String(err)),
+          { sessionId, blockNumber: i + 1 },
+        );
+        result.blocksFailed++;
+        result.blocksGenerated--;
+        result.errors.push(`Block ${i + 1} persist: ${errorMsg}`);
       }
     }
   }

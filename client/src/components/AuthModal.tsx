@@ -139,7 +139,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = "login" }: AuthMod
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-2">
             <label
               htmlFor="auth-username"
@@ -201,7 +201,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = "login" }: AuthMod
           </div>
 
           {error && (
-            <p className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+            <p className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-md px-2 py-1.5">
               {error}
             </p>
           )}
@@ -209,11 +209,11 @@ export function AuthModal({ open, onOpenChange, defaultMode = "login" }: AuthMod
           <Button
             type="submit"
             disabled={isSubmitting || (mode === "register" && usernameAvailable === false)}
-            className="w-full bg-primary/90 hover:bg-primary text-primary-foreground h-12 text-base"
+            className="w-full bg-primary/90 hover:bg-primary text-primary-foreground text-base"
           >
             {isSubmitting ? (
               <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Loader2 className="w-2.5 h-2.5 mr-2 animate-spin" />
                 {mode === "login" ? "Signing in..." : "Creating account..."}
               </>
             ) : mode === "login" ? (

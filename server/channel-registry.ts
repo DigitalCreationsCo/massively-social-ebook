@@ -4,9 +4,10 @@ import { z } from "zod";
 
 import { resolvePxManifests, type ResolvedEntity } from "./blocks/px";
 import { isSafeChannelId } from "@shared/channel-id";
+import { canonicalizePxUri, isReadablePxUri } from "@shared/px-uri";
 
 const secretReference = z.string().trim().regex(/^[A-Z][A-Z0-9_]*$/, "must name an environment variable");
-const napUri = z.string().startsWith("nap://");
+const pxUri = z.string().refine(isReadablePxUri, "must be a PX URI");
 
 const youtubeConfigSchema = z.object({
   liveChatId: z.string().trim().min(1),
@@ -28,7 +29,7 @@ const channelConfigSchema = z.object({
   queueTokenEnv: secretReference,
   youtube: youtubeConfigSchema.optional(),
   twitch: twitchConfigSchema.optional(),
-  requiredEntities: z.array(napUri).min(1),
+  requiredEntities: z.array(pxUri).min(1),
 }).superRefine((value, context) => {
   if (!value.controlEndpoint && !value.endpoint) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["controlEndpoint"], message: "controlEndpoint is required (the legacy endpoint field is also accepted)" });
@@ -38,13 +39,13 @@ const channelIdSchema = z.string().trim().refine(isSafeChannelId, {
   message: "must be a URL-path-safe identifier (letters, digits, dots, underscores, and hyphens only)",
 });
 const cachedManifestSchema = z.object({
-  id: napUri,
+  id: pxUri,
   name: z.string().min(1),
   entity_type: z.string().min(1),
 }).passthrough();
 const registrySchema = z.object({
   channels: z.record(channelIdSchema, channelConfigSchema),
-  entities: z.record(napUri, cachedManifestSchema).default({}),
+  entities: z.record(pxUri, cachedManifestSchema).default({}),
   /** ISO timestamp of the all-or-nothing Px startup refresh. */
   entitiesFetchedAt: z.string().datetime().optional(),
 });
@@ -57,6 +58,22 @@ export interface ChannelRegistryInitializationOptions {
 }
 
 let registry: ChannelRegistry | undefined;
+
+/**
+ * Persisted channel records may contain a legacy URI, but registry state and
+ * all subsequent resolver requests are always canonical PX values.
+ */
+function canonicalizeRegistry(configured: ChannelRegistry): ChannelRegistry {
+  const channels = Object.fromEntries(Object.entries(configured.channels).map(([channelId, channel]) => [
+    channelId,
+    { ...channel, requiredEntities: channel.requiredEntities.map(canonicalizePxUri) },
+  ]));
+  const entities = Object.fromEntries(Object.entries(configured.entities).map(([uri, entity]) => {
+    const id = canonicalizePxUri(entity.id);
+    return [canonicalizePxUri(uri), { ...entity, id }];
+  }));
+  return { ...configured, channels, entities };
+}
 
 export function channelRegistryPath(): string {
   const configured = process.env.CHANNEL_REGISTRY_PATH?.trim();
@@ -75,7 +92,7 @@ export async function initializeChannelRegistry(options: ChannelRegistryInitiali
     throw new Error(`Could not read CHANNEL_REGISTRY_PATH at ${filePath}`, { cause });
   }
 
-  const configured = registrySchema.parse(parsed);
+  const configured = canonicalizeRegistry(registrySchema.parse(parsed));
   const requiredUris = [...new Set(Object.values(configured.channels).flatMap((channel) => channel.requiredEntities))];
   const resolved = await (options.resolveManifests ?? resolvePxManifests)(requiredUris);
   const entities = Object.fromEntries(resolved.map((entity) => [entity.id, entity]));
@@ -100,7 +117,7 @@ export function getChannelRegistry(): ChannelRegistry {
 
 /** Test-only convenience that avoids touching the process-wide environment. */
 export function setChannelRegistryForTests(value: unknown): void {
-  registry = registrySchema.parse(value);
+  registry = canonicalizeRegistry(registrySchema.parse(value));
 }
 
 export function getRequiredEntities(channelId: string): string[] {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
-import { presignFailureReason, presignWithCli } from "./nap-presign";
+import { presignFailureReason, presignWithCli } from "./px-presign";
 
 vi.mock("node:child_process", () => {
   const execFile = vi.fn();
@@ -16,20 +16,20 @@ function complete(error: unknown, stdout = "", stderr = "") {
   });
 }
 
-describe("NAP CLI presign fallback", () => {
+describe("PX CLI presign fallback", () => {
   it("forwards IDs, keys, options and token environment without a shell", async () => {
     const response = { url: "https://lore.example.test/content?token=secret", expires_at: 123,
       revision: "abc", repository_id: "repo", address: "hash", representation: "item", format: "jpg" };
     complete(null, JSON.stringify(response));
-    await expect(presignWithCli("nap://25th-chapter/character/nathan-gunn", "item", {
-      repoPath: "/tmp/nap path", commit: "abc", ttlSeconds: 900,
+    await expect(presignWithCli("px://25th-chapter/character/nathan-gunn", "item", {
+      repoPath: "/tmp/px path", commit: "abc", ttlSeconds: 900,
       httpUrl: "https://lore.example.test", bearerToken: "private-token",
     })).resolves.toEqual(response);
-    expect(execFile).toHaveBeenCalledWith("nap", ["presign", "--base-dir", "/tmp/nap path",
+    expect(execFile).toHaveBeenCalledWith("px", ["presign", "--base-dir", "/tmp/px path",
       "--commit", "abc", "--ttl-seconds", "900", "--http-url", "https://lore.example.test",
-      "--token-env", "NAP_IMAGE_REFERENCE_TOKEN", "--", "nap://25th-chapter/character/nathan-gunn", "item"],
+      "--token-env", "PX_IMAGE_REFERENCE_TOKEN", "--", "px://25th-chapter/character/nathan-gunn", "item"],
       expect.objectContaining({ timeout: 15000, maxBuffer: 1024 * 1024,
-        env: expect.objectContaining({ NAP_IMAGE_REFERENCE_TOKEN: "private-token" }) }), expect.any(Function));
+        env: expect.objectContaining({ PX_IMAGE_REFERENCE_TOKEN: "private-token" }) }), expect.any(Function));
     expect(JSON.stringify(vi.mocked(execFile).mock.calls[0]?.[1])).not.toContain("private-token");
   });
 

@@ -3,10 +3,10 @@
  * Safely rename one persisted channel key.
  *
  * Usage (dry run is the default):
- *   DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter
+ *   DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from px://25th-chapter --to 25th-chapter
  *
  * Apply after reviewing the counts:
- *   DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from nap://25th-chapter --to 25th-chapter --apply
+ *   DOTENV_CONFIG_PATH=.env.local npm run migrate:channel-id -- --from px://25th-chapter --to 25th-chapter --apply
  *
  * For production, add --i-know-this-is-prod. Stop the affected broadcast
  * first: remote staged slots are deliberately not mutated by this database

@@ -86,7 +86,7 @@ export function Storyblock({
           <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black" />
 
           {/* Narrative Text Content */}
-          <div className="absolute inset-0 flex flex-col justify-center p-6 md:p-12 overflow-y-auto no-scrollbar">
+          <div className="absolute inset-0 flex flex-col justify-center p-3 md:p-4 overflow-y-auto no-scrollbar">
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
@@ -100,9 +100,9 @@ export function Storyblock({
               //   });
               // }}
             >
-              <div className="flex items-center gap-4 text-center">
+              <div className="flex items-center gap-2 text-center">
                 {block.title && (
-                  <h2 className="font-serif leading-none my-4 text-center w-full text-3xl md:text-3xl font-semibold tracking-tight text-white/95 mb-4 text-glow drop-shadow-xl">
+                  <h2 className="font-serif leading-none my-2 text-center w-full text-2xl md:text-3xl font-semibold tracking-tight text-white/95 mb-2 text-glow drop-shadow-xl">
                     {block.title}
                   </h2>
                 )}
@@ -113,7 +113,7 @@ export function Storyblock({
                 </div>*/}
               </div>
 
-              <div className="space-y-6">
+              <div className="space-y-3">
                 {block.content
                   .split("\n")
                   .filter(Boolean)
@@ -122,7 +122,7 @@ export function Storyblock({
                       key={`${block.id}-${idx}`}
                       className="relative group cursor-pointer"
                     >
-                      <p className="font-serif font-semibold text-2xl tracking-tight leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap transition-opacity duration-300 group-hover:opacity-80">
+                      <p className="font-serif font-semibold text-lg tracking-tight leading-relaxed text-white/95 text-glow drop-shadow-xl whitespace-pre-wrap transition-opacity duration-300 group-hover:opacity-80">
                         {paragraph}
                       </p>
 

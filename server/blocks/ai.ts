@@ -6,6 +6,10 @@ import {
   createStoryBlockContextPrompt,
   createStoryBlockSystemInstructions,
 } from "../../prompts/storyblock.prompt";
+import {
+  createAmbientContextPrompt,
+  createAmbientSystemInstructions,
+} from "../../prompts/ambient.prompt";
 import { composeEntitiesPrompt } from "../../prompts/entity-to-prose.prompt";
 import { createImageInstructions } from "../../prompts/image.prompt";
 import {
@@ -50,6 +54,11 @@ interface SequentialWindowParameters {
   count: number;
   previousContext: string;
   sessionId?: number;
+  // Ambient b-roll extension — when present, window uses ambient prompts and
+  // world-grounded context instead of canonical chain.
+  previousAmbient?: string;
+  genre?: string;
+  ambient?: boolean;
 }
 
 /**
@@ -128,11 +137,19 @@ class DedupePxProvider extends PxProvider {
 
 const generationProvider: GenerationProvider<NarrativeBlockInput, NarrativeBlock, NarrativeLore, SequentialWindowParameters> = {
   async generateBlock(request) {
-    const [draft] = await generateSequentialWindowDrafts([request]);
+    // Single ambient blocks never happen via engine today — route by flag.
+    const isAmbient = Boolean((request.parameters as SequentialWindowParameters)?.ambient);
+    const fn = isAmbient ? generateAmbientWindowDrafts : generateSequentialWindowDrafts;
+    const [draft] = await fn([request as GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters>]);
     if (!draft) throw new Error("Sequential window provider returned no draft.");
     return draft;
   },
-  generateBlocksBatch: generateSequentialWindowDrafts,
+  async generateBlocksBatch(requests) {
+    const first = requests[0] as GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters> | undefined;
+    const isAmbient = Boolean(first?.parameters?.ambient);
+    const fn = isAmbient ? generateAmbientWindowDrafts : generateSequentialWindowDrafts;
+    return fn(requests as readonly GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters>[]);
+  },
 };
 
 const engine = new NarrativeEngine({
@@ -151,7 +168,7 @@ const engine = new NarrativeEngine({
         { addNotableBlocksUntilThereAre: 5 },
       ],
     },
-    // PX is complementary only: a NAP/MCP/LLM hiccup must degrade to a
+    // PX is complementary only: a PX/MCP/LLM hiccup must degrade to a
     // warning, never nuke the RAG chronologicalBlocks/lore already gathered.
     enrichmentFailureBehavior: "continue",
   }
@@ -310,6 +327,82 @@ function queuePromptLog(
   })();
 }
 
+/** Shared helper — one validated ordered LLM call for a window (DRY). */
+async function executeWindowGeneration(opts: {
+  channelId: string;
+  batchId: string | undefined;
+  sessionId: number | undefined;
+  count: number;
+  systemInstructions: string;
+  prompt: string;
+  outputName: string;
+  outputDescription: string;
+  logPrefix: string;
+  queueMeta: Record<string, unknown>;
+}): Promise<z.infer<typeof storyBlockSchema>[]> {
+  const { provider, model } = getAiConfiguration().text;
+  const aiCall = logAiCall({
+    method: "generateText",
+    provider,
+    model,
+    parameters: {
+      channelId: opts.channelId,
+      batchId: opts.batchId,
+      blockCount: opts.count,
+      output: { format: "object", name: opts.outputName },
+    },
+    instructions: opts.systemInstructions,
+    prompt: opts.prompt,
+  });
+  let response;
+  try {
+    response = await generateText({
+      model: getLanguageModel(),
+      instructions: opts.systemInstructions,
+      prompt: opts.prompt,
+      output: Output.object({
+        schema: z.object({ blocks: z.array(storyBlockSchema).length(opts.count) }),
+        name: opts.outputName,
+        description: opts.outputDescription,
+      }),
+    });
+    if (response.output) {
+      logAiCallComplete("generateText", aiCall, {
+        output: "structured_batch",
+        blockCount: response.output.blocks.length,
+      });
+    }
+  } catch (error) {
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
+  }
+  if (!response.output || response.output.blocks.length !== opts.count) {
+    const error = new Error(`${opts.outputName} returned ${response.output?.blocks.length ?? 0} blocks; expected ${opts.count}.`);
+    logAiCallFailure("generateText", aiCall, error);
+    throw error;
+  }
+  queuePromptLog(opts.channelId, opts.sessionId, {
+    batchId: opts.batchId,
+    blockCount: opts.count,
+    ...opts.queueMeta,
+    systemInstructions: opts.systemInstructions,
+    prompt: opts.prompt,
+    response: response.output.blocks,
+  }, opts.logPrefix as any);
+  return response.output.blocks;
+}
+
+function entitiesProseFromContext(context: unknown): string {
+  const entities = (context as { entities?: readonly unknown[] }).entities ?? [];
+  if (entities.length === 0) return "";
+  try {
+    return composeEntitiesPrompt(entities as any[]) ?? "";
+  } catch (error) {
+    console.warn("Failed to convert entities to prose for batch generation:", error);
+    return "";
+  }
+}
+
 async function generateSequentialWindowDrafts(
   requests: readonly GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters>[],
 ): Promise<readonly NarrativeBlockInput[]> {
@@ -329,77 +422,31 @@ async function generateSequentialWindowDrafts(
     "Do not produce alternative candidates. Block order is canonical and must never be reordered.",
   ].join("\n\n");
   
-  // Create our own context prompt using entity-to-prose
-  const narrativeContext = first.context as { entities?: readonly unknown[] };
-  const entities = narrativeContext.entities ?? [];
-  let entitiesProse = "";
-  if (entities.length > 0) {
-    try {
-      entitiesProse = composeEntitiesPrompt(entities as any[]);
-    } catch (error) {
-      console.warn("Failed to convert entities to prose for batch generation:", error);
-    }
-  }
-  
+  const entitiesProse = entitiesProseFromContext(first.context);
   const contextPrompt = createStoryBlockContextPrompt({
     previousBlock: previousContext,
     ragContext: entitiesProse || undefined,
   });
   const prompt = `${contextPrompt}\n\nReturn all ${count} blocks.`;
-  const { provider, model } = getAiConfiguration().text;
-  const aiCall = logAiCall({
-    method: "generateText",
-    provider,
-    model,
-    parameters: {
-      channelId: first.context.channelId,
-      batchId: parameters?.batchId,
-      blockCount: count,
-      output: { format: "object", name: "sequential_story_window" },
-    },
-    instructions: systemInstructions,
-    prompt,
-  });
-
-  let response;
-  try {
-    response = await generateText({
-      model: getLanguageModel(),
-      instructions: systemInstructions,
-      prompt,
-      output: Output.object({
-        schema: z.object({ blocks: z.array(storyBlockSchema).length(count) }),
-        name: "sequential_story_window",
-        description: "A strictly ordered window of consecutive canonical story blocks.",
-      }),
-    });
-    if (response.output) {
-      logAiCallComplete("generateText", aiCall, {
-        output: "structured_batch",
-        blockCount: response.output.blocks.length,
-      });
-    }
-  } catch (error) {
-    logAiCallFailure("generateText", aiCall, error);
-    throw error;
-  }
-  if (!response.output || response.output.blocks.length !== count) {
-    const error = new Error(`Sequential story window returned ${response.output?.blocks.length ?? 0} blocks; expected ${count}.`);
-    logAiCallFailure("generateText", aiCall, error);
-    throw error;
-  }
-
-  queuePromptLog(first.context.channelId, parameters?.sessionId, {
+  const blocks = await executeWindowGeneration({
+    channelId: first.context.channelId,
     batchId: parameters?.batchId,
-    blockCount: count,
-    previousContext,
-    enrichedContext: first.context.prompt !== previousContext ? first.context.prompt : undefined,
+    sessionId: parameters?.sessionId,
+    count,
     systemInstructions,
     prompt,
-    response: response.output.blocks,
-  }, "batch_prompt");
+    outputName: "sequential_story_window",
+    outputDescription: "A strictly ordered window of consecutive canonical story blocks.",
+    logPrefix: "batch_prompt",
+    queueMeta: {
+      previousContext,
+      enrichedContext: (first.context as { prompt?: string }).prompt !== previousContext
+        ? (first.context as { prompt?: string }).prompt
+        : undefined,
+    },
+  });
 
-  return response.output.blocks.map((block, ordinal) => {
+  return blocks.map((block, ordinal) => {
     const draft: NarrativeBlockInput = {
       ...block,
       sessionId: parameters?.sessionId,
@@ -411,6 +458,107 @@ async function generateSequentialWindowDrafts(
       delete draft.optionA;
       delete draft.optionB;
     }
+    return draft;
+  });
+}
+
+function buildAmbientWorldQuery(channelId: string, previousAmbientTail: string): string {
+  // Sample world locations/characters from startup-cached PX manifests for variety.
+  // Falls back to generic b-roll hint when no manifests yet (cold start/tests).
+  const manifests = getRequiredEntityManifests(channelId) as Array<{
+    id: string;
+    name: string;
+    entity_type: string;
+    properties?: Record<string, unknown>;
+  }>;
+  if (!manifests || manifests.length === 0) {
+    return previousAmbientTail
+      ? `Ambient b-roll continuation — ${previousAmbientTail.slice(0,120)}`
+      : "Ambient b-roll everyday moment in this world — familiar location, small everyday interaction";
+  }
+  const locations = manifests.filter((m) => {
+    const t = (m.entity_type ?? "").toLowerCase();
+    return t.includes("location") || t.includes("place") || t.includes("setting");
+  });
+  const characters = manifests.filter((m) => {
+    const t = (m.entity_type ?? "").toLowerCase();
+    return t.includes("character") || t.includes("person") || t.includes("people");
+  });
+  // Deterministically randomize per call for variety: sample up to 2 each.
+  const sample = <T,>(arr: T[], n: number): T[] => {
+    if (arr.length <= n) return arr;
+    const copy = [...arr];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = copy[i]!;
+      copy[i] = copy[j]!;
+      copy[j] = tmp;
+    }
+    return copy.slice(0, n);
+  };
+  const locNames = sample(locations, 2).map((m) => m.name);
+  const charNames = sample(characters, 2).map((m) => m.name);
+  const parts: string[] = ["Ambient b-roll"];
+  if (locNames.length) parts.push(`at ${locNames.join(" / ")}`);
+  if (charNames.length) parts.push(`with ${charNames.join(", ")}`);
+  parts.push("— everyday moment, slice-of-life");
+  // Tail influences PX less; keep query world-grounded + short tail hint
+  if (previousAmbientTail) parts.push(`— continuing: ${previousAmbientTail.slice(0, 100)}`);
+  return parts.join(" ");
+}
+
+async function generateAmbientWindowDrafts(
+  requests: readonly GenerationProviderRequest<NarrativeBlock, NarrativeLore, SequentialWindowParameters>[],
+): Promise<readonly NarrativeBlockInput[]> {
+  const first = requests[0];
+  if (!first) return [];
+  const count = requests.length;
+  const parameters = first.parameters as SequentialWindowParameters;
+  const previousAmbient = parameters?.previousAmbient ?? "";
+  const genre = parameters?.genre ?? "mystery";
+  const worldQuery = parameters?.previousContext ?? first.context.inputQuery;
+
+  const systemInstructions = [
+    createAmbientSystemInstructions({ genre: genre as any }),
+    `Compose exactly ${count} chronological b-roll sections in one response.`,
+    "Block 1 opens the current b-roll moment. Each subsequent block must continue the previous block within this same response as the next few minutes.",
+    "Do not produce alternative candidates. Block order is b-roll order and must never be reordered.",
+  ].join("\n\n");
+
+  const entitiesProse = entitiesProseFromContext(first.context);
+  const contextPrompt = createAmbientContextPrompt({
+    worldProse: entitiesProse || undefined,
+    previousAmbient: previousAmbient || undefined,
+  });
+  const prompt = `${contextPrompt}\n\nReturn all ${count} blocks.`;
+  const blocks = await executeWindowGeneration({
+    channelId: first.context.channelId,
+    batchId: parameters?.batchId,
+    sessionId: undefined,
+    count,
+    systemInstructions,
+    prompt,
+    outputName: "ambient_story_window",
+    outputDescription: "A strictly ordered window of consecutive ambient b-roll blocks (non-canonical).",
+    logPrefix: "ambient_batch_prompt",
+    queueMeta: {
+      previousAmbient,
+      worldQuery,
+      genre,
+      enrichedWorld: (first.context as { prompt?: string }).prompt ?? undefined,
+    },
+  });
+
+  return blocks.map((block, ordinal) => {
+    const draft: NarrativeBlockInput = {
+      ...block,
+      windowOrdinal: ordinal,
+      windowBatchId: parameters?.batchId,
+      isNotable: false,
+    };
+    // Ambient never carries decisions
+    delete (draft as any).optionA;
+    delete (draft as any).optionB;
     return draft;
   });
 }
@@ -595,6 +743,83 @@ export async function generateCanonicalStoryWindow(
   } finally {
     // generateBlocksBatch materializes context-only drafts in the engine's
     // cache. They are not canonical until media persistence succeeds.
+    engine.invalidateChannel(channelId);
+  }
+}
+
+/**
+ * Ambient b-roll window — isolated from canonical continuity.
+ * World-grounded via PX, ephemeral chaining via previousAmbient tail (2-block),
+ * batched like canonical but never persisted (skip createBlock).
+ * Cross-restart continuity is the caller's responsibility (systemSettings tail).
+ */
+export async function generateAmbientStoryWindow(
+  channelId: string,
+  previousAmbientTail: string,
+  blockCount: number,
+  genre: string = "mystery",
+): Promise<StoryBlockResult[]> {
+  const configuredCount = Math.max(0, Math.min(5, Math.floor(blockCount)));
+  const count = configuredCount; // no decision-branch cap for ambient (never has options)
+  if (count === 0) return [];
+  const worldQuery = buildAmbientWorldQuery(channelId, previousAmbientTail);
+  const batchId = `${channelId}:ambient:${Date.now()}`;
+  try {
+    const results = await engine.generateBlocksBatch(
+      Array.from({ length: count }, (_, ordinal) => ({
+        channelId,
+        inputQuery: worldQuery,
+        parameters: {
+          batchId,
+          ordinal,
+          count,
+          previousContext: worldQuery,
+          previousAmbient: previousAmbientTail,
+          genre,
+          ambient: true,
+        },
+      })),
+    );
+    if (results.length !== count) {
+      throw new Error(`NarrativeEngine returned ${results.length} ambient drafts; expected ${count}.`);
+    }
+    return results.map(({ block, context }) => {
+      const { representationProperties, maxUniqueEntityRepresentations } = getEngineSelectionConfig();
+      const imageRepresentations = selectImageRepresentations(
+        (context as { entities?: unknown[] }).entities ?? [],
+        representationProperties,
+        maxUniqueEntityRepresentations,
+      );
+      return {
+        title: typeof block.title === "string" ? block.title : "Untitled",
+        content: block.content,
+        ...(typeof block.dialogue === "string" ? { dialogue: block.dialogue } : {}),
+        narrativeContext: context,
+        imageRepresentations,
+        selectedImageRepresentations: imageRepresentations,
+      };
+    });
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    logger.warn("[NLP] NarrativeEngine ambient batch failed", "blocks", error, {
+      channelId,
+      batchId,
+      blockCount: count,
+    });
+    queuePromptLog(channelId, undefined, {
+      batchId,
+      blockCount: count,
+      previousAmbient: previousAmbientTail,
+      worldQuery,
+      genre,
+      contextFailure: {
+        reason: "backend_error",
+        name: error.name,
+        message: error.message.slice(0, 500),
+      },
+    }, "ambient_batch_failure");
+    throw error;
+  } finally {
     engine.invalidateChannel(channelId);
   }
 }

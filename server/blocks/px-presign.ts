@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { PresignOptions, PresignedRepresentation } from "@portalshq/nap-sdk";
+import type { PresignOptions, PresignedRepresentation } from "@portalshq/px";
 
 /** Only fixed categories are exposed: SDK/CLI errors may contain bearer URLs. */
 export function presignFailureReason(error: unknown): string {
@@ -37,13 +37,13 @@ export function presignWithCli(
   if (options.httpUrl) args.push("--http-url", options.httpUrl);
   const env = { ...process.env };
   if (options.bearerToken) {
-    env.NAP_IMAGE_REFERENCE_TOKEN = options.bearerToken;
-    args.push("--token-env", "NAP_IMAGE_REFERENCE_TOKEN");
+    env.PX_IMAGE_REFERENCE_TOKEN = options.bearerToken;
+    args.push("--token-env", "PX_IMAGE_REFERENCE_TOKEN");
   }
   args.push("--", entityId, representation);
   return new Promise((resolve, reject) => {
     // No shell, no token arguments, bounded output and runtime. Piped stdout is JSON.
-    execFile("nap", args, { env, encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile("px", args, { env, encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         // Classify stderr locally; never attach it (or execFile's command) to errors/logs.
         const reason = presignFailureReason({ code: error.code, killed: error.killed, message: stderr });
@@ -55,7 +55,7 @@ export function presignWithCli(
         if (!result || typeof result.url !== "string" || !result.url.trim()) throw new Error();
         resolve(result);
       } catch {
-        reject(Object.assign(new Error("Invalid NAP presign response"), { code: "invalid_response" }));
+        reject(Object.assign(new Error("Invalid PX presign response"), { code: "invalid_response" }));
       }
     });
   });

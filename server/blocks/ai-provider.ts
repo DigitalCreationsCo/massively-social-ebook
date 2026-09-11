@@ -34,7 +34,7 @@ const DEFAULT_MODELS: Record<AiProvider, Record<AiCapability, string | undefined
   },
   openrouter: {
     text: "minimax/minimax-m3:free",
-    image: undefined,
+    image: "meta/muse-image",
     embedding: undefined,
   },
 };
@@ -143,6 +143,61 @@ function getGoogleGenAiImageClient(): GoogleGenAI {
   });
 }
 
+/**
+ * OpenRouter dedicated Images API (`POST /api/v1/images`).
+ *
+ * The installed `@openrouter/ai-sdk-provider` (v3) routes `imageModel()` through
+ * `/chat/completions`, which Images-API-only models like `meta/muse-image` do not
+ * serve — so OpenRouter image generation goes through this direct client instead
+ * (same pattern as the Hugging Face direct client below).
+ */
+const OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images";
+
+function openRouterReferenceDataUrl(image: NonNullable<ProviderImageRequest["referenceImages"]>[number]): string {
+  if (typeof image === "string") {
+    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(image)) return image;
+    return `data:image/png;base64,${image}`;
+  }
+  return `data:image/png;base64,${Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64")}`;
+}
+
+async function generateOpenRouterImage(
+  text: string,
+  images: NonNullable<ProviderImageRequest["referenceImages"]>,
+  model: string,
+  abortSignal?: AbortSignal,
+): Promise<string | undefined> {
+  const response = await fetch(OPENROUTER_IMAGES_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnvironmentVariable("OPENROUTER_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      prompt: text,
+      aspect_ratio: "16:9",
+      output_format: "jpeg",
+      ...(images.length > 0
+        ? {
+          input_references: images.slice(0, 16).map((image) => ({
+            type: "image_url",
+            image_url: { url: openRouterReferenceDataUrl(image) },
+          })),
+        }
+        : {}),
+    }),
+    ...(abortSignal ? { signal: abortSignal } : {}),
+  });
+  if (!response.ok) {
+    const snippet = await response.text().then((t) => t.slice(0, 200)).catch(() => "");
+    throw new Error(`OpenRouter image request failed (${response.status}): ${snippet}`);
+  }
+  const json = (await response.json()) as { data?: Array<{ b64_json?: unknown }> };
+  const b64 = json?.data?.[0]?.b64_json;
+  return typeof b64 === "string" ? b64.replace(/^data:image\/[^;]+;base64,/, "") : undefined;
+}
+
 export interface ProviderImageRequest {
   text: string;
   referenceImages?: Array<Buffer | Uint8Array | ArrayBuffer | string>;
@@ -182,6 +237,10 @@ export async function generateProviderImage(request: ProviderImageRequest): Prom
       .find((part) => part.inlineData?.data)?.inlineData?.data;
   }
 
+  if (provider === "openrouter") {
+    return generateOpenRouterImage(request.text, images, model, request.abortSignal);
+  }
+
   if (provider === "huggingface") {
     const image = await getHuggingFaceImageClient().imageTextToImage(
       {
@@ -216,11 +275,13 @@ export async function generateProviderImage(request: ProviderImageRequest): Prom
 /** Returns an image model selected by AI_IMAGE_PROVIDER and AI_IMAGE_MODEL. */
 export function getImageModel(): ImageModel {
   const provider = configuredProvider("image");
-  if (provider === "opencode" || provider === "huggingface") {
+  if (provider === "opencode" || provider === "huggingface" || provider === "openrouter") {
     throw new Error(
       provider === "huggingface"
         ? "Hugging Face uses its direct inference client. Use generateStoryImage instead of getImageModel."
-        : "OpenCode does not expose an AI SDK image model. Set AI_IMAGE_PROVIDER to google, openai, huggingface, or openrouter.",
+        : provider === "openrouter"
+          ? "OpenRouter uses its direct Images API client. Use generateStoryImage instead of getImageModel."
+          : "OpenCode does not expose an AI SDK image model. Set AI_IMAGE_PROVIDER to google, openai, huggingface, or openrouter.",
     );
   }
 
@@ -231,8 +292,6 @@ export function getImageModel(): ImageModel {
       return googleProvider().image(model);
     case "openai":
       return openaiProvider().image(model);
-    case "openrouter":
-      return openrouterProvider().imageModel(model);
   }
 }
 

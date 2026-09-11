@@ -16,9 +16,9 @@ export default function Timer({
           {timerHelpText}
         </p>
 
-        <div className="flex justify-center items-center h-14 overflow-visible">
+        <div className="flex justify-center items-center h-7 overflow-visible">
           {characters.map((char, index) => (
-            <div key={index} className="relative w-6 h-full overflow-visible">
+            <div key={index} className="relative w-3.5 h-full overflow-visible">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
                   key={`${index}-${char}`}

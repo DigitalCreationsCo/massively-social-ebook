@@ -11,7 +11,7 @@ function configure(registry: unknown) {
   setChannelRegistryForTests({
     channels: Object.fromEntries(Object.entries(registry as Record<string, object>).map(([channelId, channel]) => [
       channelId,
-      { ...channel, requiredEntities: ["nap://test/character/lead"] },
+      { ...channel, requiredEntities: ["px://test/character/lead"] },
     ])),
     entities: {},
   });
@@ -52,7 +52,7 @@ describe("broadcast configuration", () => {
 
   it("rejects channel identifiers that cannot be represented in queue and API paths", () => {
     expect(() => configure({
-      "nap://25th-chapter": {
+      "px://25th-chapter": {
         controlEndpoint: "https://stream.example.test/channel",
         queueTokenEnv: "TEST_QUEUE_TOKEN",
       },

@@ -5,8 +5,8 @@
 @tailwind utilities;
 
 :root {
-  --font-sans: "Inter", sans-serif;
-  --font-serif: "Playfair Display", serif;
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif: "Playfair Display", "Songti SC", serif;
 
   /* Deep Cinematic Dark Theme */
   --background: 0 0% 0%; /* Pure black */
@@ -40,26 +40,6 @@
   --radius: 0.75rem;
 }
 
-@theme {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-}
-
 @layer base {
   * {
     @apply border-border;
@@ -68,18 +48,14 @@
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/30 selection:text-primary-foreground;
     font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.5;
 
     /* CRITICAL for Mobile PWA: Prevent pull-to-refresh & bounce effects */
     overscroll-behavior-y: none;
     touch-action: pan-x pan-y;
   }
 
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6,
   .font-serif {
     font-family: var(--font-serif);
   }
@@ -154,16 +130,16 @@
   /* Preserve 16:9 at the height limit; chat takes any remaining width. */
   @media (min-width: 1024px) {
     .live-broadcast-layout {
-      --broadcast-chat-min-width: 23rem;
+      --broadcast-chat-min-width: 20rem;
       grid-template-columns:
-        minmax(0, min(var(--broadcast-player-max-width, 100vw), calc(100% - var(--broadcast-chat-min-width) - 1.5rem)))
+        minmax(0, min(var(--broadcast-player-max-width, 100vw), calc(100% - var(--broadcast-chat-min-width) - 0.625rem)))
         minmax(0, 1fr);
     }
   }
 
   @media (min-width: 1280px) {
     .live-broadcast-layout {
-      --broadcast-chat-min-width: 32rem;
+      --broadcast-chat-min-width: 21rem;
     }
   }
 

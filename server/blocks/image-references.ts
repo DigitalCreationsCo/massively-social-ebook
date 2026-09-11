@@ -2,17 +2,17 @@
  * Canonical image reference handling for story image generation.
  *
  * - Selection is exclusively from nested `entity.representations` maps.
- * - Downloads are just-in-time: presign (entity NAP URI, representation key)
- *   via the NAP SDK, then fetch the temporary HTTP URL
+ * - Downloads are just-in-time: presign (entity PX URI, representation key)
+ *   via the PX SDK, then fetch the temporary HTTP URL
  *   server-side into a bounded Buffer for AI SDK `generateImage`.
  * - Never forwards signed URLs to the image provider and never logs them.
  */
 
-import type { PresignOptions as SdkPresignOptions, presignRepresentation } from "@portalshq/nap-sdk";
-export type { PresignedRepresentation } from "@portalshq/nap-sdk";
+import type { PresignOptions as SdkPresignOptions, presignRepresentation } from "@portalshq/px";
+export type { PresignedRepresentation } from "@portalshq/px";
 
 import { logger } from "../logger";
-import { presignFailureReason, presignWithCli } from "./nap-presign";
+import { presignFailureReason, presignWithCli } from "./px-presign";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ export interface NestedRepresentationValue {
 
 /**
  * One preference-selected representation from an entity's nested map.
- * `entityId` is the entity's NAP URI (`nap://…`) and `representationKey`
+ * `entityId` is the entity's PX URI (`px://…`) and `representationKey`
  * is the nested map key used for just-in-time presigning.
  */
 export interface SelectedImageRepresentation {
@@ -217,6 +217,8 @@ const OPENAI_MAX_BYTES = 25 * 1024 * 1024;
  * Active image-model input limits.
  * - Gemini 2.5 Flash Image: up to 3 references.
  * - Gemini 3 Pro Image: up to 14 references.
+ * - Meta Muse Image (OpenRouter Images API): up to 4 references (API allows 16;
+ *   kept small for latency/cost on 16:9 story batches).
  * - OpenAI gpt-image-*: up to 16 references.
  * - Unknown models conservatively receive one.
  */
@@ -230,11 +232,17 @@ export function getImageReferenceLimits(provider: string, model: string): ImageR
   if (normalizedModel.includes("gemini-3-pro-image")) {
     return { maxImages: 14, maxBytesPerImage: GEMINI_MAX_BYTES, allowedMimeTypes: GEMINI_MIMES };
   }
+  if (normalizedModel.includes("muse-image")) {
+    return { maxImages: 4, maxBytesPerImage: GEMINI_MAX_BYTES, allowedMimeTypes: GEMINI_MIMES };
+  }
   if (normalizedModel.startsWith("gpt-image") || normalizedModel.includes("gpt-image")) {
     return { maxImages: 16, maxBytesPerImage: OPENAI_MAX_BYTES, allowedMimeTypes: OPENAI_MIMES };
   }
   if (normalizedProvider === "openai") {
     return { maxImages: 16, maxBytesPerImage: OPENAI_MAX_BYTES, allowedMimeTypes: OPENAI_MIMES };
+  }
+  if (normalizedProvider === "openrouter") {
+    return { maxImages: 4, maxBytesPerImage: GEMINI_MAX_BYTES, allowedMimeTypes: GEMINI_MIMES };
   }
   if (normalizedProvider === "google" && normalizedModel.includes("image")) {
     return { maxImages: 3, maxBytesPerImage: GEMINI_MAX_BYTES, allowedMimeTypes: GEMINI_MIMES };
@@ -277,15 +285,15 @@ function normalizeHostSet(hosts: readonly string[]): Set<string> {
 }
 
 /**
- * Hosts for the NAP Lore server derived from configuration (DRY single source).
+ * Hosts for the PX Lore server derived from configuration (DRY single source).
  *
- * Both variables describe the same server: `NAP_LORE_HTTP_URL` is the explicit
- * HTTP(S) origin used for presigned URLs, `NAP_LORE_URL_BASE` is the `lore://`
+ * Both variables describe the same server: `PX_LORE_HTTP_URL` is the explicit
+ * HTTP(S) origin used for presigned URLs, `PX_LORE_URL_BASE` is the `lore://`
  * base. Either one is enough to allowlist the host presigning will return.
  */
 function loreHosts(): string[] {
   const hosts: string[] = [];
-  for (const raw of [process.env["NAP_LORE_HTTP_URL"], process.env["NAP_LORE_URL_BASE"]]) {
+  for (const raw of [process.env["PX_LORE_HTTP_URL"], process.env["PX_LORE_URL_BASE"]]) {
     const host = hostFromUrl(raw);
     if (host) hosts.push(host);
   }
@@ -299,7 +307,7 @@ function loreHosts(): string[] {
  *   those hosts (simple, explicit, low-risk). Include BOTH storage and Lore
  *   hosts there because the explicit list replaces the defaults below.
  * - Otherwise default to the configured GCS bucket's standard host forms plus
- *   the configured NAP Lore host(s) and loopback for local development/tests.
+ *   the configured PX Lore host(s) and loopback for local development/tests.
  */
 export function resolveAllowedHosts(): string[] {
   const configured = parseHostList(process.env["IMAGE_REFERENCE_ALLOWED_HOSTS"]);
@@ -365,22 +373,22 @@ let cachedPresignFn: PresignFunction | null | undefined;
 function resolveBearerToken(explicit: PresignOptions = {}): string | undefined {
   const bearerToken = cleanString(explicit.bearerToken);
   if (bearerToken) return bearerToken;
-  const tokenEnvName = cleanString(explicit.tokenEnv) ?? cleanString(process.env["NAP_TOKEN_ENV"]);
+  const tokenEnvName = cleanString(explicit.tokenEnv) ?? cleanString(process.env["PX_TOKEN_ENV"]);
   if (tokenEnvName) {
     const fromNamed = cleanString(process.env[tokenEnvName]);
     if (fromNamed) return fromNamed;
   }
-  return cleanString(process.env["NAP_LORE_HTTP_TOKEN"]) ?? cleanString(process.env["NAP_LORE_GRPC_TOKEN"]);
+  return cleanString(process.env["PX_LORE_HTTP_TOKEN"]) ?? cleanString(process.env["PX_LORE_GRPC_TOKEN"]);
 }
 
 export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOptions {
-  const repoPath = overrides.repoPath ?? cleanString(process.env["NAP_REPO_PATH"]) ?? cleanString(process.env["NAP_DIR"]);
+  const repoPath = overrides.repoPath ?? cleanString(process.env["PX_REPO_PATH"]) ?? cleanString(process.env["PX_DIR"]);
   const hasExplicitRevision = overrides.branch !== undefined || overrides.commit !== undefined;
   const branch = hasExplicitRevision ? overrides.branch : undefined;
   const commit = hasExplicitRevision ? overrides.commit : undefined;
   const ttlRaw = overrides.ttlSeconds;
   const ttlSeconds = typeof ttlRaw === "number" && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.floor(ttlRaw) : undefined;
-  const httpUrl = overrides.httpUrl ?? cleanString(process.env["NAP_LORE_HTTP_URL"]);
+  const httpUrl = overrides.httpUrl ?? cleanString(process.env["PX_LORE_HTTP_URL"]);
   const bearerToken = resolveBearerToken(overrides);
   const tokenEnv = overrides.tokenEnv ?? undefined;
   return {
@@ -400,19 +408,19 @@ export function resolvePresignOptions(overrides: PresignOptions = {}): PresignOp
  * to hash mismatches between SDK and CLI operations.
  */
 export function validateServerConfiguration(): void {
-  const loreUrlBase = cleanString(process.env["NAP_LORE_URL_BASE"]);
-  const sdkHttpUrl = cleanString(process.env["NAP_LORE_HTTP_URL"]);
-  const repoPath = cleanString(process.env["NAP_REPO_PATH"]) ?? cleanString(process.env["NAP_DIR"]);
+  const loreUrlBase = cleanString(process.env["PX_LORE_URL_BASE"]);
+  const sdkHttpUrl = cleanString(process.env["PX_LORE_HTTP_URL"]);
+  const repoPath = cleanString(process.env["PX_REPO_PATH"]) ?? cleanString(process.env["PX_DIR"]);
 
   // If no server URL is configured, we can't validate
   if (!loreUrlBase && !sdkHttpUrl && !repoPath) {
-    logger.warn("[ImageRefs] No NAP server configuration found. Set NAP_LORE_URL_BASE or NAP_LORE_HTTP_URL.", "broadcast");
+    logger.warn("[ImageRefs] No PX server configuration found. Set PX_LORE_URL_BASE or PX_LORE_HTTP_URL.", "broadcast");
     return;
   }
 
   // If both local repo and remote server are configured, CLI may prefer local
   if (repoPath && (loreUrlBase || sdkHttpUrl)) {
-    logger.warn("[ImageRefs] Both NAP_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.", "broadcast", {
+    logger.warn("[ImageRefs] Both PX_REPO_PATH and remote Lore URL are configured. CLI may prefer local repository, potentially causing hash mismatches with SDK operations.", "broadcast", {
       repoPath,
       loreUrlBase: loreUrlBase ?? sdkHttpUrl,
     });
@@ -420,11 +428,11 @@ export function validateServerConfiguration(): void {
 
   // Log the effective configuration for debugging
   if (loreUrlBase) {
-    logger.info("[ImageRefs] NAP server configuration: using Lore URL base", "broadcast", { loreUrlBase });
+    logger.info("[ImageRefs] PX server configuration: using Lore URL base", "broadcast", { loreUrlBase });
   } else if (sdkHttpUrl) {
-    logger.info("[ImageRefs] NAP server configuration: using Lore HTTP URL", "broadcast", { httpUrl: sdkHttpUrl });
+    logger.info("[ImageRefs] PX server configuration: using Lore HTTP URL", "broadcast", { httpUrl: sdkHttpUrl });
   } else if (repoPath) {
-    logger.info("[ImageRefs] NAP server configuration: using local repository", "broadcast", { repoPath });
+    logger.info("[ImageRefs] PX server configuration: using local repository", "broadcast", { repoPath });
   }
 }
 
@@ -432,11 +440,11 @@ export function validateServerConfiguration(): void {
 export async function loadPresignFunction(): Promise<PresignFunction | null> {
   if (cachedPresignFn !== undefined) return cachedPresignFn;
   try {
-    const sdk = await import("@portalshq/nap-sdk");
+    const sdk = await import("@portalshq/px");
     if (typeof sdk.presignRepresentation !== "function") throw new Error("Missing presign export");
     cachedPresignFn = sdk.presignRepresentation;
   } catch {
-    logger.warn("[ImageRefs] SDK unavailable; using nap CLI for presigning", "broadcast", {
+    logger.warn("[ImageRefs] SDK unavailable; using px CLI for presigning", "broadcast", {
       reason: "presign_sdk_unavailable",
     });
     cachedPresignFn = presignWithCli;
@@ -454,13 +462,13 @@ async function presignUrl(
   presignOptions: PresignOptions,
   presignFn: PresignFunction | null | undefined,
 ): Promise<string> {
-  if (!presignFn) throw Object.assign(new Error("NAP presign unavailable"), { code: "sdk_unavailable" });
+  if (!presignFn) throw Object.assign(new Error("PX presign unavailable"), { code: "sdk_unavailable" });
   const resolved = resolvePresignOptions(presignOptions);
   const { tokenEnv: _tokenEnv, ...sdkOptions } = resolved;
   if (sdkOptions.branch && sdkOptions.commit) {
-    throw Object.assign(new Error("NAP presign accepts either branch or commit, not both"), { code: "invalid_revision" });
+    throw Object.assign(new Error("PX presign accepts either branch or commit, not both"), { code: "invalid_revision" });
   }
-  // NAP resolves the manifest at the selected revision using this entity ID,
+  // PX resolves the manifest at the selected revision using this entity ID,
   // then looks up the exact map key. The representation URI is only a filename.
   const presigned = await presignFn(selected.entityId, selected.representationKey, sdkOptions);
   if (presigned && typeof presigned.url === "string" && presigned.url.trim().length > 0) {
@@ -687,7 +695,7 @@ async function downloadOneUrl(
 }
 
 /**
- * Presign through NAP then download each selected reference into a
+ * Presign through PX then download each selected reference into a
  * bounded Buffer. Skips failed/invalid candidates and continues filling the
  * provider's capacity from later candidates. Deduplicates by hash and caches
  * successes in memory. Never logs URLs or bytes.
