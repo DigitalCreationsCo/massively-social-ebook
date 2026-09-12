@@ -950,6 +950,8 @@ async function buildBlockFromContext(
 export interface GenerateStoryImageOptions {
   /** Decoded reference image bytes (Buffer/Uint8Array/ArrayBuffer/base64). */
   referenceImages?: Array<Buffer | Uint8Array | ArrayBuffer | string>;
+  /** Per-image MIME types parallel to referenceImages (e.g. image/jpeg for previousBlock). */
+  referenceMimeTypes?: string[];
   /** Content hashes for observability (never log bytes). */
   referenceHashes?: string[];
   /** Original candidate count before provider-limit slicing (for logging). */
@@ -1005,6 +1007,7 @@ export async function generateStoryImage(description: string, options: GenerateS
     base64Image = await generateProviderImage({
       text,
       ...(usable.length > 0 ? { referenceImages: usable } : {}),
+      ...(options.referenceMimeTypes ? { referenceMimeTypes: options.referenceMimeTypes.slice(0, limits.maxImages) } : {}),
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
     if (base64Image) {

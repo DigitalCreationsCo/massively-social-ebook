@@ -11,11 +11,31 @@ vi.mock("../media/tts-service", () => speech);
 vi.mock("../storage", () => ({ storage }));
 vi.mock("../logger", () => ({ logger: { warn: vi.fn(), error: vi.fn() } }));
 
-import { prepareAmbientTurnFromText, prepareCanonicalSlot, slotsFromBlock } from "./media-slots";
+import {
+  __clearPreviousImageForTests,
+  prepareAmbientTurnFromText,
+  prepareCanonicalSlot,
+  slotsFromBlock,
+} from "./media-slots";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(turns = 20): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
+}
 
 describe("broadcast media slots", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    __clearPreviousImageForTests("main");
     delete process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS;
     delete process.env.BROADCAST_IMAGE_DURATION_SECONDS;
     delete process.env.BROADCAST_NARRATION_ATTEMPTS;
@@ -41,13 +61,14 @@ describe("broadcast media slots", () => {
     expect(prepared.slots[0]).toMatchObject({
       durationSeconds: 15,
       slotKey: "channel:main:session:3:block:7:segment:0:slot",
+      caption: "The room is quiet.",
       image: expect.any(Object),
     });
     expect(prepared.slots[0]?.audio).toBeUndefined();
     expect(storage.createBlock).toHaveBeenCalledWith(expect.objectContaining({
       ttsEnabled: false,
       audioUrl: null,
-      deliverySegments: [{ durationSeconds: 15, ordinal: 0 }],
+      deliverySegments: [{ durationSeconds: 15, ordinal: 0, caption: "The room is quiet." }],
     }));
   }, 5_000);
 
@@ -92,13 +113,14 @@ describe("broadcast media slots", () => {
     expect(prepared.slots[0]).toMatchObject({
       durationSeconds: 15,
       slotKey: "channel:main:session:3:block:7:segment:0:slot",
+      caption: "The room is quiet.",
       image: expect.any(Object),
     });
     expect(prepared.slots[0]?.audio).toBeUndefined();
     expect(storage.createBlock).toHaveBeenCalledWith(expect.objectContaining({
       ttsEnabled: false,
       audioUrl: null,
-      deliverySegments: [{ durationSeconds: 15, ordinal: 0 }],
+      deliverySegments: [{ durationSeconds: 15, ordinal: 0, caption: "The room is quiet." }],
     }));
   }, 5_000);
 
@@ -209,6 +231,47 @@ describe("broadcast media slots", () => {
       expect.stringContaining("Prior scene"),
       expect.objectContaining({ imageRepresentations: [], signal: expect.anything() }),
     );
+  });
+
+  it("chains concurrent ambient images to the immediately preceding playback frame", async () => {
+    const firstImage = deferred<{ buffer: Buffer; mimeType: "image/jpeg"; filename: string }>();
+    const secondImage = deferred<{ buffer: Buffer; mimeType: "image/jpeg"; filename: string }>();
+    const references: Array<Buffer | undefined> = [];
+    images.generateStoryImageAsset.mockImplementation((_description: string, options: { previousImage?: Buffer }) => {
+      references.push(options.previousImage);
+      return references.length === 1 ? firstImage.promise : secondImage.promise;
+    });
+    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
+
+    const first = prepareAmbientTurnFromText(
+      "main",
+      { title: "First", content: "First scene.", dialogue: "First scene." },
+      "run-1",
+      0,
+      new AbortController().signal,
+    );
+    await flushMicrotasks();
+    expect(images.generateStoryImageAsset).toHaveBeenCalledTimes(1);
+    expect(references[0]).toBeUndefined();
+
+    const second = prepareAmbientTurnFromText(
+      "main",
+      { title: "Second", content: "Second scene.", dialogue: "Second scene." },
+      "run-1",
+      1,
+      new AbortController().signal,
+    );
+    await flushMicrotasks();
+    expect(images.generateStoryImageAsset).toHaveBeenCalledTimes(1);
+
+    const firstFrame = Buffer.from("first-frame");
+    firstImage.resolve({ buffer: firstFrame, mimeType: "image/jpeg", filename: "first.jpg" });
+    await flushMicrotasks();
+    expect(images.generateStoryImageAsset).toHaveBeenCalledTimes(2);
+    expect(references[1]).toEqual(firstFrame);
+
+    secondImage.resolve({ buffer: Buffer.from("second-frame"), mimeType: "image/jpeg", filename: "second.jpg" });
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
   });
 
   it("forwards identical selected references through canonical generation", async () => {

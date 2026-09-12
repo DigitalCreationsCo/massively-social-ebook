@@ -1,11 +1,15 @@
 import Hls from "hls.js";
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import type { CaptionTrack } from "@portalshq/capability-video-delivery";
+import { mountCaptionTracks } from "@portalshq/capability-video-delivery/browser";
 import { cn } from "@/lib/utils";
 import { mediaAnalytics } from "@/lib/media-analytics";
 import { CenterPlayButton, MediaControls, type PlayerState } from "./MediaControls";
 
 interface VideoDeliveryPlayerProps {
   manifestUrl?: string | null;
+  /** Application-owned WebVTT tracks, mounted as native selectable captions. */
+  captionTracks?: readonly CaptionTrack[];
   isLive: boolean;
   channelId?: string;
   className?: string;
@@ -19,6 +23,7 @@ function canPlayNativeHls(video: HTMLVideoElement) {
 
 export function VideoDeliveryPlayer({ 
   manifestUrl, 
+  captionTracks = [],
   isLive, 
   channelId = "default",
   className 
@@ -41,6 +46,13 @@ export function VideoDeliveryPlayer({
   // or reconnects so the previous image holds indefinitely instead of black.
   const [heldFrame, setHeldFrame] = useState<string | null>(null);
   const mediaErrorRecoveryRef = useRef(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || captionTracks.length === 0) return;
+    const mounted = mountCaptionTracks(video, captionTracks);
+    return () => mounted.remove();
+  }, [captionTracks]);
 
   const captureHeldFrame = useCallback(() => {
     const video = videoRef.current;

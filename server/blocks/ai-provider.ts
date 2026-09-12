@@ -153,12 +153,42 @@ function getGoogleGenAiImageClient(): GoogleGenAI {
  */
 const OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images";
 
-function openRouterReferenceDataUrl(image: NonNullable<ProviderImageRequest["referenceImages"]>[number]): string {
+function sniffImageMime(buffer: Uint8Array | Buffer): string | undefined {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+    buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+  ) return "image/png";
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) return "image/webp";
+  return undefined;
+}
+
+function resolveReferenceMimeType(image: NonNullable<ProviderImageRequest["referenceImages"]>[number], explicit?: string): string {
+  if (explicit) {
+    const t = explicit.trim().toLowerCase();
+    if (t) return t;
+  }
+  if (typeof image === "string") {
+    const m = image.match(/^data:(image\/[a-z0-9.+-]+);base64,/i);
+    if (m) return m[1]!.toLowerCase();
+    return "image/png";
+  }
+  const bytes = image instanceof ArrayBuffer ? new Uint8Array(image) : image as Uint8Array | Buffer;
+  return sniffImageMime(bytes as Uint8Array) ?? "image/png";
+}
+
+function openRouterReferenceDataUrl(image: NonNullable<ProviderImageRequest["referenceImages"]>[number], mimeType?: string): string {
   if (typeof image === "string") {
     if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(image)) return image;
-    return `data:image/png;base64,${image}`;
+    return `data:${mimeType ?? "image/png"};base64,${image}`;
   }
-  return `data:image/png;base64,${Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64")}`;
+  const mime = mimeType ?? sniffImageMime(Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image as Uint8Array)) ?? "image/png";
+  return `data:${mime};base64,${Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64")}`;
 }
 
 async function generateOpenRouterImage(
@@ -166,6 +196,7 @@ async function generateOpenRouterImage(
   images: NonNullable<ProviderImageRequest["referenceImages"]>,
   model: string,
   abortSignal?: AbortSignal,
+  mimeTypes?: string[],
 ): Promise<string | undefined> {
   const response = await fetch(OPENROUTER_IMAGES_URL, {
     method: "POST",
@@ -180,9 +211,9 @@ async function generateOpenRouterImage(
       output_format: "jpeg",
       ...(images.length > 0
         ? {
-          input_references: images.slice(0, 16).map((image) => ({
+          input_references: images.slice(0, 16).map((image, i) => ({
             type: "image_url",
-            image_url: { url: openRouterReferenceDataUrl(image) },
+            image_url: { url: openRouterReferenceDataUrl(image, mimeTypes?.[i] ?? (typeof image === "string" ? undefined : sniffImageMime(Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image as Uint8Array)) ?? undefined)) },
           })),
         }
         : {}),
@@ -201,6 +232,8 @@ async function generateOpenRouterImage(
 export interface ProviderImageRequest {
   text: string;
   referenceImages?: Array<Buffer | Uint8Array | ArrayBuffer | string>;
+  /** Per-image MIME types parallel to referenceImages (e.g. image/jpeg for previousBlock). */
+  referenceMimeTypes?: string[];
   abortSignal?: AbortSignal;
 }
 
@@ -213,6 +246,7 @@ function referenceImageBase64(image: NonNullable<ProviderImageRequest["reference
 export async function generateProviderImage(request: ProviderImageRequest): Promise<string | undefined> {
   const { provider, model } = getAiConfiguration().image;
   const images = request.referenceImages ?? [];
+  const mimes = request.referenceMimeTypes ?? [];
 
   if (provider === "google") {
     const response = await getGoogleGenAiImageClient().models.generateContent({
@@ -221,8 +255,8 @@ export async function generateProviderImage(request: ProviderImageRequest): Prom
         role: "user",
         parts: [
           { text: request.text },
-          ...images.map((image) => ({
-            inlineData: { mimeType: "image/png", data: referenceImageBase64(image) },
+          ...images.map((image, i) => ({
+            inlineData: { mimeType: resolveReferenceMimeType(image, mimes[i]), data: referenceImageBase64(image) },
           })),
         ],
       }],
@@ -238,15 +272,16 @@ export async function generateProviderImage(request: ProviderImageRequest): Prom
   }
 
   if (provider === "openrouter") {
-    return generateOpenRouterImage(request.text, images, model, request.abortSignal);
+    return generateOpenRouterImage(request.text, images, model, request.abortSignal, mimes);
   }
 
   if (provider === "huggingface") {
+    const mime = images[0] ? resolveReferenceMimeType(images[0], mimes[0]) : undefined;
     const image = await getHuggingFaceImageClient().imageTextToImage(
       {
         provider: "fal-ai",
         model,
-        ...(images[0] ? { inputs: new Blob([images[0]]) } : {}),
+        ...(images[0] ? { inputs: new Blob([images[0] as BlobPart], mime ? { type: mime } : undefined) } : {}),
         parameters: {
           prompt: request.text,
           target_size: { width: 1536, height: 864 },

@@ -82,7 +82,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
           <div className="relative h-full max-h-full min-h-0 w-full min-w-0 flex-none overflow-hidden rounded-none border-0 bg-[#050403] shadow-none md:rounded-[2rem] md:border md:border-white/20 md:shadow-[0_28px_100px_rgba(0,0,0,0.55)] lg:aspect-auto lg:h-full lg:max-h-full lg:w-full xl:aspect-auto xl:h-full xl:max-h-full xl:w-full xl:max-w-full">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_12%,rgba(243,174,48,0.18),transparent_38%),linear-gradient(135deg,#110c05,#030303_72%)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45" />
-            <VideoDeliveryPlayer className="live-broadcast-player absolute inset-0 h-full max-h-full min-h-0 w-full" manifestUrl={manifestUrl} isLive={hasHealthyBroadcast} channelId={channelId} />
+            <VideoDeliveryPlayer className="live-broadcast-player absolute inset-0 h-full max-h-full min-h-0 w-full" manifestUrl={manifestUrl} captionTracks={playbackQuery.data?.playback?.captionTracks} isLive={hasHealthyBroadcast} channelId={channelId} />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
               <DecisionPhase
                 phase="reading"

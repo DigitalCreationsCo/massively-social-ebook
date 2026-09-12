@@ -49,6 +49,8 @@ export interface StoryImageAssetOptions {
   imageRepresentations?: readonly SelectedImageRepresentation[];
   /** Broadcast abort signal, forwarded through downloads + generation. */
   signal?: AbortSignal;
+  /** Previous generated image bytes for visual continuity (chained). */
+  previousImage?: Buffer;
 }
 
 /**
@@ -116,6 +118,7 @@ export async function generateStoryImageAsset(
 
   let referenceImages: Buffer[] | undefined;
   let referenceHashes: string[] | undefined;
+  let referenceMimeTypes: string[] | undefined;
   let candidateCount = 0;
 
   if (selected.length > 0) {
@@ -129,12 +132,40 @@ export async function generateStoryImageAsset(
     if (fetched.length > 0) {
       referenceImages = fetched.map((f) => f.buffer);
       referenceHashes = fetched.map((f) => f.hash);
+      referenceMimeTypes = fetched.map((f) => f.mimeType);
     }
+  }
+
+  // Previous-frame chaining: prepend last successful image for visual continuity
+  // Its bytes are JPEG (GeneratedStoryImage.mimeType is always image/jpeg) so
+  // the parallel MIME array must carry image/jpeg for the prepended entry.
+  if (options.previousImage && options.previousImage.length > 0) {
+    const prev = options.previousImage;
+    const prevMime = "image/jpeg";
+    if (referenceImages && referenceImages.length > 0) {
+      const room = Math.max(0, limits.maxImages - 1);
+      if (referenceImages.length > room) {
+        referenceImages = referenceImages.slice(0, room);
+        if (referenceHashes) referenceHashes = referenceHashes.slice(0, room);
+        if (referenceMimeTypes) referenceMimeTypes = referenceMimeTypes.slice(0, room);
+      }
+      referenceImages = [prev, ...referenceImages];
+      referenceMimeTypes = referenceMimeTypes ? [prevMime, ...referenceMimeTypes] : [prevMime];
+      // Ensure parallel length (defensive: if mimes were missing, pad with png fallback)
+      if (referenceMimeTypes.length !== referenceImages.length) {
+        const pad = referenceImages.length - referenceMimeTypes.length;
+        referenceMimeTypes = [...referenceMimeTypes, ...Array(pad).fill("image/png")];
+      }
+    } else {
+      referenceImages = [prev];
+      referenceMimeTypes = [prevMime];
+    }
+    candidateCount += 1;
   }
 
   const base64Data = await admitImageProviderWork(
     () => generateStoryImage(description, {
-      ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
+      ...(referenceImages ? { referenceImages, referenceHashes, referenceMimeTypes, candidateCount } : {}),
       ...(options.signal ? { abortSignal: options.signal } : {}),
     }),
     options.signal,
@@ -148,6 +179,7 @@ export async function generateStoryImageAsset(
 export interface StoryImageBatchItem {
   description: string;
   imageRepresentations?: readonly SelectedImageRepresentation[];
+  previousImage?: Buffer;
 }
 
 export interface StoryImageBatchOptions {
@@ -205,6 +237,7 @@ async function generateOneBatchAsset(
 
   let referenceImages: Buffer[] | undefined;
   let referenceHashes: string[] | undefined;
+  let referenceMimeTypes: string[] | undefined;
   let candidateCount = 0;
 
   if (selected.length > 0) {
@@ -218,12 +251,36 @@ async function generateOneBatchAsset(
     if (fetched.length > 0) {
       referenceImages = fetched.map((f) => f.buffer);
       referenceHashes = fetched.map((f) => f.hash);
+      referenceMimeTypes = fetched.map((f) => f.mimeType);
     }
+  }
+
+  if (item.previousImage && item.previousImage.length > 0) {
+    const prev = item.previousImage;
+    const prevMime = "image/jpeg";
+    if (referenceImages && referenceImages.length > 0) {
+      const room = Math.max(0, limits.maxImages - 1);
+      if (referenceImages.length > room) {
+        referenceImages = referenceImages.slice(0, room);
+        if (referenceHashes) referenceHashes = referenceHashes.slice(0, room);
+        if (referenceMimeTypes) referenceMimeTypes = referenceMimeTypes.slice(0, room);
+      }
+      referenceImages = [prev, ...referenceImages];
+      referenceMimeTypes = referenceMimeTypes ? [prevMime, ...referenceMimeTypes] : [prevMime];
+      if (referenceMimeTypes.length !== referenceImages.length) {
+        const pad = referenceImages.length - referenceMimeTypes.length;
+        referenceMimeTypes = [...referenceMimeTypes, ...Array(pad).fill("image/png")];
+      }
+    } else {
+      referenceImages = [prev];
+      referenceMimeTypes = [prevMime];
+    }
+    candidateCount += 1;
   }
 
   const base64Data = await admitBatchImageWork(
     () => generateStoryImage(item.description, {
-      ...(referenceImages ? { referenceImages, referenceHashes, candidateCount } : {}),
+      ...(referenceImages ? { referenceImages, referenceHashes, referenceMimeTypes, candidateCount } : {}),
       ...(signal ? { abortSignal: signal } : {}),
     }),
     signal,

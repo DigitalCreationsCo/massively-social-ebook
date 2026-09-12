@@ -282,6 +282,8 @@ export type BlockWithSession = Block & {
 };
 
 export interface DeliverySegment {
+  /** Text shown by the native caption track while this queue segment plays. */
+  caption?: string;
   /** Optional because an image-only broadcast turn remains a valid delivery segment. */
   audioUrl?: string;
   durationSeconds: number;
@@ -300,6 +302,7 @@ export interface DeliverySegment {
 }
 
 const deliverySegmentSchema = z.object({
+  caption: z.string().min(1).optional(),
   audioUrl: z.string().url().optional(),
   durationSeconds: z.number().positive(),
   ordinal: z.number().int().nonnegative(),

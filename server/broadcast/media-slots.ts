@@ -31,6 +31,8 @@ export interface PreparedBroadcastSlot {
   slotKey: string;
   blockId?: number;
   segmentOrdinal: number;
+  /** Narrative text carried with this queue slot for native sidecar captions. */
+  caption?: string;
   /** Legacy atomic-pair receipt from sessions created before slot support. */
   queuePairId?: string;
   /** Individual staged Streamer job receipts. */
@@ -65,6 +67,7 @@ export interface PreparedAmbientTurn {
 export interface PreparedAmbientSegment {
   segmentOrdinal: number;
   durationSeconds: number;
+  caption: string;
   audio?: QueueUploadAsset;
 }
 
@@ -80,6 +83,55 @@ interface PreparedNarration {
 
 const GENERATION_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [500, 1_500];
+
+// Previous-frame chaining per channel — shared across ambient + canonical for visual continuity
+// Stored as JPEG bytes (GeneratedStoryImage.mimeType is always image/jpeg); image-uploader
+// forwards it with explicit image/jpeg so google/openrouter inlineData carries the correct mime.
+const previousImageByChannel = new Map<string, Buffer>();
+// Image references are chronological state. Ambient preparation may overlap,
+// but its image work must not: the next image needs the prior turn's finished
+// frame, not whichever concurrent request happens to resolve first.
+const imageGenerationChainByChannel = new Map<string, Promise<void>>();
+
+function getPreviousImage(channelId: string): Buffer | undefined {
+  return previousImageByChannel.get(channelId);
+}
+
+function setPreviousImage(channelId: string, buffer: Buffer): void {
+  // ponytail: cap 1 per channel, 7MB max; evict not needed, single entry per channel
+  if (buffer.length > 0) previousImageByChannel.set(channelId, buffer);
+}
+
+export function __clearPreviousImageForTests(channelId: string): void {
+  previousImageByChannel.delete(channelId);
+  imageGenerationChainByChannel.delete(channelId);
+}
+
+/**
+ * Run image work after the preceding image request for this channel settles.
+ * Narration, persistence, and Streamer staging remain concurrent; only the
+ * stateful visual-reference handoff is ordered. The tail always resolves so
+ * a failed generation cannot wedge the next turn.
+ */
+async function generateInImageChain<T>(
+  channelId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = imageGenerationChainByChannel.get(channelId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  imageGenerationChainByChannel.set(channelId, current);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (imageGenerationChainByChannel.get(channelId) === current) {
+      imageGenerationChainByChannel.delete(channelId);
+    }
+  }
+}
 
 /**
  * Generate one canonical turn. Text comes first; image and speech are then
@@ -156,8 +208,11 @@ export async function finishCanonicalSlot(
     Promise.all(audioArchivePromises),
   ]);
   const deliverySegments: DeliverySegment[] = archivedSegments.length > 0
-    ? archivedSegments
-    : [{ durationSeconds: imageOnlyDuration(), ordinal: 0 }];
+    ? archivedSegments.map((segment, ordinal) => ({
+      ...segment,
+      caption: media.narration[ordinal]?.text ?? generated.content,
+    }))
+    : [{ durationSeconds: imageOnlyDuration(), ordinal: 0, caption: generated.content }];
   const blockData = {
     channelId,
     sessionId: session.id,
@@ -183,6 +238,7 @@ export async function finishCanonicalSlot(
       blockId: block.id,
       image: media.image.image,
       narration: media.narration,
+      captionFallback: generated.content,
     }),
   };
 }
@@ -209,6 +265,7 @@ export async function prepareAmbientTurnFromText(
   const segments = narration.map((item, segmentOrdinal) => ({
     segmentOrdinal,
     durationSeconds: slotDurationForSpeech(item?.speech.durationSeconds),
+    caption: item?.text ?? generated.content,
     ...(item ? {
       audio: toUploadAsset(item.speech.buffer, item.speech.mimeType, `narration-${segmentOrdinal}.${item.speech.extension}`),
     } : {}),
@@ -238,6 +295,7 @@ export function slotsFromBlock(block: Block): PreparedBroadcastSlot[] {
       slotKey: segment.queueSlotKey ?? `${idempotencyPrefix}:slot`,
       blockId: block.id,
       segmentOrdinal: segment.ordinal,
+      caption: segment.caption ?? block.content,
       ...(segment.queuePairId ? { queuePairId: segment.queuePairId } : {}),
       ...(segment.queueImageJobId ? { imageJobId: segment.queueImageJobId } : {}),
       ...(segment.queueAudioJobId ? { audioJobId: segment.queueAudioJobId } : {}),
@@ -278,7 +336,17 @@ async function generateTurnMedia(
   // proceed identically with or without narration), so it defaults to one
   // attempt while text/image keep the fuller retry budget.
   const [imageResult, narrationResult] = await Promise.allSettled([
-    retryGeneration("story image", () => generateImageWithFallback(description, channelId, imageType, signal, imageRepresentations), signal),
+    generateInImageChain(channelId, () => {
+      // Read the reference only after the previous image operation completes.
+      // This preserves the playback sequence even with multiple ambient
+      // preparation workers in flight.
+      const previousImage = getPreviousImage(channelId);
+      return retryGeneration(
+        "story image",
+        () => generateImageWithFallback(description, channelId, imageType, signal, imageRepresentations, previousImage),
+        signal,
+      );
+    }),
     retryGeneration("narration", () => synthesizeNarrationBuffers(dialogue || content, {
       maxDurationSeconds: Number(process.env.BROADCAST_MAX_SEGMENT_SECONDS || 25),
       signal,
@@ -314,6 +382,7 @@ function slotsWithAssets(input: {
   sequence?: number;
   image: GeneratedStoryImage;
   narration: PreparedNarration[];
+  captionFallback: string;
 }): PreparedBroadcastSlot[] {
   const base = input.blockId !== undefined && input.sessionId !== undefined
     ? `channel:${input.channelId}:session:${input.sessionId}:block:${input.blockId}`
@@ -327,6 +396,7 @@ function slotsWithAssets(input: {
       slotKey: `${idempotencyPrefix}:slot`,
       ...(input.blockId !== undefined ? { blockId: input.blockId } : {}),
       segmentOrdinal,
+      caption: item?.text ?? input.captionFallback,
       image: toUploadAsset(input.image.buffer, input.image.mimeType, input.image.filename),
       ...(item ? {
         audio: toUploadAsset(item.speech.buffer, item.speech.mimeType, `narration-${segmentOrdinal}.${item.speech.extension}`),
@@ -341,32 +411,27 @@ async function generateImageWithFallback(
   imageType: "block" | "ambient",
   signal: AbortSignal,
   imageRepresentations: readonly SelectedImageRepresentation[] = [],
+  previousImage?: Buffer,
 ): Promise<GeneratedImageWithArchive> {
   try {
-    return { image: await generateStoryImageAsset(description, { imageRepresentations, signal }) };
+    const result = { image: await generateStoryImageAsset(description, { imageRepresentations, signal, ...(previousImage ? { previousImage } : {}) }) };
+    // Chain: store this frame for next block's reference (both ambient + canonical share chain)
+    // The buffer is JPEG (image-uploader always returns image/jpeg) so the next
+    // call will forward it with explicit image/jpeg mime via referenceMimeTypes.
+    setPreviousImage(channelId, result.image.buffer);
+    return result;
   } catch (cause) {
+    // No fallback to a previously saved block — hold the previous frame
+    // on screen and surface stutter. Re-using an old canonical image breaks
+    // narrative continuity (ambient b-roll must never show a canonical moment
+    // out of order) and hides the fact that generation is stalled.
     logger.warn(
-      `Generated image failed for ${channelId}; trying an existing channel image`,
+      `Generated image failed for ${channelId}; holding last frame (no archived fallback)`,
       "broadcast",
       asError(cause),
     );
     signal.throwIfAborted();
-    // Keep the stream visually continuous while the next image is pending:
-    // repeat the most recent canonical visual before falling back to any
-    // historical channel image. This is both less jarring and immediately
-    // available during provider quota/rate-limit failures.
-    const mostRecent = await storage.getLastBlock(channelId);
-    const fallback = mostRecent?.imageUrl ?? await storage.getRandomImage(channelId);
-    if (!fallback) throw cause;
-    const asset = await fetchArchiveAsset(assertArchiveMediaUrl(fallback, "image"), "image", signal);
-    return {
-      image: {
-        buffer: Buffer.from(await asset.data.arrayBuffer()),
-        mimeType: "image/jpeg",
-        filename: asset.filename,
-      },
-      ...(imageType === "block" ? { archiveUrl: fallback } : {}),
-    };
+    throw cause;
   }
 }
 

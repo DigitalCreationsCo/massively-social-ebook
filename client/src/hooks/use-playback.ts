@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import type { CaptionTrack } from "@portalshq/capability-video-delivery";
 
 export interface PlaybackDetails {
   sessionId: number | string;
   playbackManifestUrl: string;
+  captionTracks?: readonly CaptionTrack[];
 }
 
 export interface PlaybackDelivery {
@@ -52,7 +54,13 @@ export function usePlayback(channelId: string) {
     queryFn: () => fetchPlayback(channelId),
     enabled: Boolean(channelId),
     staleTime: 5_000,
-    refetchInterval: 15_000,
+    // Captions advance with the Streamer's short queue slots. Keep the normal
+    // low-frequency health poll while idle, but refresh active playout fast
+    // enough that a native track is mounted during its own narration.
+    refetchInterval: (query) => {
+      const mode = query.state.data?.broadcast?.mode;
+      return mode === "ambient" || mode === "preparing" || mode === "episode" ? 1_000 : 15_000;
+    },
     refetchIntervalInBackground: true,
     retry: 1,
   });

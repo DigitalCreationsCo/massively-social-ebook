@@ -1,6 +1,7 @@
 import { QueueBroadcastClient } from "@portalshq/capability-queue-broadcast";
 import {
   LiveDelivery,
+  type CaptionTrack,
   type HlsPlaybackSession,
   type LiveDeliveryStatus,
 } from "@portalshq/capability-video-delivery";
@@ -113,17 +114,18 @@ export class BroadcastRuntime {
         channel.playbackError = cause instanceof Error ? cause.message : String(cause);
       });
     }
+    const broadcast = this.getCoordinatorStatus(channelId);
     return {
-      playback: channel.playback,
+      // Captions are sidecar WebVTT cues, deliberately kept out of the HLS
+      // media. The coordinator changes this only when the Streamer's own job
+      // state says the corresponding slot is actually playing.
+      playback: withCurrentCaption(channel.playback, broadcast.caption),
       delivery: channel.delivery?.getStatus() ?? {
         isRunning: false,
         isHealthy: false,
         ...(channel.playbackError ? { lastError: channel.playbackError } : {}),
       },
-      broadcast: {
-        ...channel.coordinator.getStatus(),
-        viewerCount: this.publicViewerCount(channelId),
-      },
+      broadcast,
     };
   }
 
@@ -229,4 +231,27 @@ export class BroadcastRuntime {
   private publicViewerCount(channelId: string): number {
     return Math.max(0, this.engine.viewerCount(channelId) - (this.compatibilityActivators.has(channelId) ? 1 : 0));
   }
+}
+
+const CURRENT_CAPTION_TRACK_ID = "live-current-caption";
+const CURRENT_CAPTION_CUE_END_SECONDS = 365 * 24 * 60 * 60;
+
+function withCurrentCaption(
+  playback: HlsPlaybackSession | null,
+  caption: string | undefined,
+): HlsPlaybackSession | null {
+  if (!playback) return null;
+  const text = caption?.trim();
+  const captionTracks: CaptionTrack[] = text ? [{
+    id: CURRENT_CAPTION_TRACK_ID,
+    label: "English",
+    language: "en",
+    kind: "captions",
+    default: true,
+    // This track is remounted when the Streamer advances to a different slot.
+    // A long cue makes it active at the live media position without assuming
+    // that a rolling HLS manifest starts its timeline at zero.
+    cues: [{ startTimeSeconds: 0, endTimeSeconds: CURRENT_CAPTION_CUE_END_SECONDS, text }],
+  }] : [];
+  return { ...playback, captionTracks };
 }

@@ -57,6 +57,8 @@ export interface BroadcastCoordinatorStatus {
   sessionScheduledEndAt?: number;
   runId?: string;
   currentJobs?: { jobIds: string[] };
+  /** The text belonging to the Streamer job currently in playout. */
+  caption?: string;
   lastError?: string;
   streamer: StreamerAvailabilityStatus;
   ambient?: AmbientPipelineStatus;
@@ -94,6 +96,9 @@ export class BroadcastCoordinator {
   private ambientSequence = 0;
   private ambientPipeline: AmbientPipeline | undefined;
   private currentJobs: BroadcastCoordinatorStatus["currentJobs"];
+  private readonly playingCaptions = new Map<string, string>();
+  private readonly slotCaptions = new Map<string, string>();
+  private currentCaption: string | undefined;
   private lastError: string | undefined;
   private streamer: StreamerAvailabilityStatus = { state: "unknown" };
   private streamerFailureCount = 0;
@@ -153,6 +158,7 @@ export class BroadcastCoordinator {
     this.abortController = undefined;
     this.producerPromise = undefined;
     this.currentJobs = undefined;
+    this.clearPlayingCaptions();
   }
 
   async restart(trigger: "operator" | "schedule" = "operator"): Promise<void> {
@@ -169,6 +175,7 @@ export class BroadcastCoordinator {
     this.lastError = undefined;
     this.streamer = { state: "unknown" };
     this.streamerFailureCount = 0;
+    this.clearPlayingCaptions();
     await storage.setSystemSetting(this.desiredSettingKey(), "running");
     this.startProducer();
   }
@@ -184,6 +191,7 @@ export class BroadcastCoordinator {
     this.abortController = undefined;
     this.producerPromise = undefined;
     this.currentJobs = undefined;
+    this.clearPlayingCaptions();
   }
 
   getStatus(): BroadcastCoordinatorStatus {
@@ -198,6 +206,7 @@ export class BroadcastCoordinator {
       } : {}),
       ...(this.runId ? { runId: this.runId } : {}),
       ...(this.currentJobs ? { currentJobs: this.currentJobs } : {}),
+      ...(this.currentCaption ? { caption: this.currentCaption } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
       streamer: { ...this.streamer },
       ...(this.ambientPipeline ? { ambient: this.ambientPipeline.getStatus() } : {}),
@@ -432,6 +441,9 @@ export class BroadcastCoordinator {
           () => this.releaseStagedSlot(slot.slotKey, workerSignal),
           workerSignal,
         );
+        if (slot.caption) {
+          for (const job of released.jobs) this.slotCaptions.set(job.id, slot.caption);
+        }
         return released.jobs;
       },
       monitorJobs: (jobs, workerSignal, onJobUpdate) => this.monitorSlotJobs(jobs, workerSignal, onJobUpdate),
@@ -490,6 +502,7 @@ export class BroadcastCoordinator {
       idempotencyPrefix,
       slotKey: `${idempotencyPrefix}:slot`,
       segmentOrdinal: segment.segmentOrdinal,
+      caption: segment.caption,
       image: turn.image,
       ...(segment.audio ? { audio: segment.audio } : {}),
     };
@@ -798,7 +811,7 @@ export class BroadcastCoordinator {
         if (queued.jobs.length === 0) throw new TerminalSlotError("Streamer released an empty slot");
         this.currentJobs = { jobIds: queued.jobs.map((job) => job.id) };
         await onSubmitted?.();
-        await this.monitorSlotJobs(queued.jobs, signal);
+        await this.monitorSlotJobs(queued.jobs, signal, undefined, slot.caption);
         this.currentJobs = undefined;
         return;
       } catch (cause) {
@@ -832,11 +845,45 @@ export class BroadcastCoordinator {
     jobs: QueueBroadcastJob[],
     signal: AbortSignal,
     onJobUpdate?: (job: QueueBroadcastJob) => void,
+    caption?: string,
   ): Promise<void> {
-    const finalJobs = await Promise.all(jobs.map((job) => this.waitForJob(job.id, signal, onJobUpdate)));
-    if (finalJobs.some((job) => job.status === "failed")) {
-      throw new TerminalSlotError("A queued slot item failed during normalization or playout");
+    const onUpdate = (job: QueueBroadcastJob) => {
+      this.updatePlayingCaption(job, caption ?? this.slotCaptions.get(job.id));
+      onJobUpdate?.(job);
+    };
+    try {
+      const finalJobs = await Promise.all(jobs.map((job) => this.waitForJob(job.id, signal, onUpdate)));
+      if (finalJobs.some((job) => job.status === "failed")) {
+        throw new TerminalSlotError("A queued slot item failed during normalization or playout");
+      }
+    } finally {
+      for (const job of jobs) {
+        this.playingCaptions.delete(job.id);
+        this.slotCaptions.delete(job.id);
+      }
+      this.refreshCurrentCaption();
     }
+  }
+
+  /**
+   * The queue is authoritative for playout state. Keep caption text out of
+   * the encoded media and expose it only while its own job is playing, so a
+   * staged or normalized future slot cannot leak its narrative early.
+   */
+  private updatePlayingCaption(job: QueueBroadcastJob, caption?: string): void {
+    if (job.status === "playing" && caption) this.playingCaptions.set(job.id, caption);
+    else this.playingCaptions.delete(job.id);
+    this.refreshCurrentCaption();
+  }
+
+  private refreshCurrentCaption(): void {
+    this.currentCaption = [...this.playingCaptions.values()].at(-1);
+  }
+
+  private clearPlayingCaptions(): void {
+    this.playingCaptions.clear();
+    this.slotCaptions.clear();
+    this.currentCaption = undefined;
   }
 
   private async stageAndReleaseSlot(

@@ -40,7 +40,7 @@ const slot = {
   audio: { data: new Blob(["audio"]), filename: "audio.wav", sha256: "b".repeat(64) },
 };
 
-function job(id: string, status: "staged" | "queued" | "done" | "failed") {
+function job(id: string, status: "staged" | "queued" | "playing" | "done" | "failed") {
   return { id, status, media_type: id.startsWith("image") ? "image" : "audio", updated_at: "now" };
 }
 
@@ -103,6 +103,33 @@ describe("BroadcastCoordinator", () => {
     }));
     expect(client.releaseSlot).toHaveBeenCalledWith(slot.slotKey, expect.anything());
     expect(client.watchJob).toHaveBeenCalledTimes(2);
+  });
+
+  it("exposes a slot caption only while the Streamer reports that slot playing", async () => {
+    const finishPlaying = deferred<void>();
+    const client = {
+      health: vi.fn().mockResolvedValue({ ok: true }),
+      getPlayback: vi.fn().mockResolvedValue({ playbackManifestUrl: "http://localhost:8888/live/main/index.m3u8" }),
+      stageUpload: vi.fn(async (input: { mediaType: string }) => job(`${input.mediaType}-job`, "staged")),
+      releaseSlot: vi.fn(async () => ({ jobs: [job("image-job", "queued")] })),
+      watchJob: vi.fn(async function* () {
+        yield job("image-job", "playing");
+        await finishPlaying.promise;
+        yield job("image-job", "done");
+      }),
+    };
+    const coordinator = new BroadcastCoordinator("main", client as any);
+
+    const submission = (coordinator as any).submitSlot(
+      { ...slot, caption: "The candle flickered in the empty room." },
+      new AbortController().signal,
+    );
+    await flushMicrotasks();
+
+    expect(coordinator.getStatus().caption).toBe("The candle flickered in the empty room.");
+    finishPlaying.resolve();
+    await submission;
+    expect(coordinator.getStatus().caption).toBeUndefined();
   });
 
   it("buffers ambient slots up to the buffer depth while earlier slots play", async () => {
