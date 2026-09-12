@@ -10,6 +10,8 @@
  *   - Discussion is always-on WebSocket chat, not phase-based.
  */
 
+import type { ActivationResult, TickResult } from "@portalshq/runtime-core";
+
 import { storage } from "../storage";
 import { logger } from "../logger";
 import { batchGenerateBlocks, getPreviousSessionContext } from "../blocks/batch-generate";
@@ -62,6 +64,25 @@ export const stateCache = {
 /** Clears cache. Used by tests to reset state between cases. */
 export function clearChannelCache(): void {
   stateCacheStore.clear();
+}
+
+// ── RealtimeEngine adapter (ponytail: thin wrapper, keeps READING_SEGMENT_MS app-owned) ─
+// runtime-core 0.0.7 has no TimeCounter — only scheduleRecheckAt for precise pre-roll.
+// Use these wrappers when driving channel-tick via RealtimeEngine instead of 30s poll.
+export async function channelTickActivate(channelId: ChannelId): Promise<ActivationResult> {
+  const next = await storage.getNextSession(channelId);
+  if (!next) return false;
+  const preRollAt = next.scheduledStart.getTime() - START_BEFORE_MS;
+  if (Date.now() < preRollAt) return { scheduleRecheckAt: preRollAt };
+  return true;
+}
+
+export async function channelTickTick(
+  channelId: ChannelId,
+  now: number,
+  broadcast: (channelId: ChannelId, message: WsMessage) => void,
+): Promise<TickResult> {
+  return handleChannelTick(channelId, now, broadcast, startSessionForChannelId);
 }
 
 // ── Session Start ────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import type { QueueBroadcastJob } from "@portalshq/capability-queue-broadcast";
 
+import { wait } from "../lib/wait";
 import type { PreparedAmbientTurn } from "./media-slots";
 
 export interface AmbientTurnMetrics {
@@ -482,18 +483,4 @@ function contentKeyForTurn(turn: Pick<PreparedAmbientTurn, "sequence" | "idempot
   return `sequence:${turn.sequence}`;
 }
 
-function wait(delayMs: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, delayMs);
-    timer.unref?.();
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
+

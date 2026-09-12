@@ -117,30 +117,17 @@ export class SessionScheduler {
     /**
      * Fast loop - runs every 30 seconds.
      * Handles: processing due schedules, marking completed sessions.
+     * Ponytail: no cursor — idempotency via DB unique constraint + grace window, avoids CURSOR_KEY contention with main loop.
      */
     private async runFastLoop(): Promise<void> {
         try {
-            const now = Date.now();
-            const nowDate = new Date(now);
-
-            // Get cursor to ensure idempotency
-            const lastProcessedStr = await storage.getSystemSetting(CURSOR_KEY);
-            if (!lastProcessedStr) {
-                await storage.setSystemSetting(CURSOR_KEY, now.toString());
-                return;
-            }
-
-            const lastProcessed = parseInt(lastProcessedStr, 10);
-            if (now <= lastProcessed) return;
+            const nowDate = new Date();
 
             // Process due schedules (create sessions for schedules whose nextRunAt has passed)
             await this.processDueSchedules();
 
             // Transition finished sessions to 'completed' status
             await this.processCompletedSessions(nowDate);
-
-            // Update cursor
-            await storage.setSystemSetting(CURSOR_KEY, now.toString());
 
         } catch (err) {
             logger.error('Error in fast loop', 'scheduler', err instanceof Error ? err : new Error(String(err)));
@@ -291,10 +278,12 @@ export class SessionScheduler {
                 const channelData = await storage.getChannel(schedule.channelId);
                 const durationMinutesTarget = (schedule as unknown as { durationMinutes?: number; }).durationMinutes ?? 25;
 
+                let localSessionCount = schedule.sessionCount ?? 0;
                 for (const exactScheduledStartTimestamp of exactDatesNonScheduled) {
                     const exactScheduledEndTimestamp = new Date(exactScheduledStartTimestamp.getTime() + durationMinutesTarget * 60 * 1000);
 
-                    const nextSessionNumber = (schedule.sessionCount ?? 0) + 1;
+                    localSessionCount += 1;
+                    const nextSessionNumber = localSessionCount;
                     const title = buildSessionTitle(schedule, nextSessionNumber, exactScheduledStartTimestamp);
                     const config = schedule.titleConfig as TitleConfig | null;
 
@@ -337,20 +326,18 @@ export class SessionScheduler {
 
     /**
      * Retrieves all notification events that should be processed within a time window.
-     * Optimized to only query sessions starting in the next 10 minutes instead of all sessions.
+     * Optimized to only query sessions whose 5-min warning falls in window.
      */
     private async getEventsInWindow(start: number, end: number): Promise<ScheduledEvent[]> {
         const events: ScheduledEvent[] = [];
 
-        // Session 5-minute warnings - optimized query
-        // Only fetch sessions starting in the next 10 minutes instead of ALL scheduled sessions
-        const now = new Date(start);
-        const windowEnd = new Date(end);
+        // Session 5-minute warnings: warning in [start,end] => sessionStart in [start+5m, end+5m]
+        const warningWindowStart = new Date(start + 5 * 60 * 1000);
+        const warningWindowEnd = new Date(end + 5 * 60 * 1000);
         
-        // Get sessions starting in the window (optimized - only relevant sessions)
         const upcomingSessions = await storage.getGlobalSessionsInWindow(
-            now,
-            windowEnd,
+            warningWindowStart,
+            warningWindowEnd,
             'scheduled'
         );
 
@@ -431,6 +418,7 @@ export class SessionScheduler {
 
     /**
      * Seeds default schedules for any channel that doesn't have one.
+     * Ponytail: keep future-useful votes/reactions/pendingBlocks intact; only seed logic fixed.
      */
     private async seedDefaultSchedulesIfEmpty(): Promise<void> {
         const channels = await storage.getChannels();
@@ -439,10 +427,11 @@ export class SessionScheduler {
             const channel = channels[i];
             const existing = await storage.getSchedulesByChannel(channel.channelId);
 
-            const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
-            const needsSeedSchedule = existing.some(s => s.intervalEnabled && !s.scheduledDays);
+            const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays && s.scheduledDays.length > 0);
+            // Seed if no valid schedule, or has intervalEnabled without days (legacy broken row)
+            const needsSeedSchedule = !hasSchedule || existing.some(s => s.intervalEnabled && (!s.scheduledDays || s.scheduledDays.length === 0));
 
-            if (needsSeedSchedule) {
+            if (needsSeedSchedule && !hasSchedule) {
                 const baseHour = 19;
                 const hour = baseHour + i;
 
@@ -705,9 +694,9 @@ export function computeNextRunAt(schedule: Schedule): Date {
 async function getEventsInWindow(start: number, end: number): Promise<ScheduledEvent[]> {
     const events: ScheduledEvent[] = [];
 
-    const now = new Date(start);
-    const windowEnd = new Date(end);
-    const upcomingSessions = await storage.getGlobalSessionsInWindow(now, windowEnd, 'scheduled');
+    const warningWindowStart = new Date(start + 5 * 60 * 1000);
+    const warningWindowEnd = new Date(end + 5 * 60 * 1000);
+    const upcomingSessions = await storage.getGlobalSessionsInWindow(warningWindowStart, warningWindowEnd, 'scheduled');
 
     for (const session of upcomingSessions) {
         const sessionStart = new Date(session.scheduledStart).getTime();
@@ -861,10 +850,10 @@ export async function seedDefaultSchedulesIfEmpty(): Promise<void> {
         const existing = await storage.getSchedulesByChannel(channel.channelId);
 
 
-        const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays);
-        const needsSeedSchedule = existing.some(s => s.intervalEnabled && !s.scheduledDays);
+        const hasSchedule = existing.some(s => s.intervalEnabled && s.scheduledDays && s.scheduledDays.length > 0);
+        const needsSeedSchedule = !hasSchedule || existing.some(s => s.intervalEnabled && (!s.scheduledDays || s.scheduledDays.length === 0));
 
-            if (needsSeedSchedule) {
+            if (needsSeedSchedule && !hasSchedule) {
             const baseHour = 19;
             const hour = baseHour + i;
 

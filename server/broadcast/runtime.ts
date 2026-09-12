@@ -25,6 +25,8 @@ interface ChannelRuntime {
   delivery: LiveDelivery | null;
   playbackPromise?: Promise<void>;
   playbackError?: string;
+  lastPlaybackAttemptAt?: number;
+  playbackFailureCount?: number;
 }
 
 export interface ChannelPlaybackStatus {
@@ -80,7 +82,10 @@ export class BroadcastRuntime {
     await this.chatGateway.initialize();
     for (const channel of this.channels.values()) {
       await channel.coordinator.initialize();
-      await this.ensurePlayback(channel).catch((cause) => {
+      // Playback fetch must never block startup or viewer requests.
+      // Prime cache in background with backoff; a missing streamer should
+      // not make initialize() or /playback hang for 15s.
+      void this.ensurePlayback(channel).catch((cause) => {
         logger.warn(
           `Playback is not ready for ${channel.config.channelId}`,
           "broadcast",
@@ -98,9 +103,13 @@ export class BroadcastRuntime {
 
   async getPlaybackStatus(channelId: string): Promise<ChannelPlaybackStatus> {
     const channel = this.requireChannel(channelId);
-    await this.ensurePlayback(channel).catch(() => undefined);
-    if (channel.delivery && !channel.delivery.getStatus().isRunning) {
-      await channel.delivery.start().catch((cause) => {
+    // Do not block the HTTP response on a 10-15s Streamer fetch.
+    // Return cached playback immediately; refresh in background with backoff.
+    if (!channel.playback || !channel.delivery) {
+      void this.ensurePlayback(channel).catch(() => undefined);
+    } else if (channel.delivery && !channel.delivery.getStatus().isRunning) {
+      // Re-start hls delivery without blocking the response.
+      void channel.delivery.start().catch((cause) => {
         channel.playbackError = cause instanceof Error ? cause.message : String(cause);
       });
     }
@@ -162,6 +171,18 @@ export class BroadcastRuntime {
   private async ensurePlayback(channel: ChannelRuntime): Promise<void> {
     if (channel.playback && channel.delivery) return;
     if (channel.playbackPromise) return channel.playbackPromise;
+    // Exponential backoff 2s → 5s → 10s (then stays 10s) — avoids hammering
+    // the Streamer on every viewer poll (≈5-15s × N viewers) while keeping
+    // reconnect latency bounded. Mirrors coordinator STREAMER_RETRY_DELAYS_MS
+    // but capped at 10s per request (2/5/10).
+    const now = Date.now();
+    if (channel.playbackError) {
+      const count = channel.playbackFailureCount ?? 1;
+      const delays = [2_000, 5_000, 10_000];
+      const delayMs = delays[Math.min(Math.max(0, count - 1), delays.length - 1)]!;
+      if (now - (channel.lastPlaybackAttemptAt ?? 0) < delayMs) return;
+    }
+    channel.lastPlaybackAttemptAt = now;
     channel.playbackPromise = (async () => {
       try {
         const playback = await channel.client.getPlayback();
@@ -176,8 +197,10 @@ export class BroadcastRuntime {
         });
         await channel.delivery.start();
         channel.playbackError = undefined;
+        channel.playbackFailureCount = 0;
       } catch (cause) {
         channel.playbackError = cause instanceof Error ? cause.message : String(cause);
+        channel.playbackFailureCount = (channel.playbackFailureCount ?? 0) + 1;
         throw cause;
       } finally {
         channel.playbackPromise = undefined;

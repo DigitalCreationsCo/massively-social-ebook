@@ -18,6 +18,8 @@ import {
   type SpeechBuffer,
 } from "../media/tts-service";
 import { storage } from "../storage";
+import { broadcastImageFloor, imageOnlyDuration, slotDurationForSpeech } from "./duration";
+import { wait } from "../lib/wait";
 
 /** One logical turn. Its image and optional narration are staged independently. */
 export interface PreparedBroadcastSlot {
@@ -270,7 +272,7 @@ async function generateTurnMedia(
   signal: AbortSignal,
   imageRepresentations: readonly SelectedImageRepresentation[] = [],
 ): Promise<{ image?: GeneratedImageWithArchive; narration: PreparedNarration[] }> {
-  const description = `${title}: ${content.slice(0, 300)}`;
+  const description = `${content.slice(0, 300)}`;
   // Image and narration generate concurrently. Narration is best-effort: a
   // single failed attempt falls back to an image-only turn (playback must
   // proceed identically with or without narration), so it defaults to one
@@ -405,36 +407,7 @@ function narrationAttempts(): number {
   return Math.max(1, Math.min(GENERATION_ATTEMPTS, value));
 }
 
-/**
- * Playout floor for narrated turns: max(config, narration length). Short TTS
- * holds the picture for the full floor instead of vanishing after 5-10s;
- * long narration is preserved verbatim. This value only ever feeds
- * `imageDuration` on image uploads — video uploads must omit `imageDuration`
- * and keep their intrinsic duration (equal citizenship, no override).
- */
-function broadcastImageFloor(): number {
-  const configured = Number(process.env.BROADCAST_IMAGE_DURATION_SECONDS ?? 12);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 12;
-}
 
-/**
- * Image-only turns (narration unavailable) hold longer than the narrated
- * floor: with no audio pacing the turn, the still should cover a full
- * generation cycle or consumption outruns production and images blink.
- * Tunable via BROADCAST_IMAGE_ONLY_DURATION_SECONDS (default 15).
- */
-function imageOnlyDuration(): number {
-  const configured = Number(process.env.BROADCAST_IMAGE_ONLY_DURATION_SECONDS ?? 15);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 15;
-}
-
-/** max(floor, speech) — the stored slot duration for one segment. */
-function slotDurationForSpeech(speechDurationSeconds?: number): number {
-  if (speechDurationSeconds === undefined) return imageOnlyDuration();
-  const floor = broadcastImageFloor();
-  if (!Number.isFinite(speechDurationSeconds)) return floor;
-  return Math.max(floor, speechDurationSeconds);
-}
 
 function toUploadAsset(buffer: Buffer, mimeType: string, filename: string): QueueUploadAsset {
   if (buffer.length === 0) throw new Error(`Cannot queue empty ${filename}`);
@@ -486,24 +459,7 @@ function assertArchiveMediaUrl(value: string, kind: string): string {
   return url.toString();
 }
 
-function wait(delayMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, delayMs);
-    timer.unref?.();
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
+
 
 function asError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));

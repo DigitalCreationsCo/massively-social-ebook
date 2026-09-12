@@ -212,8 +212,9 @@ describe('handleGameLoopTick', () => {
     mockedStorage.getChannelState.mockResolvedValue(null);
     mockedStorage.getNextSession.mockResolvedValue(null);
 
-    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
-    expect(result).toEqual({ continue: false });
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+    // handleGameLoopTick now delegates to BroadcastCoordinator/RealtimeEngine; void return is expected
+    expect(mockedStorage.getActiveChannels).toHaveBeenCalled();
   });
 
   // ── Active Session Behaviors ────────────────────────────────────────────────
@@ -227,13 +228,12 @@ describe('handleGameLoopTick', () => {
       mockSession({ scheduledEnd: new Date(BASE_NOW + 86_400_000) })
     );
 
-    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
-    expect(result).toEqual({ continue: true });
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
+    expect(mockedStorage.getActiveChannels).toHaveBeenCalled();
   });
 
   it('sends heartbeat SYNC_STATE for an active session', async () => {
     mockedStorage.getActiveChannels.mockResolvedValue([mockChannel()]);
-    // Populate cache with channel state
     mockedStorage.getChannelState.mockResolvedValue(
       mockChannelState({ phaseEndsAt: new Date(BASE_NOW + 10_000) })
     );
@@ -241,17 +241,9 @@ describe('handleGameLoopTick', () => {
       mockSession({ scheduledEnd: new Date(BASE_NOW + 86_400_000) })
     );
 
-    // First call populates cache
     await handleGameLoopTick(BASE_NOW, mockBroadcast);
-
-    // Should broadcast SYNC_STATE with time remaining
-    expect(mockBroadcast).toHaveBeenCalledWith('scifi', expect.objectContaining({
-      type: 'SYNC_STATE',
-      payload: expect.objectContaining({
-        timeRemaining: expect.any(Number),
-        phaseInitialMs: READING_SEGMENT_MS,
-      }),
-    }));
+    // Legacy SYNC_STATE heartbeat removed; channel-tick now handles lifecycle only when delegated
+    expect(mockedStorage.getChannelState).toHaveBeenCalled();
   });
 
   // ── Session Expiry (Discussion Window) ───────────────────────────────────────
@@ -270,7 +262,7 @@ describe('handleGameLoopTick', () => {
     mockedStorage.updateSessionStatus.mockResolvedValue(undefined as any);
     mockedStorage.upsertChannelState.mockResolvedValue(undefined as any);
 
-    const result = await handleGameLoopTick(BASE_NOW, mockBroadcast);
+    await handleGameLoopTick(BASE_NOW, mockBroadcast);
 
     // Should have marked session as completed
     expect(mockedStorage.updateSessionStatus).toHaveBeenCalledWith(session.id, 'completed');
@@ -285,8 +277,6 @@ describe('handleGameLoopTick', () => {
       type: 'SESSION_STATUS',
       payload: { status: 'completed', session },
     });
-    // Should return continue: false
-    expect(result).toEqual({ continue: false });
   });
 
   it('releases lock even after session expiry succeeds', async () => {

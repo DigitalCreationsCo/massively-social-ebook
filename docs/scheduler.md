@@ -6,19 +6,22 @@ This document describes how sessions are scheduled, created, and transitioned to
 
 ## Scheduler Architecture
 
-The scheduler runs two loops:
+The scheduler runs two loops (plus `BroadcastCoordinator` live path):
 
-| Loop | Frequency | Purpose |
-|------|-----------|---------|
-| **Notification Loop** | Every 30 seconds | Process due schedules, complete expired sessions, handle notifications |
-| **Seeding Loop** | Every 30 minutes | Ensure sessions exist within 7-day lookahead window |
+| Loop | Frequency | Purpose | Cursor |
+|------|-----------|---------|--------|
+| **Fast Loop** | Every 30 seconds | Process `nextRunAt` due schedules, mark `expiredActiveSessions` (`scheduledEnd+5m` grace) | None — idempotent via DB constraints (`23505`) and grace window |
+| **Main Loop** | Every 10 minutes | Seed `7-day` lookahead sessions, process notification events (`SESSION_WARNING_5MIN` in `[start+5m,end+5m]` + `WEEKLY_BRIEF`) | `notification_cursor` (`CURSOR_KEY`) — `SEEDING_CURSOR_KEY` reserved, fast loop no longer contends |
+
+Live broadcast channels additionally run `BroadcastCoordinator.produce` tight loop + `RealtimeEngine` 5s presence ticks (`server/broadcast/runtime.ts:70`), with `scheduleRecheckAt: scheduledStart-3m` (`server/broadcast/coordinator.ts:118`, `server/game-loop/channel-tick.ts:channelTickActivate`) for precise pre-roll.
 
 ### Key Constants
 
-- `LOOP_INTERVAL_MS = 30 * 1000` (30 seconds)
-- `SEEDING_INTERVAL_MS = 30 * 60 * 1000` (30 minutes)
+- `FAST_LOOP_INTERVAL_MS = 30 * 1000` (30 seconds)
+- `MAIN_LOOP_INTERVAL_MS = 10 * 60 * 1000` (10 minutes)
 - `SESSION_LOOKAHEAD_DAYS = 7`
-- `LOBBY_DELAY_MS = 3 * 60 * 1000` (3 minutes - when session enters "gathering" phase)
+- `LOBBY_DELAY_MS = 3 * 60 * 1000` (3 minutes - lobby/`gathering`, `START_BEFORE_MS` alias `server/game-loop/channel-tick.ts:39`)
+- `READING_SEGMENT_MS = 25_000` (kept app-owned — `runtime-core@0.0.7` has no `TimeCounter`, only `scheduleRecheckAt` `server/game-loop/channel-tick.ts:channelTickActivate`)
 
 ## Session Lifecycle
 
@@ -39,22 +42,16 @@ scheduled → active → completed
 
 ## How Sessions Become Active
 
-### Automatic (Game Loop)
+### Automatic — Two paths (reader vs live HLS)
 
-The game loop runs every **1 second** and automatically starts sessions when they're within the **3-minute lobby window**:
+**Reader / on-demand (REST, kept):** `server/game-loop/channel-tick.ts:154 handleChannelTick` runs when invoked (dev `POST /api/debug/sessions/start` `server/routes/index.ts:359` or legacy `handleGameLoopTick` `server/routes/index.ts:624` — now unregistered `docs/server-flowchart.md:259`). Checks `now >= scheduledStart - START_BEFORE_MS` `channel-tick.ts:190` under `tryAcquireGameLock 30s`, then `startSessionForChannelId` (fire-and-forget `batchGenerateBlocks` `blocks/batch-generate.ts:96` if empty, else REST poll `GET /api/blocks/session/:id` `server/routes/index.ts:415`). Realtime-aware: `channelTickActivate(): {scheduleRecheckAt: scheduledStart-3m}` `channel-tick.ts` mirrors `coordinator.ts:118` for `RealtimeEngine` precise timer (ponytail wrapper, no new `TimeCounter`).
 
-**Server logic** (`server/routes/index.ts`):
-```typescript
-// In handleGameLoopTick()
-if (now >= next.scheduledStart.getTime() - 3 * 60 * 1000) {
-  await startSessionForChannelId(channelId, next, broadcast);
-}
-```
+**Live HLS (queue, converging core):** `BroadcastCoordinator` `server/broadcast/coordinator.ts:218 produce` tight loop + `RealtimeEngine` 5s (`runtime.ts:70`) presence-driven. `activate()` `coordinator.ts:118` returns `{scheduleRecheckAt: preRoll}` (`PRE_ROLL_MS 3m`), `tick()` `coordinator.ts:124` supervises `produce`. At `preRoll` stages 3 slots (`ensureStagedSlots`), at `scheduledStart` releases serially via `submitSlot` (`stageUpload`+`releaseSlot` `coordinator.ts:850/887`) -> `LiveDelivery` HLS (`runtime.ts:193`).
 
 This means:
-1. Session enters "gathering" phase 3 minutes before scheduled start
-2. Session transitions to `active` status at scheduled start time
-3. WebSocket broadcasts `SESSION_STATUS` message to all connected clients
+1. Session enters `gathering`/`preparing` 3 minutes before scheduled start
+2. Session transitions to `active` at `scheduledStart` (`storage.updateSessionStatus:active` `coordinator.ts:536` or `channel-tick.ts:136`)
+3. WebSocket broadcasts `SESSION_STATUS` `active`; HLS viewers stream `playbackManifestUrl` `GET /api/channels/:ch/playback` `runtime.ts:193`, readers poll blocks
 
 ### Manual (API)
 

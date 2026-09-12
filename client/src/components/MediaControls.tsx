@@ -45,7 +45,7 @@ export function MediaControls({
           className="grid size-5 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_0_24px_rgba(251,191,36,0.32)] transition disabled:cursor-wait disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           aria-label={playerState === "playing" ? "Pause broadcast" : "Play broadcast"}
         >
-          {playerState === "playing" ? <Pause className="size-3 fill-black" /> : <Play className="size-3 fill-black translate-x-px" />}
+          {!shouldShowPlay ? <Pause className="size-3 fill-black" /> : <Play className="size-3 fill-black translate-x-px" />}
         </button>
         <button
           type="button"

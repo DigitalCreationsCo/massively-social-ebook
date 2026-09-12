@@ -9,6 +9,19 @@ import type { Session } from "@shared/schema";
 
 import { logger } from "../logger";
 import { storage } from "../storage";
+import { safeImageDuration } from "./duration";
+import { awaitWithAbort, wait } from "../lib/wait";
+import {
+  availabilityReason,
+  errorStatus,
+  isRetryable,
+  PartialSlotStageError,
+  RETRY_DELAYS_MS,
+  STREAMER_RETRY_DELAYS_MS,
+  StreamerProbeError,
+  StreamerUnavailableError,
+  TerminalSlotError,
+} from "../lib/retry";
 import {
   finishCanonicalSlot,
   hydrateCanonicalSlot,
@@ -50,8 +63,6 @@ export interface BroadcastCoordinatorStatus {
 }
 
 const PRE_ROLL_MS = 3 * 60 * 1000;
-const RETRY_DELAYS_MS = [500, 1_500, 4_000];
-const STREAMER_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000];
 
 /**
  * Version 0.1.2 of queue-broadcast accepts a caller signal on these probes.
@@ -989,95 +1000,4 @@ export class BroadcastCoordinator {
     this.ambientChainTail = tail;
     await storage.setSystemSetting(this.ambientChainKey(), JSON.stringify(tail));
   }
-}
-
-class TerminalSlotError extends Error {}
-class PartialSlotStageError extends Error {
-  constructor(readonly imageJobId: string, readonly stageCause: unknown) {
-    super("Image staged but narration upload failed");
-  }
-}
-class StreamerUnavailableError extends Error {}
-class StreamerProbeError extends Error {}
-
-function safeImageDuration(durationSeconds: number): number {
-  // Unified floor: max(config, audio). Short clips hold the image for the
-  // full floor; long narration is never truncated. Image-only: applies to
-  // `imageDuration` on image uploads exclusively — video uploads must omit
-  // `imageDuration` and retain their intrinsic duration.
-  const floor = broadcastImageFloor();
-  if (!Number.isFinite(durationSeconds)) return floor;
-  const clamped = Math.max(1, Math.min(30, Math.ceil(Math.max(floor, durationSeconds))));
-  return clamped;
-}
-
-function broadcastImageFloor(): number {
-  const configured = Number(process.env.BROADCAST_IMAGE_DURATION_SECONDS ?? 12);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 12;
-}
-
-function isRetryable(cause: unknown): boolean {
-  if (cause instanceof PartialSlotStageError) return isRetryable(cause.stageCause);
-  return cause instanceof QueueBroadcastError
-    && (cause.status === 0 || cause.status === 429 || cause.status >= 500);
-}
-
-function availabilityReason(cause: unknown): string {
-  if (cause instanceof StreamerProbeError) return cause.message;
-  const status = errorStatus(cause);
-  if (status === 0) return "Streamer control API is unreachable";
-  if (status === 401 || status === 403) return "Streamer authentication failed";
-  if (status) return `Streamer control API returned HTTP ${status}`;
-
-  const message = cause instanceof Error ? cause.message : "";
-  if (/econnrefused|enotfound|network|fetch failed|timed out/i.test(message)) {
-    return "Streamer control API is unreachable";
-  }
-  // The status is sent to browser clients, so do not copy a remote response
-  // body (which could accidentally contain a secret) into it.
-  return "Streamer availability check failed";
-}
-
-function errorStatus(cause: unknown): number | undefined {
-  if (cause instanceof QueueBroadcastError) return cause.status;
-  if (typeof cause !== "object" || cause === null || !("status" in cause)) return undefined;
-  const value = cause.status;
-  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
-function wait(delayMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, delayMs);
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    timer.unref?.();
-  });
-}
-
-function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(
-      (result) => {
-        signal.removeEventListener("abort", abort);
-        resolve(result);
-      },
-      (cause) => {
-        signal.removeEventListener("abort", abort);
-        reject(cause);
-      },
-    );
-  });
 }
