@@ -390,12 +390,21 @@ export class BroadcastCoordinator {
         if (!nextText || generationSequence === undefined) return undefined;
 
         // 3) Media preparation runs OUTSIDE locks: multiple workers generate in parallel.
+        const useVideo = process.env.BROADCAST_USE_VIDEO === "true";
+        const videoSourceConfig = useVideo && process.env.BROADCAST_VIDEO_SOURCE ? {
+          type: process.env.BROADCAST_VIDEO_SOURCE_TYPE as "static" | "url" || "url",
+          source: process.env.BROADCAST_VIDEO_SOURCE,
+          mimeType: process.env.BROADCAST_VIDEO_MIME_TYPE,
+        } : undefined;
+        
         const turnPromise = prepareAmbientTurnFromText(
           this.channelId,
           nextText,
           this.runId!,
           generationSequence,
           workerSignal,
+          useVideo,
+          videoSourceConfig,
         );
 
         const previousCommit = commitChain;
@@ -684,7 +693,14 @@ export class BroadcastCoordinator {
         return;
       }
 
-      const prepared = await finishCanonicalSlot(this.channelId, session, generated, signal);
+      const useVideo = process.env.BROADCAST_USE_VIDEO === "true";
+      const videoSourceConfig = useVideo && process.env.BROADCAST_VIDEO_SOURCE ? {
+        type: process.env.BROADCAST_VIDEO_SOURCE_TYPE as "static" | "url" || "url",
+        source: process.env.BROADCAST_VIDEO_SOURCE,
+        mimeType: process.env.BROADCAST_VIDEO_MIME_TYPE,
+      } : undefined;
+      
+      const prepared = await finishCanonicalSlot(this.channelId, session, generated, signal, undefined, useVideo, videoSourceConfig);
       // Generation failures are terminal for this turn, not the channel. Wait
       // before moving on so a persistent provider failure cannot busy-loop.
       if (!prepared?.block || prepared.slots.length === 0) {
