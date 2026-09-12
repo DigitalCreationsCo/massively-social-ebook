@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@shared/routes";
 import { useToast } from "./use-toast";
+import { generateClientUuid } from "@/lib/utils";
 
 export interface ChatMessage {
   id: number;
@@ -138,7 +139,7 @@ export function useLiveChannel(channelId: string) {
       toast({ title: "Conversation reconnecting", description: "Your message was not sent yet.", variant: "destructive" });
       return;
     }
-    const clientId = crypto.randomUUID();
+    const clientId = generateClientUuid();
     const optimisticId = -Date.now();
     const timestamp = new Date().toISOString();
     const optimistic: ChatMessage = {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { shouldShowLiveSession } from "@shared/session";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
-import { generateGuestName } from "@/lib/utils";
+import { generateClientUuid, generateGuestName } from "@/lib/utils";
 import { useToast } from "./use-toast";
 import type {
   Session,
@@ -418,7 +418,7 @@ export function useLiveState(channelId: string) {
         return;
       }
 
-      const clientId = crypto.randomUUID();
+      const clientId = generateClientUuid();
       const optimisticId = Date.now();
 
       const tempMsg: ChatMessage = {

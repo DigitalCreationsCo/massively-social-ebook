@@ -51,7 +51,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
   return (
     <div className="live-broadcast-section relative z-10 mx-auto flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden">
 
-      <section className="live-broadcast-layout flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden px-0 pt-1 md:px-3 pb-3 md:pt-3 lg:grid lg:grid-cols-1 lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-2 xl:grid-cols-[minmax(0,calc((100dvh-6rem)*1.7778))_minmax(320px,1fr)]">
+      <section className="live-broadcast-layout flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden px-0 pt-1 md:px-3 pb-3 md:pt-3 lg:grid lg:grid-cols-1 lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-3 xl:grid-cols-[minmax(0,calc((100dvh-6rem)*1.7778))_minmax(320px,1fr)]">
         <div className="flex col-span-full shrink-0 justify-end md:justify-between">
           <div className="hidden md:flex items-baseline gap-2">
             <h1 className="font-sans font-semibold text-xl leading-tight text-white">25th Chapter</h1>
