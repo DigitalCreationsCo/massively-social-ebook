@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { 
   generateMockVideo, 
   generateMockVideoAsset,
+  generateVideo,
+  generateVideoAsset,
   VideoSourceConfig,
   videoToUploadAsset,
   validateVideoBuffer,
@@ -136,12 +138,248 @@ describe("video-service", () => {
         arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1024))
       } as any);
 
-      const result = await generateMockVideoAsset(config);
+      vi.stubEnv("VIDEO_SAVE_SESSION", "true");
+      const result = await generateMockVideoAsset(config, "test-channel", "session");
 
       expect(result).toBeDefined();
       expect(result.video).toBeDefined();
       expect(result.video.buffer).toBeInstanceOf(Buffer);
-      expect(result.archiveUrl).toBeUndefined(); // No archival in mock
+      expect(result.archiveUrl).toBeUndefined(); // No archival in mock, but may have attempted
+      vi.unstubAllEnvs();
+    });
+
+    it("should respect video saving configuration for ambient mode", async () => {
+      const config: VideoSourceConfig = {
+        type: "url",
+        source: "https://test.spotme.com/sample.mp4"
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: vi.fn().mockReturnValue("video/mp4") },
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1024))
+      } as any);
+
+      vi.stubEnv("VIDEO_SAVE_AMBIENT", "false");
+      const result = await generateMockVideoAsset(config, "test-channel", "ambient");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeUndefined(); // Should not save ambient videos
+      vi.unstubAllEnvs();
+    });
+  });
+
+  describe("video saving configuration", () => {
+    it("should respect VIDEO_SAVE_SESSION environment variable", async () => {
+      const config: VideoSourceConfig = {
+        type: "url",
+        source: "https://test.spotme.com/sample.mp4"
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: vi.fn().mockReturnValue("video/mp4") },
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1024))
+      } as any);
+
+      vi.stubEnv("VIDEO_SAVE_SESSION", "false");
+      const result = await generateMockVideoAsset(config, "test-channel", "session");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeUndefined(); // Should not save when disabled
+      vi.unstubAllEnvs();
+    });
+  });
+
+  describe("generateVideo (production)", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("AI_VIDEO_MODEL", "google/veo-3.1");
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "10");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should integrate with production video provider", async () => {
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideo("test description");
+
+      expect(result).toBeDefined();
+      expect(result.buffer).toBeInstanceOf(Buffer);
+      expect(result.durationSeconds).toBe(5);
+      expect(result.mimeType).toBe("video/mp4");
+      expect(result.filename).toBe("video-test.mp4");
+    });
+
+    it("should handle provider errors gracefully", async () => {
+      vi.mocked(generateProviderVideo).mockRejectedValue(
+        new Error("Provider quota exceeded")
+      );
+
+      await expect(generateVideo("test description")).rejects.toThrow("Provider quota exceeded");
+    });
+
+    it("should handle budget exceeded errors specifically", async () => {
+      vi.mocked(generateProviderVideo).mockRejectedValue(
+        new Error("Daily video budget exceeded. Estimated cost: $15.00")
+      );
+
+      await expect(generateVideo("test description")).rejects.toThrow("Daily video budget limit reached");
+    });
+  });
+
+  describe("generateVideoAsset (production)", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("AI_VIDEO_MODEL", "google/veo-3.1");
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "10");
+      vi.stubEnv("VIDEO_SAVE_SESSION", "true");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should generate video asset with archival for session mode", async () => {
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideoAsset("test description", "test-channel", "session");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeDefined(); // Should save session videos
+    });
+
+    it("should skip archival for ambient mode when configured", async () => {
+      vi.stubEnv("VIDEO_SAVE_AMBIENT", "false");
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideoAsset("test description", "test-channel", "ambient");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeUndefined(); // Should not save ambient videos
+    });
+  });
+
+  describe("generateVideo (production)", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("AI_VIDEO_MODEL", "google/veo-3.1");
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "10");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should integrate with production video provider", async () => {
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideo("test description");
+
+      expect(result).toBeDefined();
+      expect(result.buffer).toBeInstanceOf(Buffer);
+      expect(result.durationSeconds).toBe(5);
+      expect(result.mimeType).toBe("video/mp4");
+      expect(result.filename).toBe("video-test.mp4");
+    });
+
+    it("should handle provider errors gracefully", async () => {
+      vi.mocked(generateProviderVideo).mockRejectedValue(
+        new Error("Provider quota exceeded")
+      );
+
+      await expect(generateVideo("test description")).rejects.toThrow("Provider quota exceeded");
+    });
+
+    it("should handle budget exceeded errors specifically", async () => {
+      vi.mocked(generateProviderVideo).mockRejectedValue(
+        new Error("Daily video budget exceeded. Estimated cost: $15.00")
+      );
+
+      await expect(generateVideo("test description")).rejects.toThrow("Daily video budget limit reached");
+    });
+  });
+
+  describe("generateVideoAsset (production)", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("AI_VIDEO_MODEL", "google/veo-3.1");
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "10");
+      vi.stubEnv("VIDEO_SAVE_SESSION", "true");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("should generate video asset with archival for session mode", async () => {
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideoAsset("test description", "test-channel", "session");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeDefined(); // Should save session videos
+    });
+
+    it("should skip archival for ambient mode when configured", async () => {
+      vi.stubEnv("VIDEO_SAVE_AMBIENT", "false");
+      vi.mocked(generateProviderVideo).mockResolvedValue({
+        videoBuffer: Buffer.from("fake video data"),
+        durationSeconds: 5,
+        mimeType: "video/mp4",
+        filename: "video-test.mp4",
+        cost: 2.5,
+      });
+
+      const result = await generateVideoAsset("test description", "test-channel", "ambient");
+
+      expect(result).toBeDefined();
+      expect(result.video).toBeDefined();
+      expect(result.archiveUrl).toBeUndefined(); // Should not save ambient videos
     });
   });
 

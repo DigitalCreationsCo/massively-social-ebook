@@ -5,37 +5,49 @@ import { InferenceClient } from "@huggingface/inference";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpencode } from "ai-sdk-provider-opencode-sdk";
 import { generateImage, type EmbeddingModel, type ImageModel, type LanguageModel } from "ai";
+import { fal } from "@fal-ai/client";
 
 /** Providers that can be selected through the AI_*_PROVIDER environment variables. */
-export type AiProvider = "google" | "openai" | "opencode" | "huggingface" | "openrouter";
-type AiCapability = "text" | "image" | "embedding";
+export type AiProvider = "google" | "openai" | "opencode" | "huggingface" | "openrouter" | "fal";
+type AiCapability = "text" | "image" | "embedding" | "video";
 
 const DEFAULT_MODELS: Record<AiProvider, Record<AiCapability, string | undefined>> = {
   google: {
     text: "gemini-3.7-flash",
     image: "gemini-2.5-flash-image",
     embedding: "gemini-embedding-001",
+    video: undefined,
   },
   openai: {
     text: "gpt-5.6-luna",
     image: "gpt-image-1.5",
     embedding: "text-embedding-3-small",
+    video: undefined,
   },
   // OpenCode's community AI SDK provider currently exposes language models only.
   opencode: {
     text: "opencode/ling-3.0-flash-fin-free",
     image: undefined,
     embedding: undefined,
+    video: undefined,
   },
   huggingface: {
     text: undefined,
     image: "black-forest-labs/FLUX.2-dev",
     embedding: undefined,
+    video: undefined,
   },
   openrouter: {
     text: "minimax/minimax-m3:free",
     image: "meta/muse-image",
     embedding: undefined,
+    video: "google/veo-3.1",
+  },
+  fal: {
+    text: undefined,
+    image: undefined,
+    embedding: undefined,
+    video: "fal-ai/veo3.1",
   },
 };
 
@@ -58,13 +70,13 @@ function configuredProvider(capability: AiCapability): AiProvider {
   if (configured === "hf") return "huggingface";
   if (
     configured === "google" || configured === "openai" || configured === "opencode" ||
-    configured === "huggingface" || configured === "openrouter"
+    configured === "huggingface" || configured === "openrouter" || configured === "fal"
   ) {
     return configured;
   }
 
   throw new Error(
-    `Unsupported AI provider "${configured}". Use google, openai, opencode, huggingface, or openrouter.`,
+    `Unsupported AI provider "${configured}". Use google, openai, opencode, huggingface, openrouter, or fal.`,
   );
 }
 
@@ -237,6 +249,25 @@ export interface ProviderImageRequest {
   abortSignal?: AbortSignal;
 }
 
+export interface ProviderVideoRequest {
+  text: string;
+  referenceImages?: Array<Buffer | Uint8Array | ArrayBuffer | string>;
+  referenceMimeTypes?: string[];
+  aspectRatio?: "16:9" | "9:16" | "1:1";
+  duration?: number; // in seconds
+  resolution?: "720p" | "1080p";
+  generateAudio?: boolean;
+  abortSignal?: AbortSignal;
+}
+
+export interface ProviderVideoResponse {
+  videoBuffer: Buffer;
+  durationSeconds: number;
+  mimeType: string;
+  filename: string;
+  cost?: number; // Cost in USD for cost tracking
+}
+
 function referenceImageBase64(image: NonNullable<ProviderImageRequest["referenceImages"]>[number]): string {
   if (typeof image === "string") return image.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
   return Buffer.from(image instanceof ArrayBuffer ? new Uint8Array(image) : image).toString("base64");
@@ -356,6 +387,7 @@ export function getAiConfiguration() {
   const textProvider = configuredProvider("text");
   const imageProvider = configuredProvider("image");
   const embeddingProvider = configuredProvider("embedding");
+  const videoProvider = configuredProvider("video");
 
   return {
     text: { provider: textProvider, model: configuredModel("text", textProvider) },
@@ -364,5 +396,308 @@ export function getAiConfiguration() {
       provider: embeddingProvider,
       model: configuredModel("embedding", embeddingProvider),
     },
+    video: { provider: videoProvider, model: configuredModel("video", videoProvider) },
   };
+}
+
+/**
+ * Cost control configuration for video generation
+ */
+interface VideoCostControl {
+  dailyBudgetUsd?: number;
+  spentTodayUsd: number;
+  dailyResetAt: number; // Unix timestamp
+}
+
+const costControlState: VideoCostControl = {
+  dailyBudgetUsd: Number(process.env.VIDEO_DAILY_BUDGET_USD || "10"),
+  spentTodayUsd: 0,
+  dailyResetAt: getDailyResetTimestamp(),
+};
+
+/**
+ * Video saving configuration
+ * Videos are only saved for session mode by default, not for ambient mode
+ */
+export interface VideoSavingConfig {
+  saveSessionVideos: boolean; // Save videos generated in session mode
+  saveAmbientVideos: boolean; // Save videos generated in ambient mode
+}
+
+export function getVideoSavingConfig(): VideoSavingConfig {
+  return {
+    saveSessionVideos: process.env.VIDEO_SAVE_SESSION === "true" || process.env.VIDEO_SAVE_SESSION === undefined,
+    saveAmbientVideos: process.env.VIDEO_SAVE_AMBIENT === "true" || false, // Default false for ambient
+  };
+}
+
+function getDailyResetTimestamp(): number {
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  return tomorrow.getTime();
+}
+
+function resetDailyCostIfNeeded(): void {
+  const now = Date.now();
+  if (now >= costControlState.dailyResetAt) {
+    costControlState.spentTodayUsd = 0;
+    costControlState.dailyResetAt = getDailyResetTimestamp();
+  }
+}
+
+function checkDailyBudget(costUsd: number): boolean {
+  resetDailyCostIfNeeded();
+  if (costControlState.dailyBudgetUsd === undefined) return true; // No limit
+  
+  const remainingBudget = costControlState.dailyBudgetUsd - costControlState.spentTodayUsd;
+  if (remainingBudget < costUsd) {
+    return false;
+  }
+  
+  costControlState.spentTodayUsd += costUsd;
+  return true;
+}
+
+/**
+ * Get estimated cost for video generation based on provider and duration
+ */
+function estimateVideoCost(provider: AiProvider, durationSeconds: number, resolution: string): number {
+  const costPerSecond: Record<AiProvider, Record<string, number>> = {
+    openrouter: {
+      "720p": 0.50, // OpenRouter pricing per second at 720p
+      "1080p": 0.75, // OpenRouter pricing per second at 1080p
+    },
+    fal: {
+      "720p": 0.03, // Fal.ai estimated cost per second at 720p
+      "1080p": 0.05, // Fal.ai estimated cost per second at 1080p
+    },
+    google: { "720p": 0, "1080p": 0 }, // Google Vertex pricing varies
+    openai: { "720p": 0, "1080p": 0 }, // OpenAI pricing varies
+    opencode: { "720p": 0, "1080p": 0 },
+    huggingface: { "720p": 0, "1080p": 0 },
+  };
+  
+  const providerCosts = costPerSecond[provider] || costPerSecond.google;
+  const resolutionCost = providerCosts[resolution] || providerCosts["720p"] || 0.50;
+  
+  return durationSeconds * resolutionCost;
+}
+
+/**
+ * OpenRouter video generation using dedicated video API
+ */
+async function generateOpenRouterVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
+  const { model } = getAiConfiguration().video;
+  const duration = request.duration ?? 5; // Default 5 seconds for cost control
+  const resolution = request.resolution ?? "720p"; // Default 720p for cost control
+  const aspectRatio = request.aspectRatio ?? "16:9";
+  
+  const estimatedCost = estimateVideoCost("openrouter", duration, resolution);
+  if (!checkDailyBudget(estimatedCost)) {
+    throw new Error(`Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+  }
+  
+  const requestBody = {
+    model,
+    prompt: request.text,
+    aspect_ratio: aspectRatio,
+    duration: duration,
+    resolution,
+    generate_audio: request.generateAudio ?? true,
+    ...(request.referenceImages && request.referenceImages.length > 0 ? {
+      input_references: request.referenceImages.slice(0, 16).map((image, i) => ({
+        type: "image_url",
+        image_url: { 
+          url: openRouterReferenceDataUrl(image, request.referenceMimeTypes?.[i])
+        },
+      })),
+    } : {}),
+  };
+  
+  const response = await fetch("https://openrouter.ai/api/v1/videos", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnvironmentVariable("OPENROUTER_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+    ...(request.abortSignal ? { signal: request.abortSignal } : {}),
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text().then((t) => t.slice(0, 200)).catch(() => "");
+    throw new Error(`OpenRouter video generation failed (${response.status}): ${errorText}`);
+  }
+  
+  const json = await response.json() as { 
+    data?: Array<{ 
+      video?: { 
+        url?: string;
+        b64_json?: string;
+      };
+      id?: string;
+      status?: string;
+    }> 
+  };
+  
+  const result = json.data?.[0];
+  if (!result) {
+    throw new Error("OpenRouter video generation returned no result");
+  }
+  
+  // Handle async video generation - return polling URL
+  if (result.status === "processing" || result.status === "pending") {
+    throw new Error(`Video generation started but not complete. Job ID: ${result.id}. Polling not yet implemented.`);
+  }
+  
+  // Handle completed video generation
+  const videoUrl = result.video?.url;
+  if (!videoUrl) {
+    throw new Error("OpenRouter video generation did not return a video URL");
+  }
+  
+  // Download the video
+  const videoResponse = await fetch(videoUrl, {
+    ...(request.abortSignal ? { signal: request.abortSignal } : {}),
+  });
+  
+  if (!videoResponse.ok) {
+    throw new Error(`Failed to download video from OpenRouter (${videoResponse.status})`);
+  }
+  
+  const buffer = Buffer.from(await videoResponse.arrayBuffer());
+  const filename = `video-${result.id}.mp4`;
+  
+  return {
+    videoBuffer: buffer,
+    durationSeconds: duration,
+    mimeType: "video/mp4",
+    filename,
+    cost: estimatedCost,
+  };
+}
+
+/**
+ * Fal.ai video generation using their serverless client
+ */
+async function generateFalVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
+  const { model } = getAiConfiguration().video;
+  const duration = request.duration ?? 5; // Default 5 seconds for cost control
+  const resolution = request.resolution ?? "720p"; // Default 720p for cost control
+  const aspectRatio = request.aspectRatio ?? "16:9";
+  
+  const estimatedCost = estimateVideoCost("fal", duration, resolution);
+  if (!checkDailyBudget(estimatedCost)) {
+    throw new Error(`Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+  }
+  
+  // Map aspect ratio to Fal.ai format
+  const falAspectRatio = aspectRatio === "9:16" ? "9:16" : "16:9";
+  
+  // Map duration to Fal.ai format
+  const falDuration = `${duration}s`;
+  
+  // Map resolution to Fal.ai format
+  const falResolution = resolution === "1080p" ? "1080p" : "720p";
+  
+  let falModelId: string;
+  if (model === "fal-ai/veo3.1") {
+    falModelId = "fal-ai/veo3.1";
+  } else if (model === "fal-ai/kling-video/v3/standard/text-to-video") {
+    falModelId = "fal-ai/kling-video/v3/standard/text-to-video";
+  } else {
+    falModelId = model; // Use as-is if custom model
+  }
+  
+  try {
+    const result = await fal.run(falModelId, {
+      input: {
+        prompt: request.text,
+        aspect_ratio: falAspectRatio,
+        duration: falDuration,
+        resolution: falResolution,
+        generate_audio: request.generateAudio ?? true,
+        ...(request.referenceImages && request.referenceImages.length > 0 ? {
+          image_url: openRouterReferenceDataUrl(request.referenceImages[0]),
+        } : {}),
+      },
+      ...(request.abortSignal ? { httpRequest: { signal: request.abortSignal } } : {}),
+    });
+    
+    if (!result.video) {
+      throw new Error("Fal.ai video generation did not return a video");
+    }
+    
+    // Download the video from Fal.ai's CDN
+    const videoResponse = await fetch(result.video.url, {
+      ...(request.abortSignal ? { signal: request.abortSignal } : {}),
+    });
+    
+    if (!videoResponse.ok) {
+      throw new Error(`Failed to download video from Fal.ai (${videoResponse.status})`);
+    }
+    
+    const buffer = Buffer.from(await videoResponse.arrayBuffer());
+    const filename = `video-${falModelId.replace(/\//g, "-")}-${Date.now()}.mp4`;
+    
+    return {
+      videoBuffer: buffer,
+      durationSeconds: duration,
+      mimeType: "video/mp4",
+      filename,
+      cost: estimatedCost,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("402")) {
+      throw new Error("Fal.ai quota exceeded or payment required. Check your Fal.ai account balance.");
+    }
+    throw error;
+  }
+}
+
+/**
+ * Main video generation function that routes to the appropriate provider
+ */
+export async function generateProviderVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
+  const { provider } = getAiConfiguration().video;
+  
+  resetDailyCostIfNeeded();
+  
+  switch (provider) {
+    case "openrouter":
+      return generateOpenRouterVideo(request);
+    case "fal":
+      return generateFalVideo(request);
+    case "google":
+    case "openai":
+    case "opencode":
+    case "huggingface":
+      throw new Error(`Video generation not yet supported by ${provider} provider. Use openrouter or fal for video generation.`);
+    default:
+      throw new Error(`Unknown video provider: ${provider}`);
+  }
+}
+
+/**
+ * Get current cost control state for monitoring
+ */
+export function getVideoCostControlState(): VideoCostControlState {
+  resetDailyCostIfNeeded();
+  return {
+    dailyBudgetUsd: costControlState.dailyBudgetUsd,
+    spentTodayUsd: costControlState.spentTodayUsd,
+    remainingBudgetUsd: costControlState.dailyBudgetUsd !== undefined 
+      ? Math.max(0, costControlState.dailyBudgetUsd - costControlState.spentTodayUsd)
+      : undefined,
+    dailyResetAt: costControlState.dailyResetAt,
+  };
+}
+
+export interface VideoCostControlState {
+  dailyBudgetUsd?: number;
+  spentTodayUsd: number;
+  remainingBudgetUsd?: number;
+  dailyResetAt: number;
 }

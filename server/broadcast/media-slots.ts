@@ -205,11 +205,21 @@ export async function finishCanonicalSlot(
   
   // Video path: handle video with embedded audio
   if (media.video) {
-    const videoArchiveUrl = media.video.archiveUrl
-      ? Promise.resolve(media.video.archiveUrl)
-      : archiveVideo(media.video.video, channelId, "session");
+    // Use the updated generateVideoAsset which respects video saving configuration
+    const videoAsset = media.video.archiveUrl
+      ? Promise.resolve({ video: media.video.video, archiveUrl: media.video.archiveUrl })
+      : generateVideoAsset(generated.content, channelId, "session", {
+          references: imageRepresentations.length > 0 ? [{
+            type: "image",
+            buffer: Buffer.from(imageRepresentations[0].base64, "base64"),
+            mimeType: imageRepresentations[0].mimeType,
+          }] : undefined,
+          signal,
+        });
     
-    const videoUrl = await videoArchiveUrl;
+    const videoResult = await videoAsset;
+    const videoUrl = videoResult.archiveUrl;
+    
     const blockData = {
       channelId,
       sessionId: session.id,
@@ -217,7 +227,7 @@ export async function finishCanonicalSlot(
       content: generated.content,
       dialogue: generated.dialogue ?? null,
       imageUrl: null,
-      videoUrl: videoUrl,
+      videoUrl: videoUrl ?? null, // May be null if saving is disabled
       optionA: generated.optionA ?? null,
       optionB: generated.optionB ?? null,
       ttsEnabled: false, // Video includes audio
@@ -327,6 +337,16 @@ export async function prepareAmbientTurnFromText(
   
   // Video path: single segment with embedded audio
   if (media.video) {
+    // Attempt archival based on configuration (ambient mode may skip saving)
+    let videoArchiveUrl: string | undefined;
+    try {
+      videoArchiveUrl = await archiveVideo(media.video.video, channelId, "ambient") || undefined;
+    } catch (error) {
+      logger.warn("[MediaSlots] ambient video archival failed, continuing without archive", "video", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    
     const video = await videoToUploadAsset(media.video.video);
     return {
       sequence,
@@ -591,16 +611,14 @@ async function generateVideoWithFallback(
   try {
     if (videoSourceConfig) {
       // Use mock video generation for testing
-      const result = await generateMockVideoAsset(videoSourceConfig, { signal });
+      const result = await generateMockVideoAsset(videoSourceConfig, channelId, imageType, { signal });
       return result;
     }
     
-    // Production video generation (not yet implemented)
-    // const result = await generateVideoAsset(description, { signal });
-    // return result;
-    
-    logger.warn("Production video generation not yet implemented, use videoSourceConfig for testing");
-    return undefined;
+    // Production video generation using ai-provider
+    const videoType = imageType === "block" ? "session" : "ambient";
+    const result = await generateVideoAsset(description, channelId, videoType, { signal });
+    return result;
   } catch (cause) {
     logger.warn(
       `Generated video failed for ${channelId}`,

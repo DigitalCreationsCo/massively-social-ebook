@@ -1,6 +1,7 @@
 import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import { GCPStorageManager } from "../storage-manager";
 import { logger } from "../logger";
+import { generateProviderVideo, type ProviderVideoRequest, getVideoSavingConfig } from "../blocks/ai-provider";
 
 /**
  * Video generation reference types - text, image, or video references
@@ -84,9 +85,72 @@ export async function generateVideo(
     includeAudio,
   });
 
-  // TODO: Integrate with actual video generation provider
-  // For now, throw error to indicate provider integration needed
-  throw new Error("Video generation provider not yet integrated. Use mock video service for testing.");
+  try {
+    // Convert references to provider format
+    const referenceImages: Buffer[] = [];
+    const referenceMimeTypes: string[] = [];
+    
+    for (const ref of references) {
+      if (ref.type === "image") {
+        referenceImages.push(ref.buffer);
+        referenceMimeTypes.push(ref.mimeType);
+      } else if (ref.type === "video") {
+        // For video references, we could extract first frame, but for now skip
+        logger.warn("[VideoGen] video reference not yet supported, skipping", "video");
+      } else if (ref.type === "url") {
+        // Could download and convert, but for now skip
+        logger.warn("[VideoGen] URL reference not yet supported, skipping", "video");
+      }
+      // Text references are used in the description
+    }
+
+    const providerRequest: ProviderVideoRequest = {
+      text: description,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+      referenceMimeTypes: referenceMimeTypes.length > 0 ? referenceMimeTypes : undefined,
+      aspectRatio,
+      duration: targetDurationSeconds,
+      generateAudio: includeAudio,
+      abortSignal: signal,
+    };
+
+    const result = await generateProviderVideo(providerRequest);
+
+    logger.info("[VideoGen] video generation completed", "video", {
+      sizeBytes: result.videoBuffer.length,
+      durationSeconds: result.durationSeconds,
+      mimeType: result.mimeType,
+      cost: result.cost,
+    });
+
+    return {
+      buffer: result.videoBuffer,
+      durationSeconds: result.durationSeconds,
+      extension: mimeTypeToExtension(result.mimeType),
+      mimeType: result.mimeType,
+      filename: result.filename,
+    };
+  } catch (error) {
+    logger.error("[VideoGen] video generation failed", "video", {
+      error: error instanceof Error ? error.message : String(error),
+      description: description.slice(0, 100),
+    });
+    
+    // Provide fallback error handling
+    if (error instanceof Error) {
+      if (error.message.includes("budget exceeded")) {
+        throw new Error(`Video generation cost limit reached: ${error.message}`);
+      }
+      if (error.message.includes("quota exceeded") || error.message.includes("402")) {
+        throw new Error(`Video generation quota exceeded. Please check your provider account balance.`);
+      }
+      if (error.message.includes("Daily video budget exceeded")) {
+        throw new Error(`Daily video budget limit reached. Try again tomorrow or increase VIDEO_DAILY_BUDGET_USD.`);
+      }
+    }
+    
+    throw error;
+  }
 }
 
 /**
@@ -164,10 +228,23 @@ export async function generateMockVideo(
  */
 export async function generateVideoAsset(
   description: string,
+  channelId: string,
+  videoType: "ambient" | "session" = "ambient",
   options: VideoGenerationOptions = {}
 ): Promise<GeneratedVideo> {
   const videoBuffer = await generateVideo(description, options);
-  return { video: videoBuffer };
+  
+  // Attempt archival based on configuration
+  let archiveUrl: string | undefined;
+  try {
+    archiveUrl = await archiveVideo(videoBuffer, channelId, videoType) || undefined;
+  } catch (error) {
+    logger.warn("[VideoGen] video archival failed, continuing without archive", "video", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  
+  return { video: videoBuffer, archiveUrl };
 }
 
 /**
@@ -175,20 +252,48 @@ export async function generateVideoAsset(
  */
 export async function generateMockVideoAsset(
   config: VideoSourceConfig,
+  channelId: string,
+  videoType: "ambient" | "session" = "ambient",
   options: Omit<VideoGenerationOptions, "references"> = {}
 ): Promise<GeneratedVideo> {
   const videoBuffer = await generateMockVideo(config, options);
-  return { video: videoBuffer };
+  
+  // Attempt archival based on configuration
+  let archiveUrl: string | undefined;
+  try {
+    archiveUrl = await archiveVideo(videoBuffer, channelId, videoType) || undefined;
+  } catch (error) {
+    logger.warn("[VideoGen] mock video archival failed, continuing without archive", "video", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  
+  return { video: videoBuffer, archiveUrl };
 }
 
 /**
  * Archive video to storage (GCS or local)
+ * Respects video saving configuration - may skip archiving based on mode and settings
  */
 export async function archiveVideo(
   video: VideoBuffer,
   channelId: string,
   videoType: "ambient" | "session" = "ambient"
-): Promise<string> {
+): Promise<string | null> {
+  const config = getVideoSavingConfig();
+  
+  // Check if video should be saved based on mode and configuration
+  const shouldSave = videoType === "session" ? config.saveSessionVideos : config.saveAmbientVideos;
+  
+  if (!shouldSave) {
+    logger.info("[VideoGen] skipping video archival based on configuration", "video", {
+      videoType,
+      saveSessionVideos: config.saveSessionVideos,
+      saveAmbientVideos: config.saveAmbientVideos,
+    });
+    return null;
+  }
+
   const bucket = process.env.GOOGLE_CLOUD_BUCKET;
   
   if (bucket) {
@@ -196,7 +301,15 @@ export async function archiveVideo(
     const path = buildVideoPath(channelId, videoType, video.filename);
     const base64Data = video.buffer.toString("base64");
     const gsUri = await gcs.uploadBase64Image(base64Data, path, video.mimeType);
-    return gcs.getPublicUrl(gsUri);
+    const publicUrl = gcs.getPublicUrl(gsUri);
+    
+    logger.info("[VideoGen] video archived to GCS", "video", {
+      path,
+      url: publicUrl,
+      sizeBytes: video.buffer.length,
+    });
+    
+    return publicUrl;
   }
 
   // Fallback to local storage
@@ -214,7 +327,15 @@ export async function archiveVideo(
   const localPath = path.join(videoDir, video.filename);
   await fs.writeFile(localPath, video.buffer);
   
-  return `${publicBaseUrl}/video/${encodeURIComponent(video.filename)}`;
+  const localUrl = `${publicBaseUrl}/video/${encodeURIComponent(video.filename)}`;
+  
+  logger.info("[VideoGen] video archived to local storage", "video", {
+    path: localPath,
+    url: localUrl,
+    sizeBytes: video.buffer.length,
+  });
+  
+  return localUrl;
 }
 
 /**

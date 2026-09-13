@@ -1,27 +1,44 @@
 # Video Streaming Implementation
 
-This document describes the video streaming capability added to the massively-social-ebook project for both ambient mode and session mode broadcast operations.
+This document describes the production-ready video streaming capability added to the massively-social-ebook project for both ambient mode and session mode broadcast operations.
 
 ## Overview
 
 The video streaming feature enables generation and playback of video content with embedded audio as an alternative to the existing image + TTS (text-to-speech) pipeline. Videos are submitted to the queue broadcast system and streamed in the app client, providing a more immersive experience for story content.
 
+**Production-Ready Features:**
+- ✅ OpenRouter and Fal.ai video generation provider integration
+- ✅ Configurable daily cost controls for video generation
+- ✅ Video saving configuration (session vs ambient mode)
+- ✅ Error handling and fallbacks for video generation
+- ✅ Cost-effective default configuration (short duration, 720p resolution)
+- ✅ Support for text, image, and video references
+
 ## Architecture
 
 ### Components
 
-1. **Video Service** (`server/media/video-service.ts`)
-   - Core video generation interface
+1. **AI Provider** (`server/blocks/ai-provider.ts`)
+   - Extended with video capability support
+   - OpenRouter video generation integration (google/veo-3.1)
+   - Fal.ai video generation integration (fal-ai/veo3.1)
+   - Daily cost control state management
+   - Video saving configuration
+
+2. **Video Service** (`server/media/video-service.ts`)
+   - Core video generation interface with production providers
    - Mock video generation for testing (static files and URLs)
-   - Video archival and queue upload asset conversion
+   - Video archival with configuration-based saving
+   - Queue upload asset conversion
    - Video buffer validation
 
-2. **Media Slots** (`server/broadcast/media-slots.ts`)
+3. **Media Slots** (`server/broadcast/media-slots.ts`)
    - Extended to support video assets in `PreparedAmbientTurn` and `PreparedBroadcastSlot`
    - Video generation integrated into `generateTurnMedia` pipeline
    - Video-aware slot creation for queue broadcast
+   - Configuration-based video archival
 
-3. **Coordinator** (`server/broadcast/coordinator.ts`)
+4. **Coordinator** (`server/broadcast/coordinator.ts`)
    - Environment-based video generation configuration
    - Video generation for both ambient and session modes
    - Queue broadcast integration
@@ -29,7 +46,11 @@ The video streaming feature enables generation and playback of video content wit
 ### Data Flow
 
 ```
-Text/Reference → Video Generation → Video Buffer → Queue Upload Asset → Streamer Queue → Client Playback
+Text/Reference → AI Provider (OpenRouter/Fal) → Video Buffer → Queue Upload Asset → Streamer Queue → Client Playback
+              ↓
+         Cost Control Check
+              ↓
+         Archival (if configured)
 ```
 
 ## Configuration
@@ -42,7 +63,22 @@ Enable video streaming by setting the following environment variables:
 # Enable video generation (default: false)
 BROADCAST_USE_VIDEO=true
 
-# Video source for mock generation
+# Video provider selection (default: openrouter)
+AI_VIDEO_PROVIDER=openrouter  # or "fal"
+AI_VIDEO_MODEL=google/veo-3.1  # or "fal-ai/veo3.1"
+
+# Provider API keys
+OPENROUTER_API_KEY=your-openrouter-api-key
+FAL_KEY=your-fal-api-key
+
+# Cost control configuration
+VIDEO_DAILY_BUDGET_USD=10  # Daily budget limit in USD (default: 10)
+
+# Video saving configuration
+VIDEO_SAVE_SESSION=true   # Save videos generated in session mode (default: true)
+VIDEO_SAVE_AMBIENT=false  # Save videos generated in ambient mode (default: false)
+
+# Video source for mock generation (testing only)
 BROADCAST_VIDEO_SOURCE=https://test.spotme.com/sample-video.mp4
 BROADCAST_VIDEO_SOURCE_TYPE=url  # or "static" for local files
 BROADCAST_VIDEO_MIME_TYPE=video/mp4
@@ -139,17 +175,16 @@ const result = await finishCanonicalSlot(
 
 ### Production Video Generation
 
-The production video generation interface is ready for integration with actual video generation providers:
+The production video generation uses OpenRouter or Fal.ai providers:
 
 ```typescript
 import { generateVideo, type VideoGenerationOptions } from './media/video-service';
 
 const options: VideoGenerationOptions = {
   references: [
-    { type: 'text', content: 'A dramatic scene...' },
     { type: 'image', buffer: imageBuffer, mimeType: 'image/jpeg' }
   ],
-  targetDurationSeconds: 15,
+  targetDurationSeconds: 5,  // Short duration for cost control
   aspectRatio: '16:9',
   includeAudio: true,
   signal: abortSignal
@@ -158,7 +193,23 @@ const options: VideoGenerationOptions = {
 const videoBuffer = await generateVideo(description, options);
 ```
 
-**Note:** Production video generation currently throws an error indicating provider integration is needed. Use mock video generation for testing until a video generation provider is integrated.
+**Provider Integration:**
+- **OpenRouter**: Uses `google/veo-3.1` model by default
+- **Fal.ai**: Uses `fal-ai/veo3.1` model by default
+- Both providers support text-to-video and image-to-video generation
+- Video generation includes embedded audio (no separate TTS needed)
+
+**Cost Control:**
+- Daily budget limit enforced via `VIDEO_DAILY_BUDGET_USD`
+- Estimated costs: OpenRouter ~$0.50/second (720p), Fal.ai ~$0.03/second (720p)
+- Automatic budget tracking and reset at midnight
+- Video generation rejected if budget exceeded
+
+**Video Saving:**
+- Session videos saved by default (`VIDEO_SAVE_SESSION=true`)
+- Ambient videos not saved by default (`VIDEO_SAVE_AMBIENT=false`)
+- Configurable per environment
+- Archives to GCS or local storage based on infrastructure
 
 ## Queue Broadcast Integration
 
@@ -256,10 +307,10 @@ const archiveUrl = await archiveVideo(videoBuffer, channelId, "ambient");
 
 ## Future Enhancements
 
-1. **Production Video Provider Integration**
-   - Integrate with actual video generation APIs (e.g., Runway, Pika, etc.)
-   - Support for video generation from text/image references
-   - Configurable video quality and duration
+1. **Additional Video Providers**
+   - Integration with other video generation APIs (Runway, Pika, etc.)
+   - Support for more advanced video models
+   - Provider-specific feature support
 
 2. **Video Format Support**
    - Additional video formats (WebM, MOV, etc.)
@@ -270,6 +321,13 @@ const archiveUrl = await archiveVideo(videoBuffer, channelId, "ambient");
    - Video editing and post-processing
    - Multi-scene video generation
    - Video transitions and effects
+   - Video reference extraction from existing videos
+
+4. **Enhanced Cost Controls**
+   - Per-user cost limits
+   - Cost analytics and reporting
+   - Predictive cost estimation
+   - Budget alerts and notifications
 
 ## Troubleshooting
 
@@ -277,9 +335,31 @@ const archiveUrl = await archiveVideo(videoBuffer, channelId, "ambient");
 
 If video generation fails:
 1. Check `BROADCAST_USE_VIDEO` environment variable
-2. Verify video source URL or file path is accessible
-3. Check video file format and MIME type
-4. Review logs for specific error messages
+2. Verify `AI_VIDEO_PROVIDER` and `AI_VIDEO_MODEL` are set correctly
+3. Check provider API keys (`OPENROUTER_API_KEY` or `FAL_KEY`)
+4. Verify video source URL or file path is accessible (for mock generation)
+5. Check video file format and MIME type
+6. Review logs for specific error messages
+
+### Cost Control Issues
+
+If video generation is rejected due to cost limits:
+1. Check `VIDEO_DAILY_BUDGET_USD` setting
+2. Review current cost state using `getVideoCostControlState()`
+3. Consider increasing budget or reducing video duration/resolution
+4. Check provider pricing and estimated costs
+
+### Provider-Specific Issues
+
+**OpenRouter:**
+- Verify API key has video generation permissions
+- Check OpenRouter account balance and quota
+- Review OpenRouter status page for service issues
+
+**Fal.ai:**
+- Verify `FAL_KEY` is valid and has sufficient credits
+- Check Fal.ai account balance and quota
+- Review Fal.ai status page for service issues
 
 ### Queue Broadcast Issues
 
@@ -288,6 +368,7 @@ If video assets fail to reach the queue:
 2. Check SHA256 hash generation
 3. Ensure Blob creation succeeds
 4. Review Streamer queue capacity
+5. Check video file size limits
 
 ### Database Issues
 
@@ -295,6 +376,15 @@ If video URL persistence fails:
 1. Ensure database migration ran successfully
 2. Check `video_url` column exists in blocks table
 3. Verify database connection and permissions
+4. Check video saving configuration (`VIDEO_SAVE_SESSION`, `VIDEO_SAVE_AMBIENT`)
+
+### Video Saving Issues
+
+If videos are not being archived:
+1. Check video saving configuration
+2. Verify GCS credentials and bucket access
+3. Check `PUBLIC_BASE_URL` for local storage fallback
+4. Review storage manager logs
 
 ## Related Documentation
 

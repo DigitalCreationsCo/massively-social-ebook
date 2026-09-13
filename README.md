@@ -163,6 +163,50 @@ isolation without a shared filesystem.
 `BROADCAST_UPLOAD_TIMEOUT_MS` high enough for the largest permitted direct media
 on the network path; it defaults to 120 seconds.
 
+## Video streaming configuration
+
+The application supports video generation with embedded audio as an alternative to image + TTS. Video streaming is production-ready with OpenRouter and Fal.ai provider integration.
+
+### Enable video generation
+
+```bash
+# Enable video generation (default: false)
+BROADCAST_USE_VIDEO=true
+
+# Video provider selection (default: openrouter)
+AI_VIDEO_PROVIDER=openrouter  # or "fal"
+AI_VIDEO_MODEL=google/veo-3.1  # or "fal-ai/veo3.1"
+
+# Provider API keys
+OPENROUTER_API_KEY=your-openrouter-api-key
+FAL_KEY=your-fal-api-key
+
+# Cost control configuration
+VIDEO_DAILY_BUDGET_USD=10  # Daily budget limit in USD (default: 10)
+
+# Video saving configuration
+VIDEO_SAVE_SESSION=true   # Save videos generated in session mode (default: true)
+VIDEO_SAVE_AMBIENT=false  # Save videos generated in ambient mode (default: false)
+```
+
+### Video generation features
+
+- **Cost-effective defaults**: Short duration (4-6s) at 720p for minimal cost
+- **Daily budget limits**: Configurable daily spending limit with automatic reset
+- **Flexible saving**: Videos saved for session mode by default, ambient mode configurable
+- **Provider support**: OpenRouter (google/veo-3.1) and Fal.ai (fal-ai/veo3.1)
+- **Error handling**: Graceful fallbacks for quota exceeded, budget limits, and provider errors
+
+### Cost control
+
+Video generation is cost-controlled by default:
+- OpenRouter: ~$0.50/second at 720p, ~$0.75/second at 1080p
+- Fal.ai: ~$0.03/second at 720p, ~$0.05/second at 1080p
+- Daily budget limit enforced via `VIDEO_DAILY_BUDGET_USD`
+- Automatic budget tracking and reset at midnight
+
+For detailed video streaming documentation, see [docs/video-streaming.md](./docs/video-streaming.md).
+
 The v1 deployment is intentionally single-instance: fan-out and provider
 connector leadership are process-local. Horizontal scaling requires an external
 fan-out adapter and one elected provider-connector leader.

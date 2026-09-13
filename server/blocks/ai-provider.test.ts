@@ -35,8 +35,14 @@ const {
 vi.mock("@ai-sdk/google", () => ({ createGoogleGenerativeAI: mockCreateGoogle }));
 vi.mock("@ai-sdk/openai", () => ({ createOpenAI: mockCreateOpenAI }));
 vi.mock("ai-sdk-provider-opencode-sdk", () => ({ createOpencode: mockCreateOpenCode }));
+vi.mock("@fal-ai/client", () => ({
+  fal: {
+    run: vi.fn(),
+    config: vi.fn(),
+  },
+}));
 
-import { getEmbeddingModel, getImageModel, getLanguageModel, getAiConfiguration, generateProviderImage } from "./ai-provider";
+import { getEmbeddingModel, getImageModel, getLanguageModel, getAiConfiguration, generateProviderImage, generateProviderVideo, getVideoCostControlState, getVideoSavingConfig } from "./ai-provider";
 
 describe("AI SDK provider selection", () => {
   beforeEach(() => {
@@ -45,14 +51,22 @@ describe("AI SDK provider selection", () => {
     vi.stubEnv("AI_TEXT_PROVIDER", "");
     vi.stubEnv("AI_IMAGE_PROVIDER", "");
     vi.stubEnv("AI_EMBEDDING_PROVIDER", "");
+    vi.stubEnv("AI_VIDEO_PROVIDER", "");
     vi.stubEnv("AI_MODEL", "");
     vi.stubEnv("AI_TEXT_MODEL", "");
     vi.stubEnv("AI_IMAGE_MODEL", "");
     vi.stubEnv("AI_EMBEDDING_MODEL", "");
+    vi.stubEnv("AI_VIDEO_MODEL", "");
     vi.stubEnv("GEMINI_API_KEY", "gemini-key");
     vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "");
+    vi.stubEnv("GOOGLE_CLOUD_PROJECT_ID", "test-project");
     vi.stubEnv("OPENAI_API_KEY", "openai-key");
     vi.stubEnv("OPENCODE_BASE_URL", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    vi.stubEnv("FAL_KEY", "");
+    vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "");
+    vi.stubEnv("VIDEO_SAVE_SESSION", "");
+    vi.stubEnv("VIDEO_SAVE_AMBIENT", "");
   });
 
   afterEach(() => vi.unstubAllEnvs());
@@ -99,6 +113,7 @@ describe("AI SDK provider selection", () => {
 
   it("defaults openrouter image model to meta/muse-image", () => {
     vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
+    vi.stubEnv("AI_VIDEO_PROVIDER", ""); // Clear video provider to avoid conflicts
 
     expect(getAiConfiguration().image).toEqual({ provider: "openrouter", model: "meta/muse-image" });
   });
@@ -115,6 +130,7 @@ describe("AI SDK provider selection", () => {
       vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
       vi.stubEnv("AI_IMAGE_MODEL", "meta/muse-image");
       vi.stubEnv("OPENROUTER_API_KEY", "or-key");
+      vi.stubEnv("AI_VIDEO_PROVIDER", ""); // Clear video provider to avoid conflicts
     });
 
     afterEach(() => {
@@ -160,6 +176,76 @@ describe("AI SDK provider selection", () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429 })));
 
       await expect(generateProviderImage({ text: "x" })).rejects.toThrow("429");
+    });
+  });
+
+  describe("video generation", () => {
+    beforeEach(() => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("AI_VIDEO_MODEL", "google/veo-3.1");
+      vi.stubEnv("OPENROUTER_API_KEY", "or-key");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "10");
+      vi.stubEnv("VIDEO_SAVE_SESSION", "true");
+      vi.stubEnv("VIDEO_SAVE_AMBIENT", "false");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("configures video provider with OpenRouter by default", () => {
+      const config = getAiConfiguration();
+      expect(config.video).toEqual({ provider: "openrouter", model: "google/veo-3.1" });
+    });
+
+    it("configures video provider with Fal.ai when selected", () => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "fal");
+      vi.stubEnv("AI_VIDEO_MODEL", "fal-ai/veo3.1");
+      vi.stubEnv("FAL_KEY", "fal-key");
+
+      const config = getAiConfiguration();
+      expect(config.video).toEqual({ provider: "fal", model: "fal-ai/veo3.1" });
+    });
+
+    it("rejects unsupported providers for video generation", async () => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "google");
+
+      await expect(generateProviderVideo({ text: "test" })).rejects.toThrow("Video generation not yet supported by google provider");
+    });
+
+    it("saves session videos by default but not ambient videos", () => {
+      const config = getVideoSavingConfig();
+      expect(config.saveSessionVideos).toBe(true);
+      expect(config.saveAmbientVideos).toBe(false);
+    });
+
+    it("respects custom video saving configuration", () => {
+      vi.stubEnv("VIDEO_SAVE_SESSION", "false");
+      vi.stubEnv("VIDEO_SAVE_AMBIENT", "true");
+
+      const config = getVideoSavingConfig();
+      expect(config.saveSessionVideos).toBe(false);
+      expect(config.saveAmbientVideos).toBe(true);
+    });
+
+    it("tracks video cost control state", () => {
+      // Reset cost state for clean test
+      const { costControlState } = require("./ai-provider");
+      costControlState.spentTodayUsd = 0;
+      
+      const state = getVideoCostControlState();
+      expect(state.dailyBudgetUsd).toBe(10);
+      expect(state.spentTodayUsd).toBe(0);
+      expect(state.remainingBudgetUsd).toBe(10);
+      expect(state.dailyResetAt).toBeGreaterThan(Date.now());
+    });
+
+    it("cost estimation works for different providers and resolutions", () => {
+      vi.stubEnv("AI_VIDEO_PROVIDER", "openrouter");
+      vi.stubEnv("VIDEO_DAILY_BUDGET_USD", "1.0");
+
+      const state = getVideoCostControlState();
+      expect(state.dailyBudgetUsd).toBe(1.0);
     });
   });
 });
