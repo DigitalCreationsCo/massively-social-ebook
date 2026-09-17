@@ -6,6 +6,15 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpencode } from "ai-sdk-provider-opencode-sdk";
 import { generateImage, type EmbeddingModel, type ImageModel, type LanguageModel } from "ai";
 import { fal } from "@fal-ai/client";
+import { logger } from "../logger";
+import {
+  estimateVideoCost as estimateVideoCostFromConfig,
+  getVideoConfig,
+  normalizeAspectRatio,
+  snapDurationForProvider,
+  snapFalDurationString,
+  type VideoProviderName,
+} from "../media/video-config";
 
 /** Providers that can be selected through the AI_*_PROVIDER environment variables. */
 export type AiProvider = "google" | "openai" | "opencode" | "huggingface" | "openrouter" | "fal";
@@ -387,7 +396,17 @@ export function getAiConfiguration() {
   const textProvider = configuredProvider("text");
   const imageProvider = configuredProvider("image");
   const embeddingProvider = configuredProvider("embedding");
-  const videoProvider = configuredProvider("video");
+  // Video is optional: google/openai/etc. have no video model, and callers
+  // that only need text/image must not throw because video is unconfigured.
+  let videoProvider: AiProvider = "openrouter";
+  let videoModel: string | undefined;
+  try {
+    videoProvider = configuredProvider("video");
+    videoModel = configuredModel("video", videoProvider);
+  } catch {
+    videoProvider = (process.env.AI_VIDEO_PROVIDER?.trim().toLowerCase() === "fal" ? "fal" : "openrouter") as AiProvider;
+    videoModel = videoProvider === "fal" ? "fal-ai/veo3.1" : "google/veo-3.1";
+  }
 
   return {
     text: { provider: textProvider, model: configuredModel("text", textProvider) },
@@ -396,24 +415,28 @@ export function getAiConfiguration() {
       provider: embeddingProvider,
       model: configuredModel("embedding", embeddingProvider),
     },
-    video: { provider: videoProvider, model: configuredModel("video", videoProvider) },
+    video: { provider: videoProvider, model: videoModel as string },
   };
 }
 
 /**
- * Cost control configuration for video generation
+ * Cost control state for video generation (spend is in-memory per process).
  */
 interface VideoCostControl {
-  dailyBudgetUsd?: number;
   spentTodayUsd: number;
   dailyResetAt: number; // Unix timestamp
 }
 
 const costControlState: VideoCostControl = {
-  dailyBudgetUsd: Number(process.env.VIDEO_DAILY_BUDGET_USD || "10"),
   spentTodayUsd: 0,
   dailyResetAt: getDailyResetTimestamp(),
 };
+
+/** Test-only reset (budgets read live from env otherwise). */
+export function __resetVideoCostForTests(): void {
+  costControlState.spentTodayUsd = 0;
+  costControlState.dailyResetAt = getDailyResetTimestamp();
+}
 
 /**
  * Video saving configuration
@@ -425,9 +448,10 @@ export interface VideoSavingConfig {
 }
 
 export function getVideoSavingConfig(): VideoSavingConfig {
+  const cfg = getVideoConfig();
   return {
-    saveSessionVideos: process.env.VIDEO_SAVE_SESSION === "true" || process.env.VIDEO_SAVE_SESSION === undefined,
-    saveAmbientVideos: process.env.VIDEO_SAVE_AMBIENT === "true" || false, // Default false for ambient
+    saveSessionVideos: cfg.saveSessionVideos,
+    saveAmbientVideos: cfg.saveAmbientVideos,
   };
 }
 
@@ -449,211 +473,432 @@ function resetDailyCostIfNeeded(): void {
 
 function checkDailyBudget(costUsd: number): boolean {
   resetDailyCostIfNeeded();
-  if (costControlState.dailyBudgetUsd === undefined) return true; // No limit
-  
-  const remainingBudget = costControlState.dailyBudgetUsd - costControlState.spentTodayUsd;
-  if (remainingBudget < costUsd) {
-    return false;
-  }
-  
+  const budget = getVideoConfig().dailyBudgetUsd;
+  if (budget === undefined) return true; // No limit
+  if (budget - costControlState.spentTodayUsd < costUsd) return false;
   costControlState.spentTodayUsd += costUsd;
   return true;
 }
 
 /**
- * Get estimated cost for video generation based on provider and duration
+ * Estimated cost; prefer provider-reported usage.cost when available.
+ * Env overrides (VIDEO_COST_<PROVIDER>_<RES>) let ops align with real billing.
  */
-function estimateVideoCost(provider: AiProvider, durationSeconds: number, resolution: string): number {
-  const costPerSecond: Record<AiProvider, Record<string, number>> = {
-    openrouter: {
-      "720p": 0.50, // OpenRouter pricing per second at 720p
-      "1080p": 0.75, // OpenRouter pricing per second at 1080p
-    },
-    fal: {
-      "720p": 0.03, // Fal.ai estimated cost per second at 720p
-      "1080p": 0.05, // Fal.ai estimated cost per second at 1080p
-    },
-    google: { "720p": 0, "1080p": 0 }, // Google Vertex pricing varies
-    openai: { "720p": 0, "1080p": 0 }, // OpenAI pricing varies
-    opencode: { "720p": 0, "1080p": 0 },
-    huggingface: { "720p": 0, "1080p": 0 },
-  };
-  
-  const providerCosts = costPerSecond[provider] || costPerSecond.google;
-  const resolutionCost = providerCosts[resolution] || providerCosts["720p"] || 0.50;
-  
-  return durationSeconds * resolutionCost;
+function estimateVideoCost(provider: VideoProviderName, durationSeconds: number, resolution: string): number {
+  return estimateVideoCostFromConfig(provider, durationSeconds, resolution);
 }
 
-/**
- * OpenRouter video generation using dedicated video API
- */
+// ── Typed errors ─────────────────────────────────────────────────────────────
+
+export type VideoErrorCode =
+  | "budget_exceeded"
+  | "quota_exceeded"
+  | "rate_limited"
+  | "timeout"
+  | "aborted"
+  | "invalid_request"
+  | "unauthorized"
+  | "provider_unavailable"
+  | "generation_failed";
+
+export class VideoProviderError extends Error {
+  code: VideoErrorCode;
+  status?: number;
+  retryable: boolean;
+  constructor(code: VideoErrorCode, message: string, opts: { status?: number; retryable?: boolean } = {}) {
+    super(message);
+    this.name = "VideoProviderError";
+    this.code = code;
+    this.status = opts.status;
+    this.retryable = opts.retryable ?? false;
+  }
+}
+
+function throwForStatus(provider: string, status: number, snippet: string): never {
+  const msg = `${provider} video request failed (${status}): ${snippet}`;
+  if (status === 400) throw new VideoProviderError("invalid_request", msg, { status });
+  if (status === 401 || status === 403) throw new VideoProviderError("unauthorized", msg, { status });
+  if (status === 402) throw new VideoProviderError("quota_exceeded", `${provider} quota exceeded or payment required. Check account balance.`, { status });
+  if (status === 429) throw new VideoProviderError("rate_limited", msg, { status, retryable: true });
+  if (status >= 500) throw new VideoProviderError("provider_unavailable", msg, { status, retryable: true });
+  throw new VideoProviderError("generation_failed", msg, { status });
+}
+
+// ── Fetch with timeout + retry + backoff ─────────────────────────────────────
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason ?? new VideoProviderError("aborted", "aborted", {}));
+    const t = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(t); cleanup(); reject(signal!.reason ?? new VideoProviderError("aborted", "aborted", {})); };
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    (t as unknown as { unref?: () => void }).unref?.();
+  });
+}
+
+function combineSignals(outer?: AbortSignal, timeoutMs?: number): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort(outer?.reason);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (outer) {
+    if (outer.aborted) controller.abort(outer.reason);
+    else outer.addEventListener("abort", onOuterAbort, { once: true });
+  }
+  if (timeoutMs !== undefined) {
+    timer = setTimeout(() => controller.abort(new VideoProviderError("timeout", `video request timed out after ${timeoutMs}ms`, { retryable: true })), timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+  }
+  return { signal: controller.signal, cancel: () => { clearTimeout(timer); outer?.removeEventListener("abort", onOuterAbort); } };
+}
+
+function retryDelay(attempt: number, baseMs: number, retryAfterMs?: number): number {
+  if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs)) {
+    return Math.min(retryAfterMs, 60_000);
+  }
+  return Math.min(30_000, baseMs * 2 ** attempt + Math.random() * 250);
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit & { timeoutMs?: number; maxRetries?: number; retryBaseMs?: number },
+): Promise<Response> {
+  const { timeoutMs = 60_000, maxRetries = 2, retryBaseMs = 1_000, ...fetchInit } = init;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const { signal, cancel } = combineSignals(fetchInit.signal as AbortSignal | undefined, timeoutMs);
+    try {
+      const res = await fetch(url, { ...fetchInit, signal });
+      cancel();
+      if (res.ok) return res;
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const retryAfter = res.headers?.get?.("retry-after");
+        const retryAfterMs = retryAfter ? Number(retryAfter) * 1_000 : undefined;
+        await res.arrayBuffer().catch(() => undefined);
+        await sleep(retryDelay(attempt, retryBaseMs, retryAfterMs), fetchInit.signal as AbortSignal | undefined);
+        continue;
+      }
+      return res; // non-retryable status: caller maps to typed error
+    } catch (cause) {
+      cancel();
+      lastError = cause;
+      if ((cause as Error)?.name === "AbortError" || (cause as VideoProviderError)?.code === "aborted") throw cause;
+      const isTimeout = cause instanceof VideoProviderError && cause.code === "timeout";
+      if (attempt < maxRetries && (isTimeout || cause instanceof TypeError)) {
+        await sleep(retryDelay(attempt, retryBaseMs), fetchInit.signal as AbortSignal | undefined).catch(() => { throw cause; });
+        continue;
+      }
+      throw cause;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+// ── Metrics (in-memory, surfaced via logs + getter) ──────────────────────────
+
+export interface VideoMetrics {
+  attempts: number;
+  successes: number;
+  failuresByCode: Record<string, number>;
+  totalCostUsd: number;
+  totalLatencyMs: number;
+  lastLatencyMs?: number;
+  lastErrorCode?: string;
+  byProvider: Record<string, { attempts: number; successes: number; totalLatencyMs: number }>;
+}
+
+const videoMetrics: VideoMetrics = {
+  attempts: 0,
+  successes: 0,
+  failuresByCode: {},
+  totalCostUsd: 0,
+  totalLatencyMs: 0,
+  byProvider: {},
+};
+
+function recordVideoMetric(provider: string, latencyMs: number, ok: boolean, cost?: number, code?: string): void {
+  videoMetrics.attempts += 1;
+  videoMetrics.totalLatencyMs += latencyMs;
+  videoMetrics.lastLatencyMs = latencyMs;
+  const p = (videoMetrics.byProvider[provider] ??= { attempts: 0, successes: 0, totalLatencyMs: 0 });
+  p.attempts += 1;
+  p.totalLatencyMs += latencyMs;
+  if (ok) {
+    videoMetrics.successes += 1;
+    p.successes += 1;
+    if (cost) videoMetrics.totalCostUsd += cost;
+  } else {
+    const key = code ?? "unknown";
+    videoMetrics.failuresByCode[key] = (videoMetrics.failuresByCode[key] ?? 0) + 1;
+    videoMetrics.lastErrorCode = key;
+  }
+}
+
+export function getVideoMetrics(): VideoMetrics {
+  return JSON.parse(JSON.stringify(videoMetrics)) as VideoMetrics;
+}
+
+/** Test-only reset. */
+export function __resetVideoMetricsForTests(): void {
+  videoMetrics.attempts = 0;
+  videoMetrics.successes = 0;
+  videoMetrics.failuresByCode = {};
+  videoMetrics.totalCostUsd = 0;
+  videoMetrics.totalLatencyMs = 0;
+  delete videoMetrics.lastLatencyMs;
+  delete videoMetrics.lastErrorCode;
+  videoMetrics.byProvider = {};
+}
+
+// ── OpenRouter (async: submit → poll → download) ─────────────────────────────
+
+const OPENROUTER_VIDEOS_URL = "https://openrouter.ai/api/v1/videos";
+
+interface OpenRouterJob {
+  id: string;
+  polling_url: string;
+  status: "pending" | "in_progress" | "completed" | "failed" | "cancelled" | "expired" | string;
+  generation_id?: string;
+  unsigned_urls?: string[];
+  usage?: { cost?: number };
+  error?: string;
+}
+
+function resolvePollingUrl(pollingUrl: string): string {
+  if (/^https?:\/\//i.test(pollingUrl)) return pollingUrl;
+  return `https://openrouter.ai${pollingUrl.startsWith("/") ? "" : "/"}${pollingUrl}`;
+}
+
+async function pollOpenRouterJob(
+  job: OpenRouterJob,
+  apiKey: string,
+  opts: { signal?: AbortSignal; intervalMs: number; timeoutMs: number },
+): Promise<OpenRouterJob> {
+  const url = resolvePollingUrl(job.polling_url);
+  const started = Date.now();
+  let current = job;
+  for (;;) {
+    if (opts.signal?.aborted) throw opts.signal.reason ?? new VideoProviderError("aborted", "video poll aborted");
+    if (current.status === "completed" || current.status === "failed" || current.status === "cancelled" || current.status === "expired") {
+      return current;
+    }
+    if (Date.now() - started > opts.timeoutMs) {
+      throw new VideoProviderError("timeout", `OpenRouter video job ${current.id} did not complete within ${opts.timeoutMs}ms`, { retryable: false });
+    }
+    await sleep(opts.intervalMs, opts.signal);
+    const res = await fetchWithRetry(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: opts.signal,
+      timeoutMs: 30_000,
+      maxRetries: 2,
+      retryBaseMs: 1_000,
+    });
+    if (!res.ok) {
+      const snippet = await res.text().then((t) => t.slice(0, 300)).catch(() => "");
+      // Poll reads are safe to keep retrying on transient errors; surface the rest.
+      if (res.status === 429 || res.status >= 500) {
+        logger.warn("[VideoGen] OpenRouter poll transient failure, continuing", "video", { status: res.status, jobId: current.id });
+        continue;
+      }
+      throwForStatus("OpenRouter", res.status, snippet);
+    }
+    current = (await res.json()) as OpenRouterJob;
+  }
+}
+
+async function downloadBuffer(url: string, signal: AbortSignal | undefined, timeoutMs: number, maxRetries: number, retryBaseMs: number): Promise<Buffer> {
+  const res = await fetchWithRetry(url, { signal, timeoutMs, maxRetries, retryBaseMs });
+  if (!res.ok) {
+    throw new VideoProviderError("generation_failed", `video download failed (${res.status})`, { status: res.status, retryable: res.status >= 500 });
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 async function generateOpenRouterVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
+  const started = Date.now();
+  const cfg = getVideoConfig();
   const { model } = getAiConfiguration().video;
-  const duration = request.duration ?? 5; // Default 5 seconds for cost control
-  const resolution = request.resolution ?? "720p"; // Default 720p for cost control
-  const aspectRatio = request.aspectRatio ?? "16:9";
-  
+  const duration = snapDurationForProvider(request.duration ?? cfg.durationSeconds, "openrouter");
+  const resolution = request.resolution ?? cfg.resolution;
+  const aspectRatio = normalizeAspectRatio(request.aspectRatio ?? cfg.aspectRatio, "16:9");
+
   const estimatedCost = estimateVideoCost("openrouter", duration, resolution);
   if (!checkDailyBudget(estimatedCost)) {
-    throw new Error(`Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+    const err = new VideoProviderError("budget_exceeded", `Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+    recordVideoMetric("openrouter", Date.now() - started, false, undefined, err.code);
+    throw err;
   }
-  
-  const requestBody = {
-    model,
-    prompt: request.text,
-    aspect_ratio: aspectRatio,
-    duration: duration,
-    resolution,
-    generate_audio: request.generateAudio ?? true,
-    ...(request.referenceImages && request.referenceImages.length > 0 ? {
-      input_references: request.referenceImages.slice(0, 16).map((image, i) => ({
-        type: "image_url",
-        image_url: { 
-          url: openRouterReferenceDataUrl(image, request.referenceMimeTypes?.[i])
-        },
-      })),
-    } : {}),
-  };
-  
-  const response = await fetch("https://openrouter.ai/api/v1/videos", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${requireEnvironmentVariable("OPENROUTER_API_KEY")}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
-    ...(request.abortSignal ? { signal: request.abortSignal } : {}),
-  });
-  
-  if (!response.ok) {
-    const errorText = await response.text().then((t) => t.slice(0, 200)).catch(() => "");
-    throw new Error(`OpenRouter video generation failed (${response.status}): ${errorText}`);
+
+  const apiKey = requireEnvironmentVariable("OPENROUTER_API_KEY");
+  try {
+    const submit = await fetchWithRetry(OPENROUTER_VIDEOS_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: request.text,
+        aspect_ratio: aspectRatio,
+        duration,
+        resolution,
+        generate_audio: request.generateAudio ?? cfg.generateAudio,
+        ...(request.referenceImages?.length
+          ? {
+            input_references: request.referenceImages.slice(0, 16).map((image, i) => ({
+              type: "image_url",
+              image_url: { url: openRouterReferenceDataUrl(image, request.referenceMimeTypes?.[i]) },
+            })),
+          }
+          : {}),
+      }),
+      signal: request.abortSignal,
+      timeoutMs: 60_000,
+      maxRetries: cfg.maxRetries,
+      retryBaseMs: cfg.retryBaseMs,
+    });
+    if (!submit.ok) {
+      const snippet = await submit.text().then((t) => t.slice(0, 300)).catch(() => "");
+      throwForStatus("OpenRouter", submit.status, snippet);
+    }
+    const job = (await submit.json()) as OpenRouterJob;
+    if (!job?.id || !job?.polling_url) throw new VideoProviderError("generation_failed", "OpenRouter video submit returned no job id/polling_url");
+
+    const final = await pollOpenRouterJob(job, apiKey, {
+      signal: request.abortSignal,
+      intervalMs: cfg.pollIntervalMs,
+      timeoutMs: Math.min(cfg.pollTimeoutMs, cfg.timeoutMs),
+    });
+    if (final.status !== "completed") {
+      throw new VideoProviderError("generation_failed", `OpenRouter video job ${final.id} ended with status ${final.status}${final.error ? `: ${final.error}` : ""}`);
+    }
+    const cost = final.usage?.cost ?? estimatedCost;
+    const direct = final.unsigned_urls?.[0];
+    let buffer: Buffer | undefined;
+    if (direct) {
+      try {
+        buffer = await downloadBuffer(direct, request.abortSignal, 120_000, 1, cfg.retryBaseMs);
+      } catch (error) {
+        // If unsigned URL fails with auth error, fall back to authenticated endpoint
+        if (error instanceof VideoProviderError && (error.status === 401 || error.status === 403)) {
+          logger.warn("[VideoGen] OpenRouter unsigned URL failed with auth error, falling back to authenticated endpoint", "video", { jobId: final.id, errorStatus: error.status });
+        } else {
+          throw error;
+        }
+      }
+    }
+    // Fallback: authenticated content endpoint (GET /api/v1/videos/:id/content).
+    if (!buffer) {
+      const contentUrl = `${resolvePollingUrl(final.polling_url)}/content?index=0`;
+      const res = await fetchWithRetry(contentUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: request.abortSignal,
+        timeoutMs: 120_000,
+        maxRetries: 1,
+        retryBaseMs: cfg.retryBaseMs,
+      });
+      if (!res.ok) throw new VideoProviderError("generation_failed", `OpenRouter video content download failed (${res.status})`, { status: res.status });
+      buffer = Buffer.from(await res.arrayBuffer());
+    }
+    if (buffer.length === 0) throw new VideoProviderError("generation_failed", "OpenRouter video download returned empty bytes");
+
+    recordVideoMetric("openrouter", Date.now() - started, true, cost);
+    logger.info("[VideoGen] OpenRouter video completed", "video", { jobId: final.id, cost, sizeBytes: buffer.length });
+    return { videoBuffer: buffer, durationSeconds: duration, mimeType: "video/mp4", filename: `video-${final.id}.mp4`, cost };
+  } catch (error) {
+    if (error instanceof VideoProviderError) {
+      if (error.code !== "budget_exceeded") recordVideoMetric("openrouter", Date.now() - started, false, undefined, error.code);
+      throw error;
+    }
+    if ((error as Error)?.name === "AbortError" || request.abortSignal?.aborted) {
+      const err = new VideoProviderError("aborted", "video generation aborted");
+      recordVideoMetric("openrouter", Date.now() - started, false, undefined, err.code);
+      throw err;
+    }
+    const err = new VideoProviderError("generation_failed", error instanceof Error ? error.message : String(error));
+    recordVideoMetric("openrouter", Date.now() - started, false, undefined, err.code);
+    throw err;
   }
-  
-  const json = await response.json() as { 
-    data?: Array<{ 
-      video?: { 
-        url?: string;
-        b64_json?: string;
-      };
-      id?: string;
-      status?: string;
-    }> 
-  };
-  
-  const result = json.data?.[0];
-  if (!result) {
-    throw new Error("OpenRouter video generation returned no result");
-  }
-  
-  // Handle async video generation - return polling URL
-  if (result.status === "processing" || result.status === "pending") {
-    throw new Error(`Video generation started but not complete. Job ID: ${result.id}. Polling not yet implemented.`);
-  }
-  
-  // Handle completed video generation
-  const videoUrl = result.video?.url;
-  if (!videoUrl) {
-    throw new Error("OpenRouter video generation did not return a video URL");
-  }
-  
-  // Download the video
-  const videoResponse = await fetch(videoUrl, {
-    ...(request.abortSignal ? { signal: request.abortSignal } : {}),
-  });
-  
-  if (!videoResponse.ok) {
-    throw new Error(`Failed to download video from OpenRouter (${videoResponse.status})`);
-  }
-  
-  const buffer = Buffer.from(await videoResponse.arrayBuffer());
-  const filename = `video-${result.id}.mp4`;
-  
-  return {
-    videoBuffer: buffer,
-    durationSeconds: duration,
-    mimeType: "video/mp4",
-    filename,
-    cost: estimatedCost,
-  };
 }
 
-/**
- * Fal.ai video generation using their serverless client
- */
+// ── fal (subscribe handles queue polling; wrap with timeout) ─────────────────
+
 async function generateFalVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
+  const started = Date.now();
+  const cfg = getVideoConfig();
   const { model } = getAiConfiguration().video;
-  const duration = request.duration ?? 5; // Default 5 seconds for cost control
-  const resolution = request.resolution ?? "720p"; // Default 720p for cost control
-  const aspectRatio = request.aspectRatio ?? "16:9";
-  
-  const estimatedCost = estimateVideoCost("fal", duration, resolution);
+  const durationSec = snapDurationForProvider(request.duration ?? cfg.durationSeconds, "fal");
+  const resolution = request.resolution ?? cfg.resolution;
+  const aspectRatio = normalizeAspectRatio(request.aspectRatio ?? cfg.aspectRatio, "16:9");
+
+  const estimatedCost = estimateVideoCost("fal", durationSec, resolution);
   if (!checkDailyBudget(estimatedCost)) {
-    throw new Error(`Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+    const err = new VideoProviderError("budget_exceeded", `Daily video budget exceeded. Estimated cost: $${estimatedCost.toFixed(2)}`);
+    recordVideoMetric("fal", Date.now() - started, false, undefined, err.code);
+    throw err;
   }
-  
-  // Map aspect ratio to Fal.ai format
-  const falAspectRatio = aspectRatio === "9:16" ? "9:16" : "16:9";
-  
-  // Map duration to Fal.ai format
-  const falDuration = `${duration}s`;
-  
-  // Map resolution to Fal.ai format
-  const falResolution = resolution === "1080p" ? "1080p" : "720p";
-  
-  let falModelId: string;
-  if (model === "fal-ai/veo3.1") {
-    falModelId = "fal-ai/veo3.1";
-  } else if (model === "fal-ai/kling-video/v3/standard/text-to-video") {
-    falModelId = "fal-ai/kling-video/v3/standard/text-to-video";
-  } else {
-    falModelId = model; // Use as-is if custom model
+
+  const falKey = requireEnvironmentVariable("FAL_KEY");
+  fal.config({ credentials: falKey });
+
+  const input: Record<string, unknown> = {
+    prompt: request.text,
+    aspect_ratio: aspectRatio,
+    duration: snapFalDurationString(durationSec),
+    resolution: resolution === "1080p" || resolution === "4k" ? resolution : "720p",
+    generate_audio: request.generateAudio ?? cfg.generateAudio,
+  };
+  if (request.referenceImages?.length) {
+    // Text-to-video endpoint also accepts an image reference; data URLs avoid a
+    // separate storage-upload round trip for small frames.
+    input.image_url = openRouterReferenceDataUrl(request.referenceImages[0]!, request.referenceMimeTypes?.[0]);
   }
-  
+
   try {
-    const result = await fal.run(falModelId, {
-      input: {
-        prompt: request.text,
-        aspect_ratio: falAspectRatio,
-        duration: falDuration,
-        resolution: falResolution,
-        generate_audio: request.generateAudio ?? true,
-        ...(request.referenceImages && request.referenceImages.length > 0 ? {
-          image_url: openRouterReferenceDataUrl(request.referenceImages[0]),
-        } : {}),
-      },
-      ...(request.abortSignal ? { httpRequest: { signal: request.abortSignal } } : {}),
-    });
-    
-    if (!result.video) {
-      throw new Error("Fal.ai video generation did not return a video");
+    const { signal, cancel } = combineSignals(request.abortSignal, cfg.timeoutMs);
+    let result: { video?: { url?: string }; data?: { video?: { url?: string } } };
+    try {
+      result = (await fal.subscribe(model, { input, logs: false })) as typeof result;
+    } finally {
+      cancel();
     }
-    
-    // Download the video from Fal.ai's CDN
-    const videoResponse = await fetch(result.video.url, {
-      ...(request.abortSignal ? { signal: request.abortSignal } : {}),
-    });
-    
-    if (!videoResponse.ok) {
-      throw new Error(`Failed to download video from Fal.ai (${videoResponse.status})`);
-    }
-    
-    const buffer = Buffer.from(await videoResponse.arrayBuffer());
-    const filename = `video-${falModelId.replace(/\//g, "-")}-${Date.now()}.mp4`;
-    
+    void signal;
+    const url = result?.video?.url ?? result?.data?.video?.url;
+    if (!url) throw new VideoProviderError("generation_failed", "Fal.ai video generation did not return a video");
+    const buffer = await downloadBuffer(url, request.abortSignal, 120_000, 1, cfg.retryBaseMs);
+    if (buffer.length === 0) throw new VideoProviderError("generation_failed", "Fal.ai video download returned empty bytes");
+
+    recordVideoMetric("fal", Date.now() - started, true, estimatedCost);
+    logger.info("[VideoGen] fal video completed", "video", { model, cost: estimatedCost, sizeBytes: buffer.length });
     return {
       videoBuffer: buffer,
-      durationSeconds: duration,
+      durationSeconds: durationSec,
       mimeType: "video/mp4",
-      filename,
+      filename: `video-${model.replace(/\//g, "-")}-${Date.now()}.mp4`,
       cost: estimatedCost,
     };
   } catch (error) {
-    if (error instanceof Error && error.message.includes("402")) {
-      throw new Error("Fal.ai quota exceeded or payment required. Check your Fal.ai account balance.");
+    if (error instanceof VideoProviderError) {
+      if (error.code !== "budget_exceeded") recordVideoMetric("fal", Date.now() - started, false, undefined, error.code);
+      throw error;
     }
-    throw error;
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/\b402\b/.test(msg) || /payment required|quota|insufficient.*credit/i.test(msg)) {
+      const err = new VideoProviderError("quota_exceeded", "Fal.ai quota exceeded or payment required. Check your Fal.ai account balance.");
+      recordVideoMetric("fal", Date.now() - started, false, undefined, err.code);
+      throw err;
+    }
+    if (/\b429\b/.test(msg) || /rate limit/i.test(msg)) {
+      const err = new VideoProviderError("rate_limited", `Fal.ai rate limited: ${msg.slice(0, 200)}`, { retryable: true });
+      recordVideoMetric("fal", Date.now() - started, false, undefined, err.code);
+      throw err;
+    }
+    if (request.abortSignal?.aborted) {
+      const err = new VideoProviderError("aborted", "video generation aborted");
+      recordVideoMetric("fal", Date.now() - started, false, undefined, err.code);
+      throw err;
+    }
+    const err = new VideoProviderError("generation_failed", msg.slice(0, 300));
+    recordVideoMetric("fal", Date.now() - started, false, undefined, err.code);
+    throw err;
   }
 }
 
@@ -662,9 +907,9 @@ async function generateFalVideo(request: ProviderVideoRequest): Promise<Provider
  */
 export async function generateProviderVideo(request: ProviderVideoRequest): Promise<ProviderVideoResponse> {
   const { provider } = getAiConfiguration().video;
-  
+
   resetDailyCostIfNeeded();
-  
+
   switch (provider) {
     case "openrouter":
       return generateOpenRouterVideo(request);
@@ -674,9 +919,9 @@ export async function generateProviderVideo(request: ProviderVideoRequest): Prom
     case "openai":
     case "opencode":
     case "huggingface":
-      throw new Error(`Video generation not yet supported by ${provider} provider. Use openrouter or fal for video generation.`);
+      throw new VideoProviderError("invalid_request", `Video generation not yet supported by ${provider} provider. Use openrouter or fal for video generation.`);
     default:
-      throw new Error(`Unknown video provider: ${provider}`);
+      throw new VideoProviderError("invalid_request", `Unknown video provider: ${provider}`);
   }
 }
 
@@ -685,11 +930,12 @@ export async function generateProviderVideo(request: ProviderVideoRequest): Prom
  */
 export function getVideoCostControlState(): VideoCostControlState {
   resetDailyCostIfNeeded();
+  const dailyBudgetUsd = getVideoConfig().dailyBudgetUsd;
   return {
-    dailyBudgetUsd: costControlState.dailyBudgetUsd,
+    dailyBudgetUsd,
     spentTodayUsd: costControlState.spentTodayUsd,
-    remainingBudgetUsd: costControlState.dailyBudgetUsd !== undefined 
-      ? Math.max(0, costControlState.dailyBudgetUsd - costControlState.spentTodayUsd)
+    remainingBudgetUsd: dailyBudgetUsd !== undefined
+      ? Math.max(0, dailyBudgetUsd - costControlState.spentTodayUsd)
       : undefined,
     dailyResetAt: costControlState.dailyResetAt,
   };
