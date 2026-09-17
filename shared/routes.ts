@@ -44,6 +44,13 @@ export const api = {
         200: z.array(channelSchema),
       },
     },
+    playback: {
+      method: 'GET' as const,
+      path: '/api/channels/:channelId/playback' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
   },
   chat: {
     history: {
@@ -56,6 +63,16 @@ export const api = {
           text: z.string(),
           createdAt: z.string() // date strings from pg
         })),
+      },
+    },
+    identity: {
+      method: 'POST' as const,
+      path: '/api/chat/identity' as const,
+      responses: {
+        200: z.object({
+          authorId: z.string(),
+          displayName: z.string(),
+        }),
       },
     },
   },
@@ -78,6 +95,20 @@ export const api = {
           turnsToNextChoice: z.number()
         }),
       }
+    },
+    history: {
+      method: 'GET' as const,
+      path: '/api/blocks/history' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    bySession: {
+      method: 'GET' as const,
+      path: '/api/blocks/session/:sessionId' as const,
+      responses: {
+        200: z.unknown(),
+      },
     }
   },
   nextSessionResponse: z.object({
@@ -103,6 +134,106 @@ export const api = {
         sessionId: z.number(),
         email: z.email().optional(), // for future SMTP
       }),
+    },
+    history: {
+      method: 'GET' as const,
+      path: '/api/sessions/history' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    ics: {
+      method: 'GET' as const,
+      path: '/api/sessions/:id/ics' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+  },
+  tts: {
+    generate: {
+      method: 'POST' as const,
+      path: '/api/tts/generate' as const,
+      body: z.object({
+        text: z.string(),
+      }).passthrough(),
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    audio: {
+      method: 'GET' as const,
+      path: '/api/tts/audio/:filename' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+  },
+  auth: {
+    register: {
+      method: 'POST' as const,
+      path: '/api/auth/register' as const,
+      body: z.object({
+        username: z.string(),
+      }).passthrough(),
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    login: {
+      method: 'POST' as const,
+      path: '/api/auth/login' as const,
+      body: z.object({
+        username: z.string(),
+      }).passthrough(),
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    logout: {
+      method: 'POST' as const,
+      path: '/api/auth/logout' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    me: {
+      method: 'GET' as const,
+      path: '/api/auth/me' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+  },
+  notes: {
+    byBlock: {
+      method: 'GET' as const,
+      path: '/api/notes/:blockId' as const,
+      responses: {
+        200: z.unknown(),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/notes/:blockId' as const,
+      body: z.object({
+        text: z.string(),
+      }).passthrough(),
+      responses: {
+        200: z.unknown(),
+      },
+    },
+  },
+  notifications: {
+    subscribe: {
+      method: 'POST' as const,
+      path: '/api/notifications/subscribe' as const,
+      body: z.object({
+        endpoint: z.string(),
+      }).passthrough(),
+      responses: {
+        200: z.unknown(),
+      },
     },
   },
   admin: {
@@ -154,6 +285,31 @@ export const api = {
         path: '/api/admin/sessions/:id/cancel' as const,
         responses: {
           200: sessionResponseSchema,
+        },
+      },
+    },
+    broadcasts: {
+      stop: {
+        method: 'POST' as const,
+        path: '/api/admin/broadcasts/:channelId/stop' as const,
+        responses: {
+          200: z.unknown(),
+        },
+      },
+      restart: {
+        method: 'POST' as const,
+        path: '/api/admin/broadcasts/:channelId/restart' as const,
+        responses: {
+          200: z.unknown(),
+        },
+      },
+    },
+    replays: {
+      render: {
+        method: 'POST' as const,
+        path: '/admin/api/replays/:sessionId/render' as const,
+        responses: {
+          200: z.unknown(),
         },
       },
     },

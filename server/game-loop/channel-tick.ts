@@ -10,7 +10,7 @@
  *   - Discussion is always-on WebSocket chat, not phase-based.
  */
 
-import type { ActivationResult, TickResult } from "@portalshq/runtime-core";
+import type { ActivationResult, TickContext, TickResult } from "@portalshq/runtime-core";
 
 import { storage } from "../storage";
 import { logger } from "../logger";
@@ -66,9 +66,7 @@ export function clearChannelCache(): void {
   stateCacheStore.clear();
 }
 
-// ── RealtimeEngine adapter (ponytail: thin wrapper, keeps READING_SEGMENT_MS app-owned) ─
-// runtime-core 0.0.7 has no TimeCounter — only scheduleRecheckAt for precise pre-roll.
-// Use these wrappers when driving channel-tick via RealtimeEngine instead of 30s poll.
+// ── RealtimeEngine adapter (keeps app-owned session rules out of runtime-core) ─
 export async function channelTickActivate(channelId: ChannelId): Promise<ActivationResult> {
   const next = await storage.getNextSession(channelId);
   if (!next) return false;
@@ -79,10 +77,10 @@ export async function channelTickActivate(channelId: ChannelId): Promise<Activat
 
 export async function channelTickTick(
   channelId: ChannelId,
-  now: number,
+  tick: TickContext,
   broadcast: (channelId: ChannelId, message: WsMessage) => void,
 ): Promise<TickResult> {
-  return handleChannelTick(channelId, now, broadcast, startSessionForChannelId);
+  return handleChannelTick(channelId, tick, broadcast, startSessionForChannelId);
 }
 
 // ── Session Start ────────────────────────────────────────────────────────────
@@ -174,7 +172,7 @@ export async function startSessionForChannelId(
  */
 export async function handleChannelTick(
   channelId: ChannelId,
-  now: number,
+  time: number | Pick<TickContext, "now" | "countdown">,
   broadcast: (channelId: ChannelId, message: WsMessage) => void,
   startSession: (
     channelId: ChannelId,
@@ -183,6 +181,7 @@ export async function handleChannelTick(
   ) => Promise<void>,
 ): Promise<{ continue: boolean }> {
   try {
+    const now = typeof time === "number" ? time : time.now.getTime();
     let dbState = stateCache.get(channelId);
 
     if (!dbState) {
@@ -245,7 +244,10 @@ export async function handleChannelTick(
     // ── Session expired: mark as completed ───────────────────────────────
     // In the on-demand model, the session stays "active" until the
     // discussion window expires (scheduledEnd).
-    if (now >= activeSession.scheduledEnd.getTime()) {
+    const sessionExpired = typeof time === "number"
+      ? now >= activeSession.scheduledEnd.getTime()
+      : time.countdown(activeSession.scheduledEnd, activeSession.scheduledStart).expired;
+    if (sessionExpired) {
       const locked = await storage.tryAcquireGameLock(channelId, 10_000);
       if (!locked) return { continue: true };
 

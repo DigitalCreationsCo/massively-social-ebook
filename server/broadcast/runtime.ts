@@ -71,7 +71,7 @@ export class BroadcastRuntime {
     this.engine = new RealtimeEngine({
       tickIntervalMs: 5_000,
       onActivate: async (channelId) => this.requireChannel(channelId).coordinator.activate(),
-      onTick: async (channelId) => this.requireChannel(channelId).coordinator.tick(),
+      onTick: async (channelId, _tick) => this.requireChannel(channelId).coordinator.tick(),
       onDeactivate: async (channelId) => {
         logger.info(`Broadcast runtime stopped ticking ${channelId}`, "broadcast");
       },

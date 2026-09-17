@@ -48,19 +48,21 @@ async function fetchPlayback(channelId: string): Promise<ChannelPlaybackResponse
 }
 
 /** Poll broadcast status separately so a broken player never hides /watch. */
+export function playbackRefetchInterval(mode?: string): number {
+  // Captions advance with the Streamer's short queue slots. Keep the normal
+  // low-frequency health poll while idle, but refresh active playout fast
+  // enough that a native track is mounted during its own narration.
+  // Values are unchanged; extracted so all live polling shares one clock policy.
+  return mode === "ambient" || mode === "preparing" || mode === "episode" ? 1_000 : 15_000;
+}
+
 export function usePlayback(channelId: string) {
   return useQuery({
     queryKey: ["channel-playback", channelId],
     queryFn: () => fetchPlayback(channelId),
     enabled: Boolean(channelId),
     staleTime: 5_000,
-    // Captions advance with the Streamer's short queue slots. Keep the normal
-    // low-frequency health poll while idle, but refresh active playout fast
-    // enough that a native track is mounted during its own narration.
-    refetchInterval: (query) => {
-      const mode = query.state.data?.broadcast?.mode;
-      return mode === "ambient" || mode === "preparing" || mode === "episode" ? 1_000 : 15_000;
-    },
+    refetchInterval: (query) => playbackRefetchInterval(query.state.data?.broadcast?.mode),
     refetchIntervalInBackground: true,
     retry: 1,
   });

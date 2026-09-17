@@ -2,6 +2,7 @@ import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import type { Express, Request, RequestHandler } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { FanoutHub } from "@portalshq/capability-realtime-fanout";
 import { storage } from "../storage";
 import { api } from "@shared/routes";
 import {
@@ -520,17 +521,18 @@ export async function registerRoutes(
   // deployments, add a Redis pub/sub subscriber here that calls broadcast()
   // whenever a game-loop message is published on `channel:<channelId>`.
   const clientChannelIds = new Map<WebSocket, ChannelId>();
+  const fanout = new FanoutHub({
+    serialize: (envelope) => JSON.stringify(envelope.payload),
+    onDeliveryError: (cause, connectionId) => logger.warn(
+      `WebSocket fanout failed for ${connectionId}`,
+      "ws",
+      cause instanceof Error ? cause : new Error(String(cause)),
+    ),
+  });
 
   function broadcast(channelId: ChannelId, message: WsMessage) {
-    const payload = JSON.stringify(message);
-    wss.clients.forEach((client) => {
-      if (
-        client.readyState === WebSocket.OPEN &&
-        clientChannelIds.get(client) === channelId
-      ) {
-        client.send(payload);
-      }
-    });
+    const delivery = message.type === "SYNC_STATE" ? "snapshot" : "reliable";
+    fanout.publish(`channel:${channelId}`, message, delivery);
   }
 
   const broadcastRuntime = new BroadcastRuntime(broadcast);
@@ -548,6 +550,15 @@ export async function registerRoutes(
 
     clientChannelIds.set(ws, channelId);
     const connectionId = generateUUID();
+    const unregisterFanout = fanout.register({
+      id: connectionId,
+      send: (payload) => {
+        if (ws.readyState !== WebSocket.OPEN) throw new Error("WebSocket is not open");
+        ws.send(payload);
+      },
+      close: (code, reason) => ws.close(code, reason),
+    });
+    const unsubscribeChannel = fanout.subscribe(connectionId, `channel:${channelId}`);
     void broadcastRuntime.addViewer(channelId, connectionId).catch((cause) => {
       logger.error(
         `Failed to register viewer for ${channelId}`,
@@ -559,10 +570,10 @@ export async function registerRoutes(
     void (async () => {
       const active = await storage.getActiveSession(channelId);
       const next = active ? undefined : await storage.getNextSession(channelId);
-      ws.send(JSON.stringify({
+      fanout.send(connectionId, {
         type: "SESSION_STATUS",
         payload: { status: active?.status ?? "scheduled", session: active ?? next ?? null },
-      }));
+      });
     })();
 
     ws.on("message", async (data) => {
@@ -583,21 +594,23 @@ export async function registerRoutes(
           payload.text ?? "",
           clientId,
         );
-        ws.send(JSON.stringify({
+        fanout.send(connectionId, {
           type: "CHAT_ACK",
           payload: { clientId, messageId: stored.messageId },
-        }));
+        });
       } catch (cause) {
         const error = cause instanceof Error ? cause : new Error(String(cause));
         logger.warn("WebSocket chat rejected", "chat", error);
-        ws.send(JSON.stringify({
+        fanout.send(connectionId, {
           type: "CHAT_REJECTED",
           payload: { clientId, message: error.message },
-        }));
+        });
       }
     });
 
     ws.on("close", () => {
+      unsubscribeChannel();
+      unregisterFanout();
       clientChannelIds.delete(ws);
       broadcastRuntime.removeViewer(channelId, connectionId);
     });

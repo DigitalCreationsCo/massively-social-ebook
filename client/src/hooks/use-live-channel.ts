@@ -4,6 +4,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { useToast } from "./use-toast";
 import { generateClientUuid } from "@/lib/utils";
+import {
+  applyChatAck,
+  applyChatMessage,
+  applyChatRejected,
+  buildWsUrl,
+  fanoutBackoffDelay,
+} from "./use-fanout-chat";
 
 export interface ChatMessage {
   id: number;
@@ -61,11 +68,7 @@ export function useLiveChannel(channelId: string) {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const configuredBase = import.meta.env.VITE_WS_URL
-      ? `${import.meta.env.VITE_WS_URL}/ws`
-      : `${protocol}//${window.location.host || "localhost:5001"}/ws`;
-    const wsUrl = `${configuredBase}?channelId=${encodeURIComponent(channelId)}`;
+    const wsUrl = buildWsUrl(channelId);
 
     const connect = () => {
       if (cancelled) return;
@@ -79,42 +82,19 @@ export function useLiveChannel(channelId: string) {
         if (cancelled) return;
         setWsConnected(false);
         attempts += 1;
-        reconnectTimer = setTimeout(connect, Math.min(30_000, 1_000 * 2 ** Math.min(attempts - 1, 5)) + Math.random() * 500);
+        reconnectTimer = setTimeout(connect, fanoutBackoffDelay(attempts));
       };
       socket.onerror = () => setWsConnected(false);
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data) as { type: string; payload?: any };
           if (message.type === "CHAT_MESSAGE") {
-            const incoming = message.payload as ChatMessage;
-            queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => {
-              if (incoming.clientId && pendingClientIds.current.has(incoming.clientId)) {
-                const optimisticId = pendingClientIds.current.get(incoming.clientId)!;
-                pendingClientIds.current.delete(incoming.clientId);
-                return old.map((entry) => entry.id === optimisticId ? incoming : entry);
-              }
-              if (old.some((entry) => entry.messageId === incoming.messageId)) return old;
-              return [...old, incoming];
-            });
+            applyChatMessage(queryClient, channelId, message.payload as ChatMessage, pendingClientIds.current);
           } else if (message.type === "CHAT_ACK") {
-            const { clientId, messageId } = message.payload as { clientId?: string; messageId: string };
-            if (!clientId) return;
-            const optimisticId = pendingClientIds.current.get(clientId);
-            if (!optimisticId) return;
-            queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => old.map(
-              (entry) => entry.id === optimisticId ? { ...entry, messageId } : entry,
-            ));
+            applyChatAck(queryClient, channelId, message.payload as { clientId?: string; messageId: string }, pendingClientIds.current);
           } else if (message.type === "CHAT_REJECTED") {
             const { clientId, message: reason } = message.payload as { clientId?: string; message?: string };
-            if (clientId) {
-              const optimisticId = pendingClientIds.current.get(clientId);
-              pendingClientIds.current.delete(clientId);
-              if (optimisticId) {
-                queryClient.setQueryData<ChatMessage[]>([api.chat.history.path, channelId], (old = []) => old.filter(
-                  (entry) => entry.id !== optimisticId,
-                ));
-              }
-            }
+            applyChatRejected(queryClient, channelId, { clientId }, pendingClientIds.current);
             toast({ title: "Message not sent", description: reason || "Please try again.", variant: "destructive" });
           }
         } catch {

@@ -1,9 +1,12 @@
 /**
  * Media Analytics Module
- * 
- * Tracks engagement metrics, watch time, buffer events, quality changes, and other
- * media player analytics for the industry-standard media player.
+ *
+ * Thin application sink over the portals video-delivery playback signal.
+ * The package owns HLS attachment and emits `PlaybackObservation` states;
+ * this module only translates those states into the existing Mixpanel
+ * event names so dashboards keep working unchanged.
  */
+import type { PlaybackObservation } from "@portalshq/capability-video-delivery/browser";
 
 export interface MediaAnalyticsEvent {
   eventType: 'session_start' | 'session_end' | 'play' | 'pause' | 'buffer_start' | 'buffer_end' | 'quality_change' | 'error' | 'seek' | 'complete';
@@ -259,6 +262,24 @@ class MediaAnalytics {
 
   getCurrentSession(): MediaAnalyticsSession | null {
     return this.currentSession;
+  }
+
+  /**
+   * Translate a portals playback observation into the existing analytics
+   * calls. The player calls this instead of hand-rolling the mapping,
+   * so buffering, error, and play states stay consistent in one place.
+   */
+  handlePlaybackObservation(observation: PlaybackObservation): void {
+    if (!this.currentSession) return;
+    if (observation.state === "playing") {
+      // Play events are tracked by the video element handlers; here we only
+      // close any open buffering span so watch/buffer totals stay correct.
+      this.trackBufferEnd();
+    } else if (observation.state === "buffering" || observation.state === "reconnecting") {
+      this.trackBufferStart();
+    } else if (observation.state === "error") {
+      this.trackError(observation.error instanceof Error ? observation.error.message : "Video playback error");
+    }
   }
 
   destroy() {

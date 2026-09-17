@@ -609,14 +609,14 @@ async function generateVideoWithFallback(
   videoSourceConfig?: VideoSourceConfig,
 ): Promise<GeneratedVideoWithArchive | undefined> {
   try {
+    const videoType = imageType === "block" ? "session" : "ambient";
     if (videoSourceConfig) {
       // Use mock video generation for testing
-      const result = await generateMockVideoAsset(videoSourceConfig, channelId, imageType, { signal });
+      const result = await generateMockVideoAsset(videoSourceConfig, channelId, videoType, { signal });
       return result;
     }
-    
+
     // Production video generation using ai-provider
-    const videoType = imageType === "block" ? "session" : "ambient";
     const result = await generateVideoAsset(description, channelId, videoType, { signal });
     return result;
   } catch (cause) {

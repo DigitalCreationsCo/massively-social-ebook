@@ -483,6 +483,8 @@ export class BroadcastCoordinator {
   }
 
   private splitAmbientTurn(turn: PreparedAmbientTurn): PreparedAmbientTurn[] {
+    const visual = turn.video ?? turn.image;
+    if (!visual) throw new Error(`Ambient pipeline turn ${turn.sequence} has no visual media`);
     return turn.segments.map((segment) => ({
       ...turn,
       // Preserve contentId: split siblings share one visual identity so the
@@ -496,7 +498,7 @@ export class BroadcastCoordinator {
       // bytes for every remote slot; it is not a shared remote upload.
       // Video-safe: a future video turn would clone its own video bytes here
       // the same way; imageDuration below never applies to video uploads.
-      totalBytes: turn.image.data.size + (segment.audio?.data.size ?? 0),
+      totalBytes: visual.data.size + (segment.audio?.data.size ?? 0),
     }));
   }
 
@@ -512,7 +514,8 @@ export class BroadcastCoordinator {
       slotKey: `${idempotencyPrefix}:slot`,
       segmentOrdinal: segment.segmentOrdinal,
       caption: segment.caption,
-      image: turn.image,
+      ...(turn.image ? { image: turn.image } : {}),
+      ...(turn.video ? { video: turn.video } : {}),
       ...(segment.audio ? { audio: segment.audio } : {}),
     };
   }

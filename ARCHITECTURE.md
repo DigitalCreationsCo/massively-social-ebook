@@ -118,9 +118,16 @@ For the scheduler to automatically generate story episodes, the following must b
 ```
 ├── server/                 # Express + WebSocket server
 │   ├── index.ts            # Entry point, middleware, server startup
-│   ├── routes.ts           # REST API, WebSocket, game loop, channel state
-│   ├── ai.ts               # AI SDK story + image generation
-│   ├── ai-provider.ts      # Google, OpenAI, and OpenCode model selection
+│   ├── routes/             # REST API, WebSocket hub, admin/auth/replay/notes/TTS
+│   ├── blocks/             # Narrative text/image/RAG/PX generation + budgets
+│   ├── broadcast/          # Queue-broadcast playout, runtime, ambient pipeline
+│   ├── chat/               # Chat gateway + YouTube/Twitch connectors
+│   ├── game-loop/          # Session-aware channel ticks (RealtimeEngine)
+│   ├── sessions/           # Recurring scheduler + due/completed loops
+│   ├── media/              # TTS + video delivery services
+│   ├── emails/             # React-Email templates (weekly briefing, invites)
+│   ├── notifications/      # Resend email + FCM push
+│   ├── calendar/           # ICS generation + Google/Outlook invites
 │   ├── storage.ts          # Drizzle ORM data access layer
 │   ├── db.ts               # PostgreSQL pool + Drizzle instance
 │   ├── static.ts           # Production static file serving
@@ -130,16 +137,17 @@ For the scheduler to automatically generate story episodes, the following must b
 │   ├── schema.ts           # Drizzle table definitions + Zod types
 │   ├── routes.ts           # API contract definitions (Zod schemas)
 │
-├── prompts/                # AI prompt templates
-│   ├── generate-block.ts   # Story block generation prompt (with RAG)
-│   └── generate-image.ts   # Image generation prompt
+├── prompts/                # AI prompt templates (*.prompt.ts)
+│   ├── storyblock.prompt.ts # Story block generation prompt (with RAG)
+│   ├── ambient.prompt.ts   # Ambient b-roll narration prompt
+│   └── image.prompt.ts     # Image generation prompt
 │
 ├── client/                 # React SPA (Vite + Tailwind)
 │   └── src/
-│       ├── components/     # UI components (Storyblock, DecisionPhase, LiveChat, etc.)
-│       ├── hooks/          # Custom React hooks (useWebSocket, etc.)
+│       ├── components/     # UI components (VideoDeliveryPlayer, DecisionPhase, LiveChat, etc.)
+│       ├── hooks/          # Live hooks (use-live-state, use-live-channel, use-playback, etc.)
 │       ├── pages/          # Page-level components
-│       └── lib/            # Client utilities
+│       └── lib/            # Client utilities (media-analytics mapper, etc.)
 │
 ├── public/                 # Static assets (AI-generated images stored here)
 └── drizzle.dev.config.ts   # Drizzle Kit development config
@@ -170,17 +178,18 @@ The AI pipeline generates story text and images via NarrativeEngine.
 
 ### Game Loop
 
-A 1-second interval timer drives the story forward per channel:
+Presence-driven ticks via `RealtimeEngine` (`server/game-loop/channel-tick.ts`,
+`server/broadcast/runtime.ts` with 5s ticks) drive the story forward per channel:
 
 ```
-reading (80–120s)  →  reading (repeat 3–4 turns)
-                   ↓  when turnsToNextChoice = 0
-                voting (40s)
-                   ↓  tally votes, winner's pregenerated block used
-                reading (120s, turnsToNextChoice reset)
-                   ↓  at session end (time reached)
-               resolution (40s, cliffhanger generation)
-                   ↓  completed (broadcast SESSION_STATUS)
+reading (25s segments)  →  reading (repeat turns)
+                    ↓  when turnsToNextChoice = 0
+                 voting
+                    ↓  tally votes, winner's pregenerated block used
+                 reading (turnsToNextChoice reset)
+                    ↓  at session end (time reached)
+                resolution (cliffhanger generation)
+                    ↓  completed (broadcast SESSION_STATUS)
 ```
 
 The game loop is now session-aware:
@@ -222,6 +231,14 @@ Constants (in `routes.ts`):
 | `GET` | `/api/chat?channelId=<id>` | Recent chat history (50 messages) |
 | `GET` | `/api/sessions/next?channelId=<id>` | Fetch the next scheduled or active session |
 | `POST` | `/api/sessions/reminder` | Generate `.ics` reminder (body: `{ sessionId }`) |
+| `GET` | `/api/channels/:id/playback` | HLS playback session + delivery/broadcast status |
+| `GET` | `/api/blocks/history` | Paginated block history (`limit/direction`) |
+| `GET` | `/api/sessions/history` | Past sessions for replay |
+| `GET` | `/api/sessions/:id/ics` | Download RFC 5545 calendar file |
+| `POST` | `/api/chat/identity` | Create guest/user chat identity |
+| `POST` | `/api/tts/generate` | Synthesize block/session narration audio |
+| `POST` | `/api/auth/register` | Register session user |
+| `POST` | `/api/auth/login` | Log in session user |
 | `GET` | `/api/admin/channels` | List all channels (admin) |
 | `POST` | `/api/admin/channels` | Create new channel (admin) |
 | `PATCH` | `/api/admin/channels/:id` | Update channel (admin) |
@@ -238,21 +255,26 @@ Connect to `ws://<host>/ws?channelId=<obfuscatedId>`
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `SYNC_STATE` | `{ ...block, phase, timeRemaining, timeToNextDecision, turnsToNextChoice }` | Full state sync (sent every second) |
+| `SYNC_STATE` | `{ ...block, phase, timeRemaining, timeToNextDecision, turnsToNextChoice }` | Full state sync on tick |
 | `SESSION_STATUS`| `{ status, session }` | Real-time session state change (scheduled/active/completed) |
-| `CHAT_MESSAGE` | `{ id, username, text, createdAt }` | New chat message broadcast |
+| `CHAT_MESSAGE` | `{ id, messageId, username, text, sentAt, provenance, clientId? }` | New chat message broadcast |
+| `CHAT_ACK` | `{ clientId, messageId }` | Optimistic message confirmed |
+| `CHAT_REJECTED` | `{ clientId, message }` | Optimistic message rejected |
 | `VOTE_UPDATE` | `{ A: number, B: number }` | Real-time vote tally |
 
 **Client → Server:**
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `SUBMIT_CHAT` | `{ username, text }` | Send a chat message |
+| `SUBMIT_CHAT` | `{ username, text, clientId? }` | Send a chat message |
 | `SUBMIT_VOTE` | `{ choice: 'A' \| 'B', userId }` | Submit a vote during voting phase |
+| `SUBMIT_REACTION` | `{ blockId, emoji, userId }` | React to a story block |
 
 ## Database Schema
 
-Six tables managed by Drizzle ORM with PostgreSQL:
+Fifteen tables managed by Drizzle ORM with PostgreSQL (channels, schedules,
+sessions, channelStates, blocks, pendingBlocks, votes, chat, reactions,
+noteLikes, lore, users, systemSettings, notificationLogs, plus session support):
 
 **`channels`** — Story channels
 
@@ -380,36 +402,36 @@ npm run db:push
 
 React SPA with Vite, Tailwind CSS, and Radix UI primitives. Key components:
 
-- **LiveEbook** — Main story display with cinematic centered layout
+- **LiveBroadcastSection** — Main story display composing live channel, playback, and video delivery
 - **Storyblock** — Individual story block with title, content, and image
 - **DecisionPhase** — Dynamic voting UI that unmounts options after selection and displays a persistent choice toast with live percentages.
 - **LiveChat** — Real-time chat panel alongside the story
-- **IndustryMediaPlayer** — Industry-standard media player built on ReactPlayer with advanced analytics
+- **VideoDeliveryPlayer** — HLS player built on `@portalshq/capability-video-delivery/browser` (`HlsPlaybackController` + native captions) with analytics mapping
 
 ### Media Player Architecture
 
-The `IndustryMediaPlayer` component provides robust media playback with the following features:
+The `VideoDeliveryPlayer` component provides robust media playback with the following features:
 
-- **hls.js Integration**: Uses the industry-standard hls.js library for reliable streaming with native Safari fallback
+- **hls.js Integration**: Uses the industry-standard hls.js library via the portals controller, with native Safari fallback
 - **Format Support**: HLS live streams (`.m3u8`) and MP4 on-demand content
-- **Advanced Analytics**: Comprehensive tracking via `media-analytics.ts` module
-- **Custom Controls**: Beautiful custom UI maintained through `MediaControls` component
+- **Analytics Mapping**: Translates package `PlaybackObservation` states via `media-analytics.ts` into existing Mixpanel events
+- **Custom Controls**: Plain `PlainMediaControls` structure (neutral black/white, upstream candidate) styled in-app by gold `MediaControls`
 - **Error Recovery**: Automatic reconnection with exponential backoff (max 3 attempts)
 - **Performance**: Optimized HLS configuration with low-latency mode, web worker enabled
 
 #### Analytics System
 
-The `media-analytics.ts` module provides comprehensive media analytics:
+The `media-analytics.ts` module is a thin sink over package playback observations:
 
 - **Session Tracking**: Automatic session lifecycle management with unique session IDs
-- **Event Tracking**: Play, pause, buffer, quality changes, errors, seeks, and completion events
+- **Event Mapping**: `handlePlaybackObservation` translates loading/playing/buffering/error into existing events
 - **Metrics Calculation**: Watch time, buffer time, completion rates, error counts
 - **Mixpanel Integration**: Automatic event tracking to Mixpanel when available
 - **Event Queue**: Batching and periodic flushing (every 30 seconds) for performance
 
 #### Media Controls
 
-The `MediaControls` component provides:
+The plain controls provide structure only; the application applies the gold theme:
 
 - **Playback Controls**: Play/pause toggle with visual feedback
 - **Volume Controls**: Mute/unmute functionality
@@ -417,7 +439,7 @@ The `MediaControls` component provides:
 - **Error States**: Clear error messaging and recovery options
 - **Accessibility**: Full keyboard navigation and ARIA labels
 
-Routing handled by `wouter`. State management via `@tanstack/react-query` for REST and a custom `useWebSocket` hook for real-time sync.
+Routing handled by `wouter`. State management via `@tanstack/react-query` for REST and live hooks (`use-live-state`, `use-live-channel`, `use-playback`) over fanout/chat primitives.
 
 ### PWA Updates
 

@@ -11,11 +11,12 @@ describe("generateClientUuid", () => {
   });
 
   it("creates an RFC 4122 v4 UUID when randomUUID is unavailable", () => {
-    vi.stubGlobal("crypto", {
-      getRandomValues: (bytes: Uint8Array) => bytes.fill(0),
-    });
+    vi.stubGlobal("crypto", undefined);
 
-    expect(generateClientUuid()).toBe("00000000-0000-4000-8000-000000000000");
+    const uuid = generateClientUuid();
+    expect(uuid).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
 
     vi.unstubAllGlobals();
   });

@@ -1,121 +1,313 @@
-# Decouple game ticks, generation, content queuing, and stream playback
+# Coding assistant instruction: extract broadcast, realtime, and billing domains into Portals packages
 
-Revised implementation plan, based on the current app working tree and `../cloud/packages` source inspected on 2026-09-04. This replaces the pasted proposal. Implementation has not been performed.
+This instruction replaces the earlier decoupling plan. It is based on the current `massively-social-ebook` application and sibling `../cloud/packages` source reviewed on 2026-09-12. Implement it as a behavior-preserving extraction, not a greenfield redesign.
 
-## Objective and compatibility contract
+## Goal
 
-Reduce application orchestration by moving reusable mechanics into the applicable Portalshq packages. Preserve application behavior, persisted data, public APIs, event payloads, narrative order, scheduling, and player controls. Treat improved buffering as a separately gated change after a behavior-preserving extraction.
+Reduce application-owned infrastructure and orchestration by moving reusable content preparation, queue, live-delivery, playback, realtime-loop, fanout, and billing mechanics into the Portals packages that own those domains. Leave the application with programming policy, game rules, presentation, authorization, and composition.
 
-Do not introduce new startup delays, shorten content, change narrative context, alter session start/completion rules, or increase generation spending by default. Buffering can reduce generation-related gaps; it cannot guarantee uninterrupted playback during arbitrary provider, origin, or network failures.
+Make package changes additive first, publish or link them, migrate the application, and remove obsolete local implementations only after compatibility tests pass. Do not combine behavior changes with ownership moves.
 
-## Findings that change the original proposal
+## Non-negotiable compatibility contract
 
-- The app already declares `@portalshq/capability-queue-broadcast` ^0.1.5, `capability-video-delivery` ^0.1.4, `capability-realtime-fanout` ^0.1.4, and `runtime-core` ^0.0.5. These match the inspected cloud package versions. Verify installed and released artifacts during implementation; sibling source alone does not establish deployed capabilities.
-- Canonical `produceEpisode()` awaits `ensureStagedSlots(cursor + 2)` before releasing the current slot, so preparing future content can block ready content. It also awaits terminal job monitoring before proceeding.
-- Ambient generation already runs in a background pipeline. Its generation/staging capacity guards and separate one-released-turn guard constrain overlap. Removing only one guard does not establish safe buffering.
-- Ambient preparation uses a shared pending-segment array and generation counter. Canonical preparation reads previous narrative context. Raising concurrency without sequencing these dependencies risks changed or duplicated content.
-- `QueueBroadcastClient` already supports independent asset staging, deterministic slots, idempotent release, legacy pairs, job observation, and playback discovery. Reuse these APIs.
-- `LiveDelivery` currently manages manifest connection and health, not queue scheduling or browser playback. The app's `VideoDeliveryPlayer.tsx` owns native HLS/hls.js setup and reconnect mechanics.
-- `RealtimeEngine` already supplies presence, schedule rechecks, viewer-independent activation, and serialized per-channel ticks. Broadcast `tick()` starts/supervises a background producer; it does not directly await generation. The separate game-loop path includes app-specific session transitions and locks; preserve both paths.
-- `InMemoryFanoutBus` is process-local and non-durable; `publish()` waits for subscriber completion. Moving code into it alone does not isolate slow subscribers.
-- `narrative-engine-adapter` and `text-image-delivery` expose placeholder methods that throw. They are not migration destinations for working functionality in this change.
+The current application is the baseline. Preserve:
 
-## Ownership boundaries
+- Public HTTP and WebSocket shapes, persisted receipt formats and keys, session transitions, activation rules, viewer behavior, operator stop/restart behavior, and configuration defaults.
+- Canonical programming order, selected references, narrative context, block persistence, TTS segment order, image-only and archived-image fallbacks, duration/retry policy, and generation cost gates.
+- Three canonical slots of pre-roll, serial canonical release, current ambient duration/byte/in-flight limits, and the two-block ambient narrative chain. Count a shared visual used by multiple narration segments once for visual capacity.
+- Captions attached only to the currently playing queue job, sidecar tracks, held-frame masking during buffering/reconnect, native HLS and hls.js behavior, retry limits, controls, events, and analytics.
+- Absolute scheduled start/end timestamps used by browser countdowns and progress. Tick extraction must not introduce drift or turn the server into a one-second UI broadcaster.
+- Non-broadcast and on-demand game sessions, including scheduled, active, decision, and completed transitions and their existing locks/idempotency.
 
-| Domain | Package owner and reusable responsibility | Application responsibility |
-| --- | --- | --- |
-| Content queue and production pipeline | `queue-broadcast`: bounded preparation scheduling, ordered ready/staged/released slots, capacity accounting, upload/release retries, job monitoring, reconciliation hooks, queue health | Select canonical/ambient content; supply immutable preparation requests, narrative context, deadlines, fallback policy, and storage adapters |
-| HLS delivery and stream playback | `video-delivery`: `LiveDelivery`, manifest health, reusable browser source attachment, native HLS/hls.js lifecycle and reconnect behavior | Player presentation, controls, copy, analytics binding, channel selection and authorization |
-| Realtime game-loop mechanics | `runtime-core`: `RealtimeEngine`, independent timers, activation/recheck lifecycle, cancellation and stale-run protection | Session rules, phases, scheduled boundaries, game locks, persistence and transitions |
-| Message fanout | `realtime-fanout`: pub/sub, subscriber lifecycle, external-chat transport primitives, optional bounded delivery isolation | Authentication, authorization, persisted chat deduplication, channel/topic mapping, existing WebSocket payloads and business events |
-| Narrative and media creation | Existing `@portalshq/narrativeengine` integration and applicable generation providers | Prompts, selected references, previous-context ordering, canonical block persistence, TTS segmentation, archived-image/image-only fallback policy |
-| Shared contracts | `contracts`, only for types genuinely shared across package boundaries | App database rows, `WsMessage`, session enums and UI types remain local |
+Do not add startup delay, change content length, increase generation concurrency/spend by default, reorder releases, or change tick cadence. Gate deeper buffering and tuning until the behavior-preserving extraction passes all acceptance tests.
 
-Keep preparation scheduling in `queue-broadcast`: its backpressure and deadlines are determined by queue consumption. Do not put a media-specific worker pool in `runtime-core`, a queue controller in `video-delivery`, or game rules in `realtime-fanout`.
+Do not change `text-image-delivery`, `narrative-engine-adapter`, ebook application storage/schema, application logger globals, or application environment parsing. Billing may add a package-owned persistence contract and cloud billing migrations because durable webhook processing requires them; do not couple these to the ebook application's storage.
 
-The Streamer service remains authoritative for normalization, FIFO execution, image/audio synchronization, and encoded stream continuity. SDK buffering cannot fix an origin that inserts black frames. Existing low-level queue streaming exports stay compatible; do not relocate them merely to rename ownership.
+## Findings that supersede the old plan
 
-## Composition and state contracts
+1. The app now uses queue-broadcast ^0.1.7, video-delivery ^0.1.6, realtime-fanout ^0.1.6, runtime-core ^0.0.7, narrativeengine ^0.8.15, and px ^0.8.19. Verify packed artifacts and lockfiles during implementation; sibling source does not prove installed exports.
+2. `server/broadcast/coordinator.ts` prepares a canonical text window of up to three turns in one ordered provider response. Its prompt makes each turn continue the prior turn within that response, after which media and persistence proceed in order.
+3. The installed NarrativeEngine exposes `generateBlocksBatch()` (there is no `generateContextBatch()` API). It alleviates the earlier canonical dependency concern in the current app because the app's batch provider produces one internally dependent ordered window in one provider call, and NarrativeEngine persists returned drafts in request order. NarrativeEngine builds each retrieval context concurrently from the same pre-batch canonical state, so the provider's within-batch chaining remains essential; this API does not make separate parallel dependent LLM calls safe. Preserve one batch per window, validate its exact length/order, and commit blocks serially.
+4. Canonical pre-roll is deliberately three slots ahead. Future staging overlaps current playout. Ambient preparation is separately bounded by ready duration, bytes, generation count, queued content, and visual identity. Preserve those constraints.
+5. The app player now owns captions, native-HLS/hls.js selection, held-frame capture, reconnect, and source-change behavior. These reusable mechanics belong in video-delivery; a thin application presentation wrapper should remain.
+6. runtime-core supplies channel timers and serialized callbacks but no public time counter. The app computes loop timing in `server/game-loop/channel-tick.ts`; `LiveBroadcastSection` and `DecisionPhase` interpolate display countdowns from absolute deadlines.
+7. realtime-fanout owns an in-memory bus and chat primitives, while the app still owns generic WebSocket connection maps, membership, send loops, and duplicate external-message normalization.
+8. There is no production `@portalshq/billing`. The sibling billing-engine, billing-marketplace, and billing-metering packages are incomplete Lago/OpenMeter wrappers or speculative payout math. The cloud frontend already calls Stripe directly. No working first-party Super Chat implementation was found in the reviewed app/v1 code; do not preserve imaginary APIs.
 
-The app composes four independent capabilities rather than implementing four new local controllers:
+## Final ownership boundaries
 
-1. A lightweight game tick evaluates app state and emits bounded preparation intent. It never waits for generation, uploads, playback completion, or slow fanout subscribers.
-2. A package-owned preparation pipeline invokes an injected app callback and commits results in deterministic order.
-3. A package-owned release scheduler consumes eligible staged slots using app-supplied scheduling constraints. Monitoring proceeds independently.
-4. `video-delivery` consumes the discovered HLS source. Fanout distributes app-mapped observations without becoming the authoritative queue or session store.
+| Domain | Owner | Package responsibility | Application responsibility |
+| --- | --- | --- | --- |
+| Queue and preparation | `queue-broadcast` | Deterministic identities, upload/stage/release/watch primitives, bounded preparation, reservations, ordered commits, reconciliation, cancellation/fencing, observations | Canonical/ambient callbacks, prompts/references, fallback policy, immutable programming metadata, persistence adapters |
+| Live programming/delivery | `video-delivery` via `LiveDelivery` | Delivery health, schedule/deadline evaluation, eligible staged-work release, playback discovery, caption projection, reconnect policy, browser controller and React base player | Channel programming policy and server credentials; presentation, controls, styling, analytics, overlays |
+| Realtime loop/time | `runtime-core` | Serialized per-channel lifecycle, injected clocks, tick sequence/context, countdown snapshots, cancellation and stale-run fencing | Session/game rules, domain locks, persistence, transition deadlines |
+| Fanout/socket mechanics | `realtime-fanout` | Topic subscriptions, connection lifecycle, bounded send queues, serialization hooks, external-chat normalization, ordering/overflow contracts | Socket authentication/authorization, app-event mapping, persistence-before-publish |
+| Channel billing | new `@portalshq/billing` | Stripe platform client, Connect, per-channel profiles, Checkout/Billing, destination charges/fees, webhooks, refunds/disputes, meter events, durable billing events | Authenticated actor/channel, catalog configuration, owner relationship, approved URLs, mapping settled events to product behavior |
+| Narrative/media policy | existing narrative/generation providers | Existing generation capability | Prompts, reference selection, story semantics, provider choice, domain persistence |
 
-Proposed queue APIs (new work, not existing exports) should expose preparation callbacks, receipt persistence/recovery hooks, release eligibility, bounded capacity, clock/abort injection, and status subscriptions. Keep the surface small; begin with one pipeline facade over focused internal modules, not separate app-facing worker/buffer/controller frameworks.
+Keep dependencies one-way:
 
-- Identify work by channel, run epoch, logical content key, and segment ordinal. Preserve existing deterministic slot/idempotency keys and legacy pair receipts.
-- Model preparing, prepared, staged, released, completed, terminally failed, and cancelled work explicitly. An upload receipt is not proof that normalized media is ready to play. Verify actual Streamer status semantics before counting playable seconds.
-- Persist individual image/audio receipts through the app adapter as today. Reconcile uncertain upload/release outcomes with existing queue identity before retrying. Do not promise exactly-once network delivery; use idempotent operations and ordered, durable cursor commits.
-- Parallel completions must not overwrite a block's other segment receipts or advance the cursor past an unfinished earlier slot. Serialize per-block persistence and advance only the contiguous terminal prefix.
-- Keep canonical narrative turns sequential per context chain; parallelize independent channels and already-independent media work. Preserve ambient turn-to-segment ordering before allowing concurrent preparation.
-- Reserve capacity before starting work. Account for prepared bytes, outstanding work, staged duration, and released duration separately; shared image assets must not be counted repeatedly. Bound estimates and reconcile actual durations.
-- On stop/restart, fence old-run results, abort and join local work, and preserve current persisted desired-state semantics. Local abort does not cancel already released remote jobs. Inventory remote cancellation/discard support before changing release depth; keep committed remote work in recovery and schedule accounting.
-- No packages import app storage, schema, logger globals, or environment configuration. Pass typed options/adapters. Avoid reverse dependencies: video delivery must not depend on the queue SDK to obtain a source.
+```text
+massively-social-ebook
+  -> runtime-core
+  -> realtime-fanout
+  -> queue-broadcast
+  -> video-delivery -> queue-broadcast (server-only integration)
 
-## Implementation phases
+cloud billing services
+  -> @portalshq/billing -> Stripe SDK
+  -> realtime-fanout (cloud composition only, after settlement)
+```
 
-### 1. Establish the behavior baseline
+queue-broadcast must not import video-delivery. Billing must not import the ebook app or directly publish to a process-local bus. Browser exports must not include server credentials, Node modules, Stripe, or queue administration code.
 
-Record current outputs and transition timing from coordinator, ambient pipeline, media-slots, runtime, game-loop, chat, and player paths. Preserve the existing tests for single-slot behavior during extraction. Capture defaults and environment precedence directly from code.
+## 1. queue-broadcast: own preparation and queue state
 
-Baseline receipt formats, cursor keys, legacy pairs, release-triggered activation, terminal-failure cursor advancement, schedule/pre-roll behavior, viewer counts, operator stop/restart, shutdown, and unavailable-Streamer suppression of generation. Include non-broadcast/on-demand sessions.
+Keep existing low-level APIs compatible. Add one small public `ContentQueuePipeline<TRequest, TPrepared>` facade backed by internal modules. It owns:
 
-Inspect the Streamer implementation/API for readiness, duration, FIFO, cancellation, and restart guarantees. SDK method comments are insufficient evidence for deeper release windows. Measure whether black space originates before release, during normalization, in encoding, or at the browser.
+- Capacity reservation before work starts, with distinct preparing, prepared, staged, released, completed, terminal-failed, and cancelled states.
+- Limits for in-flight preparation, ready duration, bytes, content count, and visual identity. Accept application accounting for narration segments sharing a visual.
+- Stable identity from channel, run epoch, content key, block/segment ordinal, and current queue idempotency keys.
+- Abort, run fencing, stale-result rejection, retry classification, and reconciliation after uncertain network results.
+- Per-block receipt serialization so parallel assets cannot overwrite siblings. Advance only a contiguous terminal cursor.
+- Ordered observations and recovery from persisted receipts. Promise idempotent intent and deterministic recovery, not exactly-once networks.
+- Queue job monitoring independent of new preparation.
 
-### 2. Extract queue mechanics with existing behavior
+Application callbacks return prepared assets/metadata and retain narrative/fallback decisions. Obtain canonical text once with `generateBlocksBatch()` for the ordered window, then enter its blocks into media preparation in order. Parallelize independent media work only where current behavior already does. Preserve the ambient two-block chain and all limits.
 
-In `../cloud/packages/queue-broadcast/src/`, add a pipeline facade and internal preparation, buffering, release, and receipt-reconciliation modules. Extract reusable logic from app `ambient-pipeline.ts` and coordinator staging/retry/monitoring methods. Extend existing package tests and exports.
+Do not add app-local `generation-workers.ts`, `content-buffer.ts`, or another queue state machine. After migration, remove `server/broadcast/ambient-pipeline.ts` and generic staging/retry/monitoring from the coordinator, retaining thin policy adapters.
 
-Initially preserve the current capacity, release depth, fallback decisions, retry behavior, and ordering. The app's `coordinator.ts` becomes a programming policy adapter; `media-slots.ts` remains responsible for domain preparation and storage mapping. Keep temporary forwarding adapters only during migration, then remove duplicate orchestration.
+## 2. video-delivery: make `LiveDelivery` the scheduling and playback facade
 
-Do not add the originally proposed app-local `generation-workers.ts`, `content-buffer.ts`, or `playback-controller.ts`.
+LiveDelivery should compose queue primitives through a server-only adapter and own live release scheduling. It must not own story selection or generation.
 
-### 3. Separate ready-content release from future preparation
+Add a typed programming contract similar to:
 
-Make canonical preparation background work so an eligible ready slot does not wait for generation of a later slot. Let ambient preparation/staging overlap monitoring within bounded capacity. Preserve preparation eligibility and the existing Streamer availability/cost gate.
+```ts
+type DeliveryCandidate = {
+  queueIdentity: QueueIdentity;
+  kind: "canonical" | "ambient";
+  eligibleAt: Date;
+  expiresAt?: Date;
+  estimatedDurationMs: number;
+  priority: number;
+};
 
-Enable deeper remote release only after origin semantics and boundary tests pass. Compute admissible ambient duration from all committed remote work plus the candidate and safety margin relative to the next canonical start. Locally staged future ambient work is not committed playback; hold or invalidate it when plans change. Prefer conservative accounting when remaining playback time is unavailable.
+interface LiveProgrammingPolicy {
+  nextCandidates(context: DeliveryScheduleContext): Promise<DeliveryCandidate[]>;
+  canRelease(candidate: DeliveryCandidate, context: DeliveryScheduleContext): boolean;
+}
+```
 
-Do not release arbitrary future work based only on buffer depth. Preserve canonical ordering, session expiry, and context freshness. Do not require a new 30-second startup buffer or silently add shorter fallback content. Keep existing image-only and archived-image fallbacks.
+Keep this policy in the application. LiveDelivery owns clock evaluation, one-writer lease/fence, release idempotency, health/cost gate, monitoring, and current-playback projection. Preserve the app's scheduled start/end, current job/caption, availability, and retry state through a mapping adapter.
 
-### 4. Complete delivery ownership
+Canonical content stays serial. Ready canonical playback must not await later generation. Ambient may fill only the admissible gap before the next canonical boundary. Include all remotely committed work, the candidate, and a safety margin. Locally staged work is not committed playout. Do not deepen release until integration tests prove Streamer FIFO, readiness, duration, cancellation, and restart semantics.
 
-Retain `LiveDelivery` for server-side HLS health. Add a browser-safe subpath to `video-delivery` for a framework-independent player controller, extracting source attachment, reconnect, cleanup, and native HLS selection from `VideoDeliveryPlayer.tsx` without changing settings or events.
+### Browser and React ownership
 
-Keep React UI and analytics callbacks in the app. Test source changes, autoplay rejection, mute, pause/resume, reconnect limits, cleanup and native HLS. Ensure browser exports do not pull server queue credentials or Node-only dependencies into the bundle. Origin encoding fixes, if required, belong in the Streamer implementation, not this controller.
+Add framework-independent machinery in `capability-video-delivery/browser` and a base component in `capability-video-delivery/react`:
 
-### 5. Keep tick and fanout execution independent
+- `HlsPlaybackController` owns native HLS/hls.js selection, attach/detach, manifest/media recovery, bounded reconnect/backoff, source changes, autoplay rejection, teardown, and observations.
+- Package `VideoDeliveryPlayer.tsx` owns the video ref, controller lifecycle, caption-track lifecycle, held-frame continuity, and accessible media-state callbacks.
+- An external-player adapter receives the resolved HLS source, captions, reconnect coordinator/signals, and delivery observations, and reports playback/errors back. Video.js or another player can be used without reimplementing Portals HLS/reconnect logic.
+- Use focused render props/slots for controls and overlays. Keep app branding, layout, copy, analytics, and channel UI in the app.
 
-Reuse `RealtimeEngine`; add only missing generic lifecycle safeguards demonstrated by integration tests. App callbacks retain game rules and database locking. Do not introduce a second session authority or change tick cadence as part of extraction.
+Keep React as peer dependencies, isolate hls.js to browser exports, and prove server entry points do not bundle browser code. Migrate the app player without changing tested DOM behavior, then remove duplicate app HLS/reconnect/caption code.
 
-Reuse `Chat`, existing external-chat primitives, and the fanout bus. Extract any remaining generic transport mechanics while retaining persistence-before-publish, external message deduplication and existing endpoint/topic identity. If slow-subscriber isolation is needed, add an explicit bounded delivery mode rather than silently changing `publish()` completion semantics. Define ordering and overflow behavior; do not drop chat or game decisions under a heartbeat-coalescing policy. Durable/multi-process delivery is separate scope.
+## 3. runtime-core: expose time counter and tick context
 
-### 6. Package rollout and configuration
+Add public `TimeCounter`, with one instance per active channel inside `RealtimeEngine`. Accept injected clocks and expose tick progress plus deadline countdowns:
 
-Build/test and version additive cloud APIs before upgrading app dependencies and lockfile. Verify the packed artifacts' actual exports. Keep old exports, public app response shapes, configuration aliases, and persisted records compatible. Remove optional compatibility casts only after the app's minimum installed versions guarantee the required methods.
+```ts
+interface TickContext {
+  sequence: number;
+  now: Date;
+  startedAt: Date;
+  previousTickAt?: Date;
+  elapsedMs: number;
+  deltaMs: number;
+  intervalMs: number;
+  countdown(endsAt: Date, startsAt?: Date): CountdownSnapshot;
+}
 
-Keep environment parsing in app `config.ts`. Preserve existing `BROADCAST_AMBIENT_*` settings and defaults; map them into package options. Introduce new tuning settings only for implemented controls with validated bounds and explicit precedence. Treat the original 60/30/120-second and three-worker suggestions as experiments, not new defaults.
+interface CountdownSnapshot {
+  observedAt: Date;
+  startsAt?: Date;
+  endsAt: Date;
+  totalMs?: number;
+  elapsedMs?: number;
+  remainingMs: number;       // zero-clamped
+  remainingSeconds: number;  // ceil while positive
+  progress?: number;         // 0..1 when start is known
+  expired: boolean;
+}
+```
 
-Roll out extraction first. Gate deeper buffering separately per channel, with exactly one active queue writer. Shadow comparisons must not generate paid content or release duplicate jobs. Rollback must reconcile already released work before returning control to the old scheduler.
+Change callbacks additively to `onTick(channelId, context)`; existing callbacks may ignore argument two. Use wall time for persisted deadlines and a monotonic source for elapsed/delta so clock correction cannot create negative duration. Sequence starts at 1 for each activation epoch. Do not reset it for harmless schedule rechecks.
 
-## Verification and acceptance gates
+Use `context.countdown()` in `server/game-loop/channel-tick.ts` for scheduled start, active/decision boundaries, and session end while preserving transition predicates/locks. Add an optional status timing snapshot only for browser clock calibration; retain current scheduled timestamps. Browsers interpolate locally from absolute deadlines and latest `observedAt`, without one fanout per second.
 
-Package tests own reusable state-machine and transport behavior; app tests own domain mapping and observable compatibility. Run existing suites first and report pre-existing failures separately from regressions.
+Test delayed ticks, wall-clock jumps, exact deadline expiry, reactivation, cancellation during callback, and no overlapping callback per channel with fake clocks.
 
-- Queue: out-of-order preparation, bounded reservations, partial asset failure, uncertain release response, duplicate retry, terminal failure, contiguous cursor updates, persisted receipt recovery and stale-run completion.
-- Scheduling: ready canonical playback during stalled future generation; ambient FIFO reservations at episode boundaries; schedule changes; session expiry during preparation; stop/restart during upload, release and monitoring.
-- Independence: deferred generation does not stop ticks or current playback; a slow subscriber does not block the selected isolated delivery mode; one unavailable channel does not stall another.
-- Compatibility: image-only and archived-image fallback, TTS segment order, selected references and context, legacy receipts, unavailable-origin cost gate, status/API/WebSocket contracts, chat deduplication and viewer behavior.
-- Playback: actual image/audio transitions through the Streamer and HLS player, native HLS and hls.js reconnection, no player remount from unrelated status changes, unchanged controls and analytics bindings.
-- Observe generation latency, prepared/staged/playable seconds, released backlog, bytes, normalization latency, underruns, visible black-frame duration, tick lag and subscriber lag separately. A successful manifest request is not proof of healthy content continuity.
+## 4. realtime-fanout: own connection and delivery mechanics
 
-Accept extraction only when observable behavior matches the baseline. Accept buffering changes only when measured gaps improve without altered programming order, added startup delay, episode-boundary regressions, unbounded spending or memory growth. Any remaining origin/player limitation must be reported rather than hidden behind a claim that buffering eliminates all black space.
+Retain Chat, external-event, UUID, and bus exports. Add transport-neutral `FanoutHub` owning connection registration, topic membership, cleanup, ordered per-connection send queues, serialization, heartbeat/coalescing policy, and bounded backpressure.
 
-## Source references
+The app supplies authenticated metadata and authorization. It persists chat/decisions before publishing and maps existing `WsMessage` values to package topics. Remove duplicate external normalization from the app gateway.
 
-App: `package.json`; `server/broadcast/{coordinator,ambient-pipeline,media-slots,runtime,config}.ts` and their existing tests; `server/game-loop/channel-tick.ts`; `server/chat/gateway.ts`; `client/src/components/VideoDeliveryPlayer.tsx`.
+Define overflow by class:
 
-Cloud: package manifests and `queue-broadcast/src/client.ts`; `runtime-core/src/realtime-engine.ts`; `video-delivery/src/live-session.ts`; `realtime-fanout/src/fanout-bus.ts`; `narrative-engine-adapter/src/narrative-engine-adapter.ts`; `text-image-delivery/src/chapter-feed.ts`.
+- Presence/health snapshots may coalesce to the newest.
+- Chat, decisions, paid-message settlement, and transitions remain ordered and cannot silently drop.
+- Slow subscribers cannot block ticks or other connections; disconnect them with a typed reason when their reliable queue is exhausted.
+
+Keep the in-memory bus for local/single-process use and tests. Do not call it durable or multi-process. Add a broker adapter only if deployment requires one; do not create a new broker package for this migration.
+
+## 5. New `@portalshq/billing`: Stripe platform and Connect as the only money rail
+
+Create `../cloud/packages/billing` and migrate cloud billing into it. Use the Portals Stripe platform account for every operation. Connected owners never provide application API keys.
+
+Replace billing-engine, billing-marketplace, and billing-metering financial responsibilities. Remove them, Lago/OpenMeter financial sync jobs, guessed fee math, and billing-only deployment resources after consumers migrate. Keep unrelated operational metrics. Do not preserve speculative royalty/rake APIs or adapters to incomplete features.
+
+### Channel model
+
+A channel billing profile contains:
+
+- `channelId` and `ownerId`.
+- `stripeCustomerId`, representing the channel for fees, subscriptions, invoices, credits, and usage Portals charges it.
+- `stripeConnectedAccountId`, receiving purchases made to that channel's owner.
+- Onboarding state, charges/payout capability state, country/currency defaults, and timestamps.
+
+Customer and connected account ids have different meanings. Multiple channels may share an owner's Connect account only where ownership explicitly permits; each channel retains its own profile/customer. Audience buyer Customers never replace the channel Customer.
+
+Use Accounts v2 for new connected accounts when the installed SDK/platform supports the needed merchant configuration; preserve existing `acct_` ids with a typed compatibility path. Default to Stripe-hosted onboarding and refresh capability status from signed webhooks. Opening onboarding is not proof of readiness.
+
+### Package API
+
+Expose one cohesive `PortalsBilling` service with typed methods:
+
+- `ensureChannelProfile()` / `getChannelProfile()`
+- `createConnectOnboardingLink()` / `createConnectDashboardLink()`
+- `createCustomerPortalSession()`
+- `createChannelCheckout()` including Super Chat
+- `reportMeterEvent()`
+- `refundPurchase()`
+- `handleWebhook()`
+
+Inject `BillingStore`, `BillingCatalog`, clock, id generator, and durable outbox sink. The package owns validation/transitions. Calls provide stable actor/channel/product ids and approved URLs, never raw destination accounts, prices, transfer amounts, or fees.
+
+Use integer minor units and lowercase ISO currencies. Resolve product, price, amount range, currency, platform fee, and purchase kind from a server catalog. Never trust browser money/Connect values. Use a restricted platform key where possible. Reuse the workspace Stripe v22 SDK rather than downgrading and pin its supported API version.
+
+### Purchases and owner payouts
+
+Use Checkout Sessions and Connect destination charges:
+
+1. Authorize buyer/channel, resolve catalog product, and verify the connected account can receive funds.
+2. Persist a pending purchase before Stripe. Use its id as Stripe idempotency key and metadata with channel id, purchase kind, and schema version. Put no message content or personal data in metadata.
+3. Create a `payment` Checkout Session from server line items. Set `payment_intent_data.transfer_data.destination` to the owner's account and `application_fee_amount` from catalog policy. Omit `payment_method_types`. Provide the required Checkout integration identifier for the pinned API.
+4. Treat webhooks as authoritative. Settle only from paid Checkout completion or asynchronous-payment success; redirect success is not payment proof.
+5. Record actual charge, PaymentIntent, transfer, application fee, balance transaction, fee, and net data. Never estimate Stripe fees.
+
+Destination-charge fees, refunds, and disputes debit the platform. Model this explicitly. Refunds must reverse the destination transfer and refund the application fee when policy requires. Support partial refunds idempotently. For disputes, record the platform debit, attempt policy-authorized transfer reversal, and expose failed recovery; never fabricate owner clawback.
+
+Use `on_behalf_of` only through explicit validated policy when the connected account must be settlement merchant because it changes descriptors, currency, and regional constraints.
+
+### Super Chat
+
+Add `super_chat` as a channel purchase kind, not a separate payment system. Reuse `createChannelCheckout()` and the same webhook state machine. Validate message/amount through the server catalog and current chat length/safety rules. Store message text in the product record, never Stripe metadata.
+
+After settlement and durable commit, append one idempotent `billing.purchase_settled` outbox event. Cloud composition maps a Super Chat settlement to the existing chat/event model and publishes through realtime-fanout, deduped by purchase id. Never publish or grant prominence from a Checkout redirect.
+
+External-provider paid messages are provider events only. Do not create Portals charges/payouts for purchases made on YouTube/Twitch.
+
+### Subscriptions, usage, and webhooks
+
+Migrate existing cloud subscriptions, Checkout/customer portal routes, products/prices, and webhook behavior behind billing without changing B2B behavior. Use Stripe Billing prices/subscriptions and Stripe Billing meter events for billable usage. Retire Lago/OpenMeter as financial sources of truth; never dual-bill.
+
+Keep operational analytics separate. Meter events must be idempotent/retryable and keyed to the channel's Stripe Customer. Validate configured meter/event names/values and do not swallow failures.
+
+Verify webhooks against the raw body. Uniquely persist every Stripe event id and process transactionally. Support relevant Checkout async completion/failure, PaymentIntent, refund, dispute, application-fee/transfer, invoice/subscription, meter, and Connect account events.
+
+BillingStore must atomically claim an event, transition a purchase, append ledger entries, and append the outbox. Duplicate/out-of-order events converge. A dispatcher publishes committed events; webhook handlers never call WebSockets directly. Redact secrets/client secrets.
+
+## Application end state
+
+The coordinator becomes a small programming/policy adapter: choose canonical/ambient content, invoke generation/persistence callbacks, and map package status to unchanged APIs. It no longer owns reservations, retry loops, queue monitoring, HLS health, or playback state.
+
+Broadcast runtime wires RealtimeEngine, ContentQueuePipeline, and LiveDelivery with no parallel retry scheduler. Channel tick contains only game/session rules and consumes TickContext. The socket gateway authenticates/maps messages but delegates connection/send mechanics. The client player is a styled wrapper around package VideoDeliveryPlayer or an external adapter.
+
+The ebook app does not import billing. Monetization runs in cloud billing and reaches the app through authenticated settled events only if Super Chat is enabled.
+
+## Implementation order
+
+### A. Characterize current behavior
+
+Run existing app/package suites. Add focused characterization tests only for unprotected behavior: three-slot canonical order, two-block ambient chain/capacity, shared-image accounting, caption selection, held-frame reconnect, session timing, unavailable-Streamer cost gate, and stop/restart fencing. Capture API/WebSocket fixtures/defaults.
+
+Inspect deployed Streamer FIFO, normalization readiness, duration, cancellation, status, and restart semantics. Do not infer them from SDK comments.
+
+### B. Add package APIs
+
+Implement/test TimeCounter/TickContext, ContentQueuePipeline, LiveDelivery scheduling, browser controller/base React player/external adapter, and FanoutHub. Preserve old exports and create explicit server/browser/react entry points with bundling tests.
+
+Create billing with typed Stripe service, store/outbox ports, and webhook state-machine tests. Migrate one current cloud Stripe flow through it before Super Chat.
+
+### C. Migrate seams individually
+
+1. Adopt runtime tick context without changing outputs.
+2. Adopt queue preparation with current limits and one writer.
+3. Adopt LiveDelivery scheduling/status mapping at current release depth.
+4. Replace player internals while preserving presentation.
+5. Replace socket mechanics/duplicate normalization.
+6. Migrate cloud subscription/customer/Checkout/webhooks to billing, then add destination-charge purchases and Super Chat settlement fanout.
+
+Delete each replaced implementation after its compatibility tests pass. Never leave two active schedulers, webhook processors, or queue writers.
+
+### D. Remove obsolete billing and tune only afterward
+
+After consumer and production-replay verification, delete old billing packages, Lago/OpenMeter financial bridges/sync jobs, stale references, and obsolete monetization plan text. Preserve unrelated observability.
+
+Only afterward test deeper release/buffering or higher preparation concurrency behind a per-channel flag. Shadow evaluation cannot create generation spend, Stripe charges, or duplicate releases. Rollback must reconcile remote releases and Stripe idempotency state before switching writers.
+
+## Required verification
+
+Queue/delivery:
+
+- Ordered `generateBlocksBatch()` output, malformed/partial fallback, serial persistence, and no parallel dependent LLM requests.
+- Out-of-order asset completion, shared-image accounting, reservations, partial/uncertain network failure, duplicates, recovery, and stale results.
+- Ready canonical playback during future-generation stalls; ambient cannot cross canonical boundary; stop/restart leaves one writer.
+- Native HLS/hls.js, source replacement, autoplay, mute/pause, captions, held frame, reconnect, cleanup, external adapter, and analytics.
+
+Runtime/fanout:
+
+- Fake-clock tick sequence/delta/elapsed, exact countdown boundary, delayed ticks, clock correction, cancellation, reactivation, serialization.
+- Scheduled/on-demand transitions and decision countdowns remain compatible.
+- Connection order, coalesced presence, reliable chat/decision/paid events, slow-subscriber isolation, cleanup, dedupe, persistence-before-publish.
+
+Billing:
+
+- Connect incomplete/complete/disabled states and existing-account compatibility.
+- Correct channel owner destination, fee policy, Checkout idempotency, async payment, abandonment, duplicate/out-of-order webhooks.
+- Actual fee/net recording, full/partial refund and reversals, fee-refund policy, disputes/platform liability, failed reversal.
+- Channel Customer isolation, multi-channel owner, subscription/portal compatibility, meter retry/idempotency, and no browser-trusted money/account data.
+- Super Chat publishes once only after settlement; redirect, failure, refund, and webhook replay cannot duplicate it.
+
+Use Stripe test mode, Stripe CLI fixtures, and automated tests; never real charges. Run package build/typecheck/tests, packed-export smoke tests, app build/typecheck/tests, and focused browser tests. Report pre-existing failures separately.
+
+## Definition of done
+
+- Observable app behavior passes with package-owned mechanics and no duplicate implementation.
+- Coordinator, runtime, game tick, socket gateway, and player are smaller and contain policy/composition rather than reusable infrastructure.
+- Packages document ownership, typed APIs, server/browser isolation, failure/recovery tests, and migrations.
+- runtime-core exposes the time counter and the app uses it for loop-event countdown decisions while absolute browser timing remains stable.
+- LiveDelivery owns queue release scheduling and supports the base player plus external players without duplicated HLS/reconnect logic.
+- billing is the only Portals financial integration; all operations use the platform account, channel purchases reach the correct Connect owner, and Super Chat uses the same durable Stripe flow.
+- Obsolete billing packages and financial Lago/OpenMeter paths are removed only after migrations and replay/idempotency verification.
+
+## Sources reviewed
+
+Application: `package.json`; broadcast coordinator, ambient pipeline, media slots, runtime, config and tests; game-loop channel tick/tests; chat gateway/runtime; client VideoDeliveryPlayer, LiveBroadcastSection, and DecisionPhase.
+
+Cloud: package manifests/source for queue-broadcast, video-delivery, realtime-fanout, runtime-core, billing-engine, billing-marketplace, billing-metering; cloud frontend Stripe Checkout/customer/webhook code; billing control plane, ADR, and Lago/OpenMeter assets.
+
+Stripe references: destination charges (`https://docs.stripe.com/connect/destination-charges`), Accounts v2 (`https://docs.stripe.com/connect/accounts-v2`), hosted onboarding (`https://docs.stripe.com/connect/onboarding`), and destination-charge disputes (`https://docs.stripe.com/connect/disputes`). Recheck official docs against the pinned SDK/API version while implementing.

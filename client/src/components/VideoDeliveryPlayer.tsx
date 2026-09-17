@@ -1,7 +1,10 @@
-import Hls from "hls.js";
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { CaptionTrack } from "@portalshq/capability-video-delivery";
-import { mountCaptionTracks } from "@portalshq/capability-video-delivery/browser";
+import {
+  HlsPlaybackController,
+  mountCaptionTracks,
+  type PlaybackObservation,
+} from "@portalshq/capability-video-delivery/browser";
 import { cn } from "@/lib/utils";
 import { mediaAnalytics } from "@/lib/media-analytics";
 import { CenterPlayButton, MediaControls, type PlayerState } from "./MediaControls";
@@ -17,10 +20,6 @@ interface VideoDeliveryPlayerProps {
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 
-function canPlayNativeHls(video: HTMLVideoElement) {
-  return Boolean(video.canPlayType("application/vnd.apple.mpegurl") || video.canPlayType("application/x-mpegURL"));
-}
-
 export function VideoDeliveryPlayer({ 
   manifestUrl, 
   captionTracks = [],
@@ -30,12 +29,7 @@ export function VideoDeliveryPlayer({
 }: VideoDeliveryPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const manifestRef = useRef<string | null | undefined>(manifestUrl);
-  const [sourceVersion, setSourceVersion] = useState(0);
+  const deliveryControllerRef = useRef<HlsPlaybackController | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>(manifestUrl ? "loading" : "idle");
   const [isMuted, setIsMuted] = useState(true);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -45,7 +39,6 @@ export function VideoDeliveryPlayer({
   // Last decoded frame, shown as a poster overlay while the stream stalls
   // or reconnects so the previous image holds indefinitely instead of black.
   const [heldFrame, setHeldFrame] = useState<string | null>(null);
-  const mediaErrorRecoveryRef = useRef(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -75,25 +68,6 @@ export function VideoDeliveryPlayer({
   const mediaType = manifestUrl?.endsWith('.m3u8') ? 'hls' : 
                     manifestUrl?.endsWith('.mp4') ? 'mp4' : 'other';
 
-  const scheduleReconnect = useCallback(() => {
-    if (stabilityTimerRef.current) {
-      clearTimeout(stabilityTimerRef.current);
-      stabilityTimerRef.current = null;
-    }
-    if (reconnectTimerRef.current) return;
-    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      setPlayerState("error");
-      mediaAnalytics.trackError("Max reconnection attempts reached");
-      return;
-    }
-    const attempt = reconnectAttemptsRef.current++;
-    setPlayerState("reconnecting");
-    reconnectTimerRef.current = setTimeout(() => {
-      reconnectTimerRef.current = null;
-      setSourceVersion((version) => version + 1);
-    }, Math.min(1_000 * 2 ** attempt, 8_000));
-  }, []);
-
   const attemptPlayback = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
@@ -101,13 +75,7 @@ export function VideoDeliveryPlayer({
       await video.play();
       setPlayerState("playing");
       setHeldFrame(null);
-      mediaErrorRecoveryRef.current = false;
       mediaAnalytics.trackPlay(video.currentTime);
-      if (stabilityTimerRef.current) clearTimeout(stabilityTimerRef.current);
-      stabilityTimerRef.current = setTimeout(() => {
-        reconnectAttemptsRef.current = 0;
-        stabilityTimerRef.current = null;
-      }, 30_000);
     } catch {
       // A manual control is more useful than treating an autoplay policy as failure.
       setPlayerState("paused");
@@ -121,24 +89,32 @@ export function VideoDeliveryPlayer({
       return;
     }
 
-    let disposed = false;
-    if (manifestRef.current !== manifestUrl) {
-      manifestRef.current = manifestUrl;
-      reconnectAttemptsRef.current = 0;
-    }
     setPlayerState("loading");
     video.muted = true;
     video.playsInline = true;
-    const startPlayback = () => { if (!disposed) void attemptPlayback(); };
-    const handleNativeError = () => { if (!disposed) { captureHeldFrame(); scheduleReconnect(); } };
-
-    if (canPlayNativeHls(video)) {
-      video.src = manifestUrl;
-      video.addEventListener("canplay", startPlayback, { once: true });
-      video.addEventListener("error", handleNativeError);
-      video.load();
-    } else if (Hls.isSupported()) {
-      const hls = new Hls({
+    const handleCanPlay = () => void attemptPlayback();
+    video.addEventListener("canplay", handleCanPlay);
+    const handleObservation = (observation: PlaybackObservation) => {
+      if (observation.state === "loading") setPlayerState("loading");
+      if (observation.state === "playing") {
+        setPlayerState("playing");
+        setHeldFrame(null);
+      }
+      if (observation.state === "buffering" || observation.state === "reconnecting") {
+        captureHeldFrame();
+        setPlayerState("reconnecting");
+      }
+      if (observation.state === "error") {
+        setPlayerState("error");
+      }
+      mediaAnalytics.handlePlaybackObservation(observation);
+    };
+    const controller = new HlsPlaybackController({
+      media: video,
+      session: { playbackManifestUrl: manifestUrl },
+      maxReconnectAttempts: MAX_RECONNECT_ATTEMPTS,
+      reconnectDelayMs: 1_000,
+      hlsConfig: {
         enableWorker: true,
         lowLatencyMode: true,
         // Join a live broadcast at the current/recent segment rather than
@@ -153,32 +129,11 @@ export function VideoDeliveryPlayer({
         manifestLoadingMaxRetry: 3,
         levelLoadingMaxRetry: 3,
         fragLoadingMaxRetry: 4,
-      });
-      hlsRef.current = hls;
-      hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (disposed) return;
-        // Transient stalls/retries are handled internally by hls.js —
-        // hold the last frame and let it recover without tearing down.
-        if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaErrorRecoveryRef.current) {
-          mediaErrorRecoveryRef.current = true;
-          captureHeldFrame();
-          try {
-            hls.recoverMediaError();
-            return;
-          } catch {
-            // fall through to reconnect
-          }
-        }
-        captureHeldFrame();
-        scheduleReconnect();
-      });
-      hls.loadSource(manifestUrl);
-      hls.attachMedia(video);
-    } else {
-      setPlayerState("error");
-    }
+      },
+      onObservation: handleObservation,
+    });
+    deliveryControllerRef.current = controller;
+    void controller.attach().catch((cause) => controller.reconnect(cause));
 
     // Start analytics session when HLS is ready
     if (!analyticsSessionIdRef.current) {
@@ -186,26 +141,12 @@ export function VideoDeliveryPlayer({
     }
 
     return () => {
-      disposed = true;
       // Snapshot before teardown so the reconnect still shows the last image.
       captureHeldFrame();
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      if (stabilityTimerRef.current) {
-        clearTimeout(stabilityTimerRef.current);
-        stabilityTimerRef.current = null;
-      }
-      video.removeEventListener("canplay", startPlayback);
-      video.removeEventListener("error", handleNativeError);
-      // Only fully unload when the manifest itself changed or unmounting —
-      // reconnect retries (sourceVersion bumps) reuse the same element.
+      video.removeEventListener("canplay", handleCanPlay);
       video.pause();
-      video.removeAttribute("src");
-      video.load();
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
+      controller.destroy();
+      if (deliveryControllerRef.current === controller) deliveryControllerRef.current = null;
       
       // End analytics session
       if (analyticsSessionIdRef.current) {
@@ -213,7 +154,7 @@ export function VideoDeliveryPlayer({
         analyticsSessionIdRef.current = null;
       }
     };
-  }, [attemptPlayback, manifestUrl, scheduleReconnect, sourceVersion, channelId, mediaType, captureHeldFrame]);
+  }, [attemptPlayback, manifestUrl, channelId, mediaType, captureHeldFrame]);
 
   const handlePlaybackToggle = async (event?: MouseEvent<HTMLButtonElement>) => {
     event?.stopPropagation();
@@ -346,25 +287,6 @@ export function VideoDeliveryPlayer({
             if (duration) {
               mediaAnalytics.trackComplete(duration);
             }
-          }}
-          onError={() => {
-            captureHeldFrame();
-            mediaAnalytics.trackError("Video playback error");
-            scheduleReconnect();
-          }}
-          onWaiting={() => {
-            captureHeldFrame();
-            // HLS can remain attached and report a regular buffer wait (rather
-            // than a fatal error) when the queue has not produced the next
-            // segment yet. Treat it as a visible stall so the last decoded
-            // image stays on screen instead of exposing the video's black
-            // canvas until playout resumes.
-            setPlayerState("reconnecting");
-            mediaAnalytics.trackBufferStart();
-          }}
-          onPlaying={() => {
-            setHeldFrame(null);
-            mediaAnalytics.trackBufferEnd();
           }}
         />
         {heldFrame && isBusy && (

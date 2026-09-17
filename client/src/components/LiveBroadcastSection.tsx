@@ -2,6 +2,7 @@ import { LiveChat } from "@/components/LiveChat";
 import { PushToggle } from "@/components/pwa/PushToggle";
 import { useLiveChannel } from "@/hooks/use-live-channel";
 import { usePlayback } from "@/hooks/use-playback";
+import { usePoll } from "@/hooks/use-poll";
 import { cn } from "@/lib/utils";
 import { WifiOff } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -27,6 +28,7 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
   const [chatOpen, setChatOpen] = useState(true);
   const liveState = useLiveChannel(channelId);
   const playbackQuery = usePlayback(channelId);
+  const poll = usePoll();
   const broadcast = playbackQuery.data?.broadcast;
   const delivery = playbackQuery.data?.delivery;
   const manifestUrl = playbackQuery.data?.playback?.playbackManifestUrl;
@@ -91,9 +93,10 @@ export function LiveBroadcastSection({ channelId = DEFAULT_CHANNEL_ID }: LiveBro
                 initialTimeToDecision={1}
                 initialTimeRemaining={initialTimeRemaining}
                 turnsToNextChoice={-1}
-                hasVoted={false}
-                onVote={() => undefined}
-                voteResults={{ A: 0, B: 0 }}
+                hasVoted={poll.hasVoted}
+                onVote={poll.onVote}
+                voteResults={poll.voteResults}
+                selectedChoice={poll.selectedChoice}
               />
             </div>
             <div className="hidden md:block pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { countdownAt } from "@portalshq/runtime-core";
 
 /**
  * Returns a formatted countdown string ("HH:MM:SS") and a
@@ -6,6 +7,9 @@ import { useState, useEffect } from "react";
  *
  * When the target is past (or null/undefined) the string is empty
  * and `isStarting` is false — the caller decides what to render.
+ *
+ * Time math is delegated to the shared portals helper so the client
+ * and the server observe deadlines the same way.
  */
 export function useCountdown(
   targetDate: string | Date | null | undefined,
@@ -18,16 +22,16 @@ export function useCountdown(
       return;
     }
 
-    const target = new Date(targetDate).getTime();
+    const target = new Date(targetDate);
 
     const updateTimer = () => {
-      const now = Date.now();
-      const diff = target - now;
-
-      if (diff <= 0) {
+      const snapshot = countdownAt(new Date(), target);
+      if (snapshot.expired || snapshot.remainingMs <= 0) {
         setTimeLeft("Starting...");
         return;
       }
+
+      const diff = snapshot.remainingMs;
 
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));

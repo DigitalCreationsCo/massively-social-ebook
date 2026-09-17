@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>25th Chapter · Server Architecture</title>
+  <style>
+    :root {
+      --ink: #101820;
+      --muted: #61717b;
+      --paper: #f6f3ec;
+      --panel: #fffdf8;
+      --line: #d9d4c8;
+      --teal: #0d7770;
+      --teal-soft: #d8efeb;
+      --orange: #d66332;
+      --orange-soft: #f8dfd0;
+      --blue: #3569ad;
+      --blue-soft: #dce8f7;
+      --purple: #735d9e;
+      --purple-soft: #e7e0f4;
+      --shadow: 0 18px 55px rgba(31, 43, 45, .10);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--ink); background: var(--paper);
+      font-family: Georgia, 'Times New Roman', serif;
+      background-image: radial-gradient(rgba(13,119,112,.07) .7px, transparent .7px);
+      background-size: 14px 14px;
+    }
+    .shell { max-width: 1500px; margin: 0 auto; padding: 24px 28px 70px; }
+    .masthead { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; border-bottom: 2px solid var(--ink); padding: 12px 0 20px; }
+    .eyebrow { margin: 0 0 9px; font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: var(--teal); }
+    h1 { margin: 0; font-size: clamp(38px, 6vw, 78px); line-height: .9; letter-spacing: -.06em; font-weight: 700; }
+    .dek { max-width: 470px; margin: 0; color: var(--muted); font-size: 17px; line-height: 1.45; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 0; position: sticky; top: 0; z-index: 5; background: rgba(246,243,236,.94); backdrop-filter: blur(10px); }
+    .tab, .filter { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 9px 13px; border-radius: 3px; cursor: pointer; font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: uppercase; }
+    .tab.active, .filter.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .search { margin-left: auto; min-width: 230px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel); padding: 10px 12px; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .view { display: none; animation: rise .4s ease both; }
+    .view.active { display: block; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .intro { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 16px 0 20px; }
+    .stat { background: var(--panel); border: 1px solid var(--line); padding: 18px; box-shadow: var(--shadow); }
+    .stat strong { display: block; font-size: 32px; letter-spacing: -.06em; }
+    .stat span { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .map { position: relative; overflow: auto; background: #10252b; border: 1px solid #0b191d; padding: 24px; min-height: 820px; box-shadow: var(--shadow); }
+    .map-grid { min-width: 1180px; display: grid; grid-template-columns: 170px 220px 270px 245px 215px; grid-template-rows: 120px 170px 180px 170px 100px; gap: 22px 18px; position: relative; z-index: 1; }
+    .lane { color: #a4c0bd; font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; text-transform: uppercase; padding: 7px 0; border-top: 1px solid rgba(164,192,189,.3); }
+    .lane small { display: block; margin-top: 5px; color: #6f9190; letter-spacing: .02em; text-transform: none; font: 11px Georgia, serif; }
+    .node { min-width: 0; align-self: start; background: var(--panel); border: 1px solid #c9c2b6; border-left: 5px solid var(--teal); padding: 11px 12px; box-shadow: 0 7px 22px rgba(0,0,0,.18); cursor: pointer; transition: transform .16s, filter .16s; }
+    .node:hover { transform: translateY(-3px); filter: brightness(1.04); }
+    .node.external { border-left-color: var(--blue); background: #f4f7fc; }
+    .node.state { border-left-color: var(--orange); background: #fff7f1; }
+    .node.optional { border-left-color: var(--purple); background: #faf7ff; }
+    .node b { display: block; font-size: 15px; line-height: 1.05; }
+    .node code, .file code, td code { display: block; margin-top: 6px; color: var(--muted); font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .node p { margin: 7px 0 0; font-size: 12px; line-height: 1.3; color: #425259; }
+    .node .tag { display: inline-block; margin-top: 9px; padding: 3px 5px; background: var(--teal-soft); color: var(--teal); font: 700 9px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .node.external .tag { background: var(--blue-soft); color: var(--blue); }
+    .node.state .tag { background: var(--orange-soft); color: var(--orange); }
+    .node.optional .tag { background: var(--purple-soft); color: var(--purple); }
+    .wire { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .68; }
+    .wire path { fill: none; stroke: #70aaa4; stroke-width: 1.4; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+    .wire .solid { stroke-dasharray: none; stroke: #e5b28e; }
+    .caption { color: #a4c0bd; font-size: 12px; line-height: 1.4; margin-top: 18px; max-width: 830px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 15px; margin: 16px 0 0; color: #b4c9c7; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .legend i { width: 10px; height: 10px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--teal); vertical-align: -1px; }
+    .legend .e { background: var(--blue); } .legend .s { background: var(--orange); } .legend .o { background: var(--purple); }
+    .flow-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .flow-card { background: var(--panel); border: 1px solid var(--line); padding: 19px; box-shadow: var(--shadow); min-height: 240px; }
+    .flow-card h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: -.03em; }
+    .flow-card ol { margin: 0; padding-left: 20px; } .flow-card li { margin: 9px 0; line-height: 1.35; }
+    .flow-card li::marker { color: var(--orange); font-weight: bold; }
+    .flow-card code { color: var(--teal); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .matrix { width: 100%; border-collapse: collapse; background: var(--panel); box-shadow: var(--shadow); }
+    .matrix th, .matrix td { border-bottom: 1px solid var(--line); padding: 13px 14px; text-align: left; vertical-align: top; }
+    .matrix th { background: #ece8df; font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .08em; }
+    .matrix td { font-size: 14px; line-height: 1.35; } .matrix tr:last-child td { border-bottom: 0; }
+    .pkg { font-weight: 700; } .kind { color: var(--teal); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .file-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .file { background: var(--panel); border: 1px solid var(--line); padding: 14px; min-height: 110px; box-shadow: var(--shadow); }
+    .file b { font-size: 15px; } .file p { color: var(--muted); font-size: 13px; line-height: 1.35; margin: 8px 0 0; }
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 24px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+    .section-title h2 { margin: 0; font-size: 28px; letter-spacing: -.04em; } .section-title span { color: var(--muted); font-size: 13px; }
+    .note { padding: 13px 15px; border-left: 4px solid var(--orange); background: var(--orange-soft); margin: 14px 0; line-height: 1.45; }
+    footer { margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    @media (max-width: 900px) { .masthead { display: block; } .dek { margin-top: 20px; } .intro, .flow-grid, .file-grid { grid-template-columns: 1fr; } .search { margin-left: 0; flex: 1; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div><p class="eyebrow">The 25th Chapter / executable map</p><h1>Server<br>architecture.</h1></div>
+      <p class="dek">A field guide to the Express + WebSocket runtime: how requests, sessions, AI, media, broadcast, storage, and shared contracts fit together.</p>
+    </header>
+
+    <nav class="toolbar" aria-label="Diagram views">
+      <button class="tab active" data-view="map">System map</button>
+      <button class="tab" data-view="flows">Runtime flows</button>
+      <button class="tab" data-view="deps">Dependencies</button>
+      <button class="tab" data-view="files">Code index</button>
+      <input class="search" id="search" placeholder="Filter components…" aria-label="Filter components" />
+    </nav>
+
+    <section class="view active" id="map">
+      <div class="intro">
+        <div class="stat"><strong>6</strong><span>entry surfaces</span></div>
+        <div class="stat"><strong>8</strong><span>runtime lanes</span></div>
+        <div class="stat"><strong>2</strong><span>delivery paths · reader + HLS</span></div>
+      </div>
+      <div class="map" aria-label="Architecture diagram">
+        <svg class="wire" viewBox="0 0 1280 800" preserveAspectRatio="none" aria-hidden="true">
+          <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#70aaa4"/></marker></defs>
+          <path class="solid" d="M 125 70 C 300 70, 320 80, 470 80"/><path d="M 470 110 C 590 150, 650 120, 760 120"/>
+          <path d="M 470 110 C 580 225, 700 225, 820 240"/><path class="solid" d="M 760 145 C 870 170, 900 170, 1010 170"/>
+          <path d="M 760 270 C 860 310, 920 300, 1010 300"/><path d="M 760 300 C 850 390, 930 420, 1040 420"/>
+          <path class="solid" d="M 990 450 C 1080 520, 1080 570, 1160 610"/><path d="M 650 350 C 600 430, 570 460, 500 510"/>
+          <path d="M 500 540 C 610 580, 680 580, 790 570"/><path d="M 790 600 C 900 650, 1010 650, 1110 650"/>
+          <path d="M 320 560 C 380 640, 430 660, 500 660"/><path d="M 500 690 C 670 730, 830 730, 1000 690"/>
+        </svg>
+        <div class="map-grid">
+          <div class="lane" style="grid-column:1;grid-row:1">01 · callers<small>browser, admin, CLI</small></div>
+          <article class="node external" style="grid-column:2;grid-row:1" data-search="reader browser client"><b>Reader browser</b><code>client/src · REST + /ws</code><p>Consumes story state, chat, votes, and HLS playback.</p><span class="tag">HTTP / WS</span></article>
+          <article class="node external" style="grid-column:3;grid-row:1" data-search="admin cli administrator"><b>Admin + generation CLI</b><code>/admin · server/scripts</code><p>Session control, lore, media generation, batch episodes.</p><span class="tag">operators</span></article>
+          <article class="node" style="grid-column:4;grid-row:1" data-search="http express node server index"><b>HTTP server</b><code>server/index.ts</code><p>Node HTTP wraps Express and owns startup / shutdown.</p><span class="tag">process root</span></article>
+
+          <div class="lane" style="grid-column:1;grid-row:2">02 · edge<small>every request enters here</small></div>
+          <article class="node" style="grid-column:2;grid-row:2" data-search="middleware cors body logger session"><b>Request pipeline</b><code>timestamp → parsers → CORS → logger → session</code><p>Pg-backed sessions via connect-pg-simple. Raw bodies retained for signatures.</p><span class="tag">middleware</span></article>
+          <article class="node" style="grid-column:3;grid-row:2" data-search="routes rest websocket api"><b>Route registry</b><code>server/routes/index.ts</code><p>Public REST, admin routes, auth, notes, replay, TTS, and WebSocket upgrade.</p><span class="tag">API surface</span></article>
+          <article class="node state" style="grid-column:4;grid-row:2" data-search="shared routes schema zod drizzle contracts"><b>Shared contracts</b><code>shared/routes.ts · shared/schema.ts</code><p>Zod API shapes, Drizzle tables, relations, session and WS message types.</p><span class="tag">shared</span></article>
+          <article class="node optional" style="grid-column:5;grid-row:2" data-search="static vite admin frontend"><b>Static delivery</b><code>server/static.ts · server/vite.ts</code><p>Production SPA or dev Vite middleware; admin static host /admin.</p><span class="tag">mode switch</span></article>
+
+          <div class="lane" style="grid-column:1;grid-row:3">03 · domain<small>durable application work</small></div>
+          <article class="node" style="grid-column:2;grid-row:3" data-search="storage database drizzle postgres persistence"><b>Storage boundary</b><code>server/storage.ts · server/db.ts</code><p>DatabaseStorage centralizes reads, writes, transactions, cache invalidation, and embedding enqueue.</p><span class="tag">Postgres</span></article>
+          <article class="node" style="grid-column:3;grid-row:3" data-search="scheduler session lifecycle notifications calendar"><b>Session scheduler</b><code>server/sessions/scheduler.ts</code><p>Fast loop handles due schedules; main loop seeds the next seven days and dispatches reminders.</p><span class="tag">30s / 10m</span></article>
+          <article class="node" style="grid-column:4;grid-row:3" data-search="ai story rag narrativeengine embedding image"><b>Story + AI pipeline</b><code>server/blocks/ai.ts · rag.ts · embedding.ts</code><p>RAG/PX context → structured story → images; providers are selected at runtime.</p><span class="tag">generation</span></article>
+          <article class="node external" style="grid-column:5;grid-row:3" data-search="model providers google openai opencode vertex huggingface fal"><b>Model providers</b><code>@ai-sdk/* · @google/genai · @fal-ai/client</code><p>Google / Vertex, OpenAI, OpenRouter, OpenCode, Hugging Face, and Fal.</p><span class="tag">external APIs</span></article>
+
+          <div class="lane" style="grid-column:1;grid-row:4">04 · live<small>continuous broadcast path</small></div>
+          <article class="node" style="grid-column:2;grid-row:4" data-search="broadcast runtime realtime engine coordinator"><b>Broadcast runtime</b><code>server/broadcast/runtime.ts</code><p>RealtimeEngine presence ticks, coordinator lifecycle, LiveDelivery HLS, and chat wiring.</p><span class="tag">5s tick</span></article>
+          <article class="node" style="grid-column:3;grid-row:4" data-search="coordinator ambient canonical slots queue streamer video"><b>Coordinator + media slots</b><code>coordinator.ts · media-slots.ts · ambient-pipeline.ts</code><p>Preroll → prepare text/image/TTS → stage FIFO slots → release with recovery.</p><span class="tag">queue playout</span></article>
+          <article class="node external" style="grid-column:4;grid-row:4" data-search="queue broadcast streamer hls video delivery"><b>Queue + HLS delivery</b><code>@portalshq/capability-queue-broadcast</code><p>Stages assets, watches jobs, and exposes the live manifest to the client player.</p><span class="tag">video</span></article>
+          <article class="node external" style="grid-column:5;grid-row:4" data-search="youtube twitch chat oauth eventsub"><b>External chat</b><code>server/chat/providers</code><p>YouTube Live Chat and Twitch EventSub/Helix feed the normalized ChatGateway.</p><span class="tag">connectors</span></article>
+
+          <div class="lane" style="grid-column:1;grid-row:5">05 · state<small>durability + observability</small></div>
+          <article class="node state" style="grid-column:2;grid-row:5" data-search="postgres db session user sessions"><b>PostgreSQL</b><code>pg · drizzle-orm · connect-pg-simple</code><p>Content, users, sessions, blocks, settings, logs, and user_sessions.</p><span class="tag">durable state</span></article>
+          <article class="node state" style="grid-column:3;grid-row:5" data-search="gcs storage image audio archive"><b>GCS + local archive</b><code>@google-cloud/storage · public/audio</code><p>Images, audio, and delivery assets; local files are the configured fallback.</p><span class="tag">media store</span></article>
+          <article class="node" style="grid-column:4;grid-row:5" data-search="logger ai call analytics resend firebase notifications"><b>Observability + notifications</b><code>logger.ts · ai-call-logger.ts · notifications</code><p>Structured logs, AI cost/config events, Resend email, Firebase push, analytics.</p><span class="tag">side effects</span></article>
+        </div>
+        <div class="legend"><span><i></i> application component</span><span><i class="e"></i> external system / provider</span><span><i class="s"></i> stateful boundary</span><span><i class="o"></i> mode-dependent / optional</span></div>
+        <p class="caption">Solid lines are the primary runtime path. Dashed lines represent supporting relationships. The reader path (REST + WebSocket) and live HLS path share story/media generation but have different delivery semantics.</p>
+      </div>
+      <div class="note"><strong>Important runtime distinction.</strong> Broadcast-configured channels run through <code>BroadcastCoordinator</code> + <code>RealtimeEngine</code>. The older <code>channel-tick</code> lifecycle remains reachable from development debug tooling and the batch/reader path; it is not the server-started live loop.</div>
+    </section>
+
+    <section class="view" id="flows">
+      <div class="section-title"><h2>Runtime flows</h2><span>What happens, in order</span></div>
+      <div class="flow-grid">
+        <article class="flow-card"><h2>Request → reader</h2><ol><li>Browser enters Node HTTP and receives timestamp, body parsing, CORS, logging, and session middleware.</li><li>Route handler validates against shared Zod contracts and calls <code>DatabaseStorage</code>.</li><li>Storage uses Drizzle + PostgreSQL; current channel state may be served from the process cache.</li><li>Browser opens <code>/ws?channelId=…</code> for sync, votes, and chat. HLS is a separate playback session.</li></ol></article>
+        <article class="flow-card"><h2>Schedule → episode</h2><ol><li>Scheduler seeds scheduled sessions and checks due work every 30 seconds.</li><li>At preroll, the broadcast coordinator asks the story pipeline for an ordered canonical window.</li><li>Each slot prepares text, image, and optional narration; assets are archived and persisted.</li><li>QueueBroadcast stages slots, then releases them serially at scheduled start. HLS delivers the live manifest.</li></ol></article>
+        <article class="flow-card"><h2>Story → media</h2><ol><li>RAG retrieves lore + relevant blocks; PX enriches the context and image references.</li><li>NarrativeEngine / AI SDK returns structured story blocks under the configured provider.</li><li>Image generation and TTS run concurrently where possible, with retry and fallback rules.</li><li>GCS stores durable media; TTS and static delivery retain a local-file fallback.</li></ol></article>
+        <article class="flow-card"><h2>Chat → fanout</h2><ol><li>YouTube/Twitch connectors normalize incoming provider events.</li><li>ChatGateway deduplicates, persists, and maps provider identities to channel users.</li><li>FanoutHub broadcasts normalized messages to connected WebSocket clients.</li><li>Reader-submitted chat follows the same gateway boundary before broadcast.</li></ol></article>
+        <article class="flow-card"><h2>TTS → audio</h2><ol><li>TTS route applies origin/API-key checks and a per-IP sliding-window limiter.</li><li>Hugging Face Gradio generation is polled and WAV-validated.</li><li>Audio is segmented, uploaded to GCS when configured, or written under <code>public/audio</code>.</li><li>Proxy streams the archive and falls back to the local path if GCS is unavailable.</li></ol></article>
+        <article class="flow-card"><h2>Shutdown → drain</h2><ol><li>SIGTERM/SIGINT flips the shutdown guard to prevent duplicate cleanup.</li><li>Scheduler stops; live broadcast runtime and game-loop cleanup drain.</li><li>HTTP server closes; PostgreSQL pool ends last.</li><li>Failures are logged and set a non-zero process exit code.</li></ol></article>
+      </div>
+    </section>
+
+    <section class="view" id="deps">
+      <div class="section-title"><h2>Dependency usage</h2><span>Why each dependency family exists</span></div>
+      <table class="matrix"><thead><tr><th>Dependency / family</th><th>Used by</th><th>Role in the server</th><th>Boundary / failure behavior</th></tr></thead><tbody>
+        <tr><td class="pkg">express + http + ws<br><span class="kind">transport</span></td><td><code>server/index.ts</code><br><code>server/routes/index.ts</code></td><td>HTTP middleware, REST routes, upgrade handling, WebSocket state sync.</td><td>Express error handler returns JSON; unregistered WebSocket clients are closed.</td></tr>
+        <tr><td class="pkg">drizzle-orm + pg<br><span class="kind">persistence</span></td><td><code>server/db.ts</code><br><code>server/storage.ts</code></td><td>Typed SQL access, transactions, schema relations, and pool management.</td><td>Storage is the application boundary; shutdown drains the pool.</td></tr>
+        <tr><td class="pkg">connect-pg-simple + express-session<br><span class="kind">identity</span></td><td><code>server/index.ts</code><br><code>server/middleware/auth.ts</code></td><td>Durable browser sessions, admin/user identity, and WebSocket auth reuse.</td><td>Cookies are HTTP-only; production cookies are secure and same-site lax.</td></tr>
+        <tr><td class="pkg">@portalshq/px + narrativeengine<br><span class="kind">story context</span></td><td><code>server/blocks/px.ts</code><br><code>server/blocks/rag.ts</code><br><code>server/blocks/ai.ts</code></td><td>PX manifests, lore/entity enrichment, hybrid retrieval, and narrative context.</td><td>Required manifests validate at startup; cached profiles can survive later PX outages.</td></tr>
+        <tr><td class="pkg">ai + @ai-sdk/google/openai/vertex<br><span class="kind">generation</span></td><td><code>server/blocks/ai-provider.ts</code><br><code>server/blocks/ai.ts</code></td><td>Provider-neutral structured output, story generation, embeddings, image/video calls.</td><td>Runtime config selects provider; calls are logged and bounded by provider budgets.</td></tr>
+        <tr><td class="pkg">@portalshq/capability-queue-broadcast<br><span class="kind">live delivery</span></td><td><code>server/broadcast/config.ts</code><br><code>coordinator.ts</code></td><td>Queue client stages uploads, releases slots, watches jobs, and probes streamer health.</td><td>Coordinator backs off on streamer failure and preserves FIFO safety.</td></tr>
+        <tr><td class="pkg">@portalshq/capability-realtime-fanout<br><span class="kind">realtime</span></td><td><code>routes/index.ts</code><br><code>chat/gateway.ts</code></td><td>FanoutHub, IDs, and normalized event delivery to browser clients.</td><td>Channel registration guards isolate clients by channel.</td></tr>
+        <tr><td class="pkg">@portalshq/capability-video-delivery + hls.js<br><span class="kind">playback</span></td><td><code>broadcast/runtime.ts</code><br><code>client/src/components/VideoDeliveryPlayer.tsx</code></td><td>Live delivery lifecycle on the server and HLS manifest playback in the client.</td><td>Playback health is monitored; reader REST playback remains independent.</td></tr>
+        <tr><td class="pkg">@google-cloud/storage + resend + firebase-admin<br><span class="kind">side effects</span></td><td><code>storage-manager.ts</code><br><code>notifications/index.ts</code></td><td>Media archive, email reminders, weekly briefing, and push notifications.</td><td>GCS and notification failures are logged; local media fallbacks keep delivery resilient.</td></tr>
+        <tr><td class="pkg">zod + drizzle-zod<br><span class="kind">contracts</span></td><td><code>shared/routes.ts</code><br><code>shared/schema.ts</code></td><td>Request/response validation and schema-derived types shared with the client.</td><td>Invalid inputs fail at route boundaries instead of entering domain logic.</td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="view" id="files">
+      <div class="section-title"><h2>Code index</h2><span>Runtime entry points and the files behind the map</span></div>
+      <div class="file-grid">
+        <article class="file" data-search="index startup middleware"><b>server/index.ts</b><code>startup · middleware · graceful shutdown</code><p>Creates Express + Node HTTP, installs sessions, registers routes, starts scheduler.</p></article>
+        <article class="file" data-search="routes websocket rest"><b>server/routes/index.ts</b><code>REST + WebSocket hub</code><p>Channels, sessions, blocks, chat, votes, playback, and WS lifecycle.</p></article>
+        <article class="file" data-search="admin routes"><b>server/routes/admin-routes.ts</b><code>admin REST</code><p>Channel/session/lore/block/user/settings/schedule control.</p></article>
+        <article class="file" data-search="auth routes"><b>server/routes/auth-routes.ts</b><code>identity REST</code><p>Register, login, logout, current user, username checks.</p></article>
+        <article class="file" data-search="storage db postgres"><b>server/storage.ts + db.ts</b><code>persistence boundary</code><p>Drizzle instance, pool, storage methods, and deferred embedding queue.</p></article>
+        <article class="file" data-search="ai rag embedding providers"><b>server/blocks/*</b><code>context + generation</code><p>RAG, PX, provider selection, structured AI, image references, batch generation.</p></article>
+        <article class="file" data-search="broadcast coordinator runtime slots ambient"><b>server/broadcast/*</b><code>live HLS path</code><p>Runtime, coordinator, ambient pipeline, media slots, config, broadcast routes.</p></article>
+        <article class="file" data-search="scheduler sessions game loop"><b>server/sessions/* + game-loop/*</b><code>time + lifecycle</code><p>Recurring schedules, session seeding, channel tick adapter, legacy reader lifecycle.</p></article>
+        <article class="file" data-search="chat gateway ingestion youtube twitch"><b>server/chat/*</b><code>chat integrations</code><p>Normalize, deduplicate, persist, fan out, and reconnect provider streams.</p></article>
+        <article class="file" data-search="media tts video"><b>server/media/* + routes/tts-routes.ts</b><code>audio + video</code><p>TTS validation/segmentation and optional provider video generation.</p></article>
+        <article class="file" data-search="calendar notifications email push"><b>server/calendar/* + notifications/*</b><code>outbound reminders</code><p>ICS, Google Calendar/email invite, Resend email, Firebase push.</p></article>
+        <article class="file" data-search="static vite middleware admin"><b>server/static.ts + vite.ts</b><code>asset delivery</code><p>Production SPA, dev HMR middleware, and admin static routing.</p></article>
+        <article class="file" data-search="shared schema routes relations"><b>shared/*</b><code>cross-runtime contracts</code><p>Schema, relations, API contracts, session helpers, replay, and channel IDs.</p></article>
+        <article class="file" data-search="logger analytics ai call"><b>server/logger.ts + analytics.ts</b><code>observability</code><p>Structured logs, request timing, AI call audit, and lead analytics.</p></article>
+        <article class="file" data-search="migrations sql"><b>server/migrations/* + migrations/*</b><code>database evolution</code><p>Live broadcast, schedules, video support, and production schema migrations.</p></article>
+      </div>
+      <div class="note"><strong>Source of truth.</strong> This page is a documentation snapshot based on the executable server tree, <code>server/index.ts</code>, route registration, package manifest, and the existing <code>docs/server-flowchart.md</code>. Revisit it when adding a new route family, provider, or delivery capability.</div>
+    </section>
+    <footer>Generated for the massively-social-ebook workspace · open this file directly in a browser · no build step or external CDN required.</footer>
+  </main>
+  <script>
+    const tabs = [...document.querySelectorAll('.tab')];
+    const views = [...document.querySelectorAll('.view')];
+    const search = document.querySelector('#search');
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      views.forEach(v => v.classList.toggle('active', v.id === tab.dataset.view));
+      search.value = ''; applyFilter('');
+    }));
+    function applyFilter(value) {
+      const q = value.trim().toLowerCase();
+      document.querySelectorAll('[data-search]').forEach(el => {
+        el.style.display = !q || el.dataset.search.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+    search.addEventListener('input', e => applyFilter(e.target.value));
+  </script>
+</body>
+</html>

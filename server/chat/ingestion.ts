@@ -2,6 +2,11 @@ import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import pgPromise from 'pg-promise';
 import { IMain, IDatabase } from 'pg-promise';
 
+// NOTE (thin-client review): no production caller wires this service yet —
+// the chat gateway persists reactions through storage instead. Kept because
+// `ingestion.test.ts` covers the batch/DLO behavior; delete only with that
+// test and any future reaction pipeline in mind.
+
 // Types for our ingestion payload
 export interface ReactionEvent {
   reaction_id: string; // BigInt passed as string to avoid JS precision issues

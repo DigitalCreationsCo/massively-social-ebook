@@ -786,7 +786,7 @@ export async function generateAmbientStoryWindow(
     return results.map(({ block, context }) => {
       const { representationProperties, maxUniqueEntityRepresentations } = getEngineSelectionConfig();
       const imageRepresentations = selectImageRepresentations(
-        (context as { entities?: unknown[] }).entities ?? [],
+        (context as { entities?: readonly unknown[] }).entities ?? [],
         representationProperties,
         maxUniqueEntityRepresentations,
       );
