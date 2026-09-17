@@ -21,6 +21,7 @@ vi.mock("@/lib/media-analytics", () => ({
     trackError: vi.fn(),
     trackBufferStart: vi.fn(),
     trackBufferEnd: vi.fn(),
+    handlePlaybackObservation: vi.fn(),
   },
 }));
 

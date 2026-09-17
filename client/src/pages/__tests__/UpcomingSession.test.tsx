@@ -1,108 +1,79 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import UpcomingSession, { getTimezoneDisplay, getTimezoneAbbr } from '../UpcomingSession';
-import { useLiveState } from '@/hooks/use-live-state';
-import { useLocation } from 'wouter';
-import { useToast } from '@/hooks/use-toast';
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import UpcomingSession from '../UpcomingSession';
 
-vi.mock('@tanstack/react-query', () => ({
-    useQuery: vi.fn().mockReturnValue({ data: null, isLoading: false }),
-}));
-vi.mock('@/hooks/use-live-state');
-vi.mock('wouter', () => ({
-    useLocation: vi.fn(),
-    Link: vi.fn(),
-}));
-vi.mock('@/hooks/use-toast', () => ({
-    useToast: vi.fn(),
+vi.mock('@/components/LiveBroadcastSection', () => ({
+    LiveBroadcastSection: ({ channelId }: { channelId?: string }) => (
+        <div data-testid="live-broadcast-section">{channelId ?? 'no channel'}</div>
+    ),
 }));
 
-describe('UpcomingSession routing', () => {
-    const mockSetLocation = vi.fn();
+global.fetch = vi.fn();
 
+function renderPage() {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+        <QueryClientProvider client={queryClient}>
+            <UpcomingSession />
+        </QueryClientProvider>,
+    );
+}
+
+const liveSession = {
+    id: 1,
+    title: 'Season 1: The Great Convergence',
+    description: 'A grand meeting of worlds.',
+    scheduledStart: new Date(Date.now() - 10_000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 1_000_000).toISOString(),
+    status: 'active',
+};
+
+const channel = {
+    id: 1,
+    channelId: '25th-chapter',
+    name: '25th Chapter',
+    description: null,
+    coverImage: null,
+    createdAt: new Date().toISOString(),
+};
+
+describe('UpcomingSession page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (useLocation as any).mockReturnValue(['/upcoming', mockSetLocation]);
-        (useToast as any).mockReturnValue({ toast: vi.fn() });
     });
 
-    const liveSession = {
-        id: 1,
-        title: 'Live Now',
-        scheduledStart: new Date(Date.now() - 10_000).toISOString(),
-        scheduledEnd: new Date(Date.now() + 1_000_000).toISOString(),
-    };
+    it('shows a loading state while the next session loads', () => {
+        vi.mocked(global.fetch).mockReturnValue(new Promise(() => {}));
+        renderPage();
 
-    it('redirects to / when isSessionLive is true', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            wsConnected: true,
-            isSessionLive: true,
-            sessionStatus: 'active',
-            activeSession: liveSession,
+        expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    });
+
+    it('renders the live broadcast section and hero content once the session loads', async () => {
+        vi.mocked(global.fetch).mockResolvedValue(
+            new Response(JSON.stringify({ session: liveSession, channel })),
+        );
+        renderPage();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('live-broadcast-section')).toBeInTheDocument();
         });
-
-        render(<UpcomingSession />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/');
+        expect(screen.getByText(/one mystery/i)).toBeInTheDocument();
+        expect(screen.getByText(/take part in the ongoing mystery/i)).toBeInTheDocument();
     });
 
-    it('redirects to / for scheduled status inside the live window', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            wsConnected: true,
-            isSessionLive: true,
-            sessionStatus: 'scheduled',
-            activeSession: liveSession,
+    it('renders the FAQ section', async () => {
+        vi.mocked(global.fetch).mockResolvedValue(
+            new Response(JSON.stringify({ session: liveSession, channel })),
+        );
+        renderPage();
+
+        await waitFor(() => {
+            expect(screen.getByText(/everything you need to know/i)).toBeInTheDocument();
         });
-
-        render(<UpcomingSession />);
-        expect(mockSetLocation).toHaveBeenCalledWith('/');
-    });
-
-    it('does not redirect before WebSocket connects', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            wsConnected: false,
-            isSessionLive: true,
-            sessionStatus: 'active',
-            activeSession: liveSession,
-        });
-
-        render(<UpcomingSession />);
-        expect(mockSetLocation).not.toHaveBeenCalled();
-    });
-
-    it('stays on upcoming for a future scheduled session', () => {
-        (useLiveState as any).mockReturnValue({
-            isLoading: false,
-            wsConnected: true,
-            isSessionLive: false,
-            sessionStatus: 'scheduled',
-            activeSession: {
-                id: 1,
-                title: 'The Great Convergence',
-                description: 'A grand meeting of worlds.',
-                scheduledStart: new Date(Date.now() + 86400000).toISOString(),
-                scheduledEnd: new Date(Date.now() + 86400000 + 1_500_000).toISOString(),
-            },
-        });
-
-        render(<UpcomingSession />);
-        expect(mockSetLocation).not.toHaveBeenCalled();
-        expect(screen.getAllByText(/The next story starts soon/i)[0]).toBeInTheDocument();
-    });
-});
-
-describe('getTimezoneDisplay', () => {
-    it('returns a label for a valid timezone and falls back for invalid input', () => {
-        expect(getTimezoneDisplay('America/New_York').length).toBeGreaterThan(0);
-        expect(getTimezoneDisplay('Invalid/Timezone')).toBe('Invalid/Timezone');
-    });
-});
-
-describe('getTimezoneAbbr', () => {
-    it('returns a short label for valid timezones and empty string for invalid', () => {
-        expect(typeof getTimezoneAbbr('America/New_York')).toBe('string');
-        expect(getTimezoneAbbr('Invalid/Timezone')).toBe('');
+        expect(screen.getByText(/how do episodes work/i)).toBeInTheDocument();
     });
 });
