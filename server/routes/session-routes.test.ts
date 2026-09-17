@@ -4,6 +4,7 @@ import request from 'supertest';
 import { registerRoutes } from '.';
 import { storage } from '../storage';
 import { createServer } from 'http';
+import { seedTestChannelRegistry } from '../test-utils';
 
 // Mock DB to avoid actual database connection
 vi.mock('server/db', () => ({
@@ -26,6 +27,7 @@ vi.mock('../storage', () => ({
         getUserByEmail: vi.fn(),
         updateUserPushToken: vi.fn(),
         createUser: vi.fn(),
+        getSystemSetting: vi.fn().mockResolvedValue(null),
     },
 }));
 
@@ -45,6 +47,7 @@ describe('Session REST API', () => {
         beforeEach(async () => {
             vi.clearAllMocks();
             process.env.ADMIN_TOKEN = 'test-token';
+            seedTestChannelRegistry();
             app = express();
             app.use(express.json());
 

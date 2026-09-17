@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { registerRoutes } from './routes';
 import { createServer } from 'http';
+import { seedTestChannelRegistry } from './test-utils';
 
 // Mock storage and AI to avoid side effects
 vi.mock('./storage', () => ({
@@ -12,6 +13,7 @@ vi.mock('./storage', () => ({
         listSessions: vi.fn(),
         getCurrentBlock: vi.fn(),
         getRecentChat: vi.fn(),
+        getSystemSetting: vi.fn().mockResolvedValue(null),
     },
 }));
 
@@ -30,6 +32,7 @@ describe('Admin Security Middleware', () => {
     beforeEach(async () => {
         process.env.ADMIN_TOKEN = ADMIN_TOKEN;
         process.env.NODE_ENV = 'production';
+        seedTestChannelRegistry();
         app = express();
         app.use(express.json());
         const server = createServer(app);

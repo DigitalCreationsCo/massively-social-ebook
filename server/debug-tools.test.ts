@@ -4,6 +4,7 @@ import request from 'supertest';
 import { registerRoutes } from './routes';
 import { storage } from './storage';
 import { createServer } from 'http';
+import { seedTestChannelRegistry } from './test-utils';
 
 // Mock everything needed for routes.ts initialization
 vi.mock('./storage', () => ({
@@ -25,6 +26,7 @@ vi.mock('./storage', () => ({
         getChannel: vi.fn(),
         updateSessionStatus: vi.fn(),
         getBlocksBySessionOrdered: vi.fn(),
+        getSystemSetting: vi.fn().mockResolvedValue(null),
     },
 }));
 
@@ -45,6 +47,7 @@ describe('Debug Tools API', () => {
     beforeEach(async () => {
         vi.clearAllMocks();
         process.env.ADMIN_TOKEN = ADMIN_TOKEN;
+        seedTestChannelRegistry();
         app = express();
         app.use(express.json());
         
