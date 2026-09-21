@@ -310,79 +310,15 @@ describe("broadcast media slots", () => {
     );
   });
 
-  it("preserves archived-image fallback when generation exhausts retries", async () => {
+  it("skips the ambient turn when image generation exhausts retries (player holds last frame)", async () => {
     images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
-    storage.getRandomImage.mockResolvedValue("https://archive.example/fallback.jpg");
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(Buffer.from("fallback-bytes") as unknown as BodyInit, {
-        status: 200,
-        headers: { "content-type": "image/jpeg" },
-      }),
-    );
     speech.synthesizeNarrationBuffers.mockResolvedValue([]);
-    try {
-      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 4, new AbortController().signal);
-      expect(prepared?.image).toBeDefined();
-      expect(storage.getRandomImage).toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("repeats the most recent canonical image before choosing a random fallback", async () => {
-    images.generateStoryImageAsset.mockRejectedValue(new Error("quota exhausted"));
-    storage.getLastBlock.mockResolvedValue({ imageUrl: "https://archive.example/latest.jpg" });
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(Buffer.from("latest-bytes") as unknown as BodyInit, {
-        status: 200,
-        headers: { "content-type": "image/jpeg" },
-      }),
-    );
-    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
-    try {
-      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 40, new AbortController().signal);
-      expect(prepared?.image).toBeDefined();
-      expect(storage.getLastBlock).toHaveBeenCalledWith("main");
-      expect(storage.getRandomImage).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-      storage.getLastBlock.mockReset();
-    }
-  });
-
-  it("recovers an archived image via SDK when public fetch returns 403", async () => {
-    images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
-    storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg");
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response("forbidden", { status: 403 }),
-    );
-    images.downloadArchiveBuffer.mockResolvedValueOnce(Buffer.from("sdk-bytes"));
-    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
-    try {
-      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 5, new AbortController().signal);
-      expect(prepared?.image).toBeDefined();
-      expect(images.downloadArchiveBuffer).toHaveBeenCalledWith(
-        "https://storage.googleapis.com/test-bucket/channels/main/images/ambient/x.jpg",
-      );
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("skips the turn when a 403 archive is unreadable even via SDK", async () => {
-    images.generateStoryImageAsset.mockRejectedValue(new Error("provider down"));
-    storage.getRandomImage.mockResolvedValue("https://storage.googleapis.com/test-bucket/channels/main/images/ambient/y.jpg");
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("forbidden", { status: 403 }),
-    );
-    images.downloadArchiveBuffer.mockResolvedValue(null);
-    speech.synthesizeNarrationBuffers.mockResolvedValue([]);
-    try {
-      const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 6, new AbortController().signal);
-      expect(prepared).toBeUndefined();
-      expect(images.downloadArchiveBuffer).toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    const prepared = await prepareAmbientTurnFromText("main", { title: "T", content: "C", dialogue: "D", imageRepresentations: [] }, "run-1", 4, new AbortController().signal);
+    expect(prepared).toBeUndefined();
+    // No archived fallback: narrative continuity forbids reusing old canonical
+    // images, so no archive storage is consulted at all.
+    expect(storage.getRandomImage).not.toHaveBeenCalled();
+    expect(storage.getLastBlock).not.toHaveBeenCalled();
+    expect(images.downloadArchiveBuffer).not.toHaveBeenCalled();
   });
 });

@@ -1,36 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  mockGoogle,
-  mockGoogleImage,
-  mockGoogleEmbedding,
   mockOpenAI,
   mockOpenAIImage,
   mockOpenAIEmbedding,
   mockOpenCode,
-  mockCreateGoogle,
   mockCreateOpenAI,
   mockCreateOpenCode,
+  mockVertex,
+  mockCreateVertex,
 } = vi.hoisted(() => {
-  const google = vi.fn();
-  Object.assign(google, { image: vi.fn(), embedding: vi.fn() });
   const openai = vi.fn();
   Object.assign(openai, { image: vi.fn(), embedding: vi.fn() });
   const opencode = vi.fn();
+  const vertex = vi.fn();
 
   return {
-    mockGoogle: google,
-    mockGoogleImage: google.image,
-    mockGoogleEmbedding: google.embedding,
     mockOpenAI: openai,
     mockOpenAIImage: openai.image,
     mockOpenAIEmbedding: openai.embedding,
     mockOpenCode: opencode,
-    mockCreateGoogle: vi.fn(() => google),
     mockCreateOpenAI: vi.fn(() => openai),
     mockCreateOpenCode: vi.fn(() => opencode),
+    mockVertex: vertex,
+    mockCreateVertex: vi.fn(() => vertex),
   };
 });
+
+vi.mock("@ai-sdk/google-vertex", () => ({ createGoogleVertex: mockCreateVertex }));
 
 vi.mock("@ai-sdk/google", () => ({ createGoogleGenerativeAI: mockCreateGoogle }));
 vi.mock("@ai-sdk/openai", () => ({ createOpenAI: mockCreateOpenAI }));
@@ -42,7 +39,7 @@ vi.mock("@fal-ai/client", () => ({
   },
 }));
 
-import { getEmbeddingModel, getImageModel, getLanguageModel, getAiConfiguration, generateProviderImage, generateProviderVideo, getVideoCostControlState, getVideoSavingConfig } from "./ai-provider";
+import { getEmbeddingModel, getImageModel, getLanguageModel, getAiConfiguration, generateProviderImage, generateProviderVideo, getVideoCostControlState, getVideoSavingConfig, __resetVideoCostForTests } from "./ai-provider";
 
 describe("AI SDK provider selection", () => {
   beforeEach(() => {
@@ -71,23 +68,20 @@ describe("AI SDK provider selection", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it("uses Gemini by default while supporting the legacy GEMINI_API_KEY", () => {
+  it("uses Vertex with the project id by default", () => {
     getLanguageModel();
 
-    expect(mockCreateGoogle).toHaveBeenCalledWith({ apiKey: "gemini-key" });
-    expect(mockGoogle).toHaveBeenCalledWith("gemini-3.1-flash-lite-preview");
+    expect(mockCreateVertex).toHaveBeenCalledWith({ project: "test-project" });
+    expect(mockVertex).toHaveBeenCalledWith("gemini-3.7-flash");
   });
 
   it("switches text generation to an OpenCode model", () => {
     vi.stubEnv("AI_TEXT_PROVIDER", "opencode");
     vi.stubEnv("AI_TEXT_MODEL", "openai/gpt-4o-mini");
-    vi.stubEnv("OPENCODE_BASE_URL", "http://localhost:4096");
 
     getLanguageModel();
 
-    expect(mockCreateOpenCode).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: "http://localhost:4096" }),
-    );
+    expect(mockCreateOpenCode).toHaveBeenCalledWith();
     expect(mockOpenCode).toHaveBeenCalledWith("openai/gpt-4o-mini");
   });
 
@@ -105,10 +99,15 @@ describe("AI SDK provider selection", () => {
     expect(mockOpenAIEmbedding).toHaveBeenCalledWith("text-embedding-3-small");
   });
 
-  it("rejects OpenCode for image generation", () => {
+  it("rejects providers without a direct image model", () => {
     vi.stubEnv("AI_IMAGE_PROVIDER", "opencode");
 
     expect(() => getImageModel()).toThrow("OpenCode does not expose an AI SDK image model");
+
+    vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
+    vi.stubEnv("AI_IMAGE_MODEL", "meta/muse-image");
+
+    expect(() => getImageModel()).toThrow("direct Images API");
   });
 
   it("defaults openrouter image model to meta/muse-image", () => {
@@ -116,13 +115,6 @@ describe("AI SDK provider selection", () => {
     vi.stubEnv("AI_VIDEO_PROVIDER", ""); // Clear video provider to avoid conflicts
 
     expect(getAiConfiguration().image).toEqual({ provider: "openrouter", model: "meta/muse-image" });
-  });
-
-  it("rejects OpenRouter for getImageModel (direct Images API client)", () => {
-    vi.stubEnv("AI_IMAGE_PROVIDER", "openrouter");
-    vi.stubEnv("AI_IMAGE_MODEL", "meta/muse-image");
-
-    expect(() => getImageModel()).toThrow("direct Images API");
   });
 
   describe("generateProviderImage via OpenRouter Images API", () => {
@@ -230,8 +222,7 @@ describe("AI SDK provider selection", () => {
 
     it("tracks video cost control state", () => {
       // Reset cost state for clean test
-      const { costControlState } = require("./ai-provider");
-      costControlState.spentTodayUsd = 0;
+      __resetVideoCostForTests();
       
       const state = getVideoCostControlState();
       expect(state.dailyBudgetUsd).toBe(10);

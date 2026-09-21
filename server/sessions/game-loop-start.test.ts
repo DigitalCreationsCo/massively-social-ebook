@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { handleGameLoopTick, START_BEFORE_MS } from '../routes';
+import { handleGameLoopTick, START_BEFORE_MS, clearChannelCache } from '../routes';
 import { storage } from '../storage';
 
 vi.mock('../storage', () => ({
@@ -8,11 +8,13 @@ vi.mock('../storage', () => ({
         getChannelState: vi.fn(),
         getNextSession: vi.fn(),
         getSessionById: vi.fn(),
+        listSessions: vi.fn().mockResolvedValue([]),
         upsertChannelState: vi.fn(),
         tryAcquireGameLock: vi.fn().mockResolvedValue(true),
         releaseGameLock: vi.fn().mockResolvedValue(undefined),
         getCurrentBlock: vi.fn(),
         getLastBlock: vi.fn(),
+        getBlocksBySessionOrdered: vi.fn().mockResolvedValue([]),
         createBlock: vi.fn(),
         updateSessionStatus: vi.fn(),
     },
@@ -25,6 +27,7 @@ describe('Game Loop Session Start', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        clearChannelCache();
     });
 
     afterEach(() => {

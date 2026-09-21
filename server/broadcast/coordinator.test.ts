@@ -25,9 +25,15 @@ const blocksMock = vi.hoisted(() => ({
   generateAmbientStoryWindow: vi.fn(async (_channelId: string, _tail: string, _need: number) => [{ title: "Ambient", content: `b-roll-${Math.random()}` }]),
 }));
 
+const monetizationMock = vi.hoisted(() => ({
+  getNextQueuedPrompt: vi.fn().mockResolvedValue(undefined),
+  markPromptApplied: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("./media-slots", () => mediaMock);
 vi.mock("../blocks/ai", () => blocksMock);
+vi.mock("../monetization/service", () => monetizationMock);
 
 import { BroadcastCoordinator } from "./coordinator";
 
@@ -786,12 +792,10 @@ describe("BroadcastCoordinator", () => {
     await (coordinator as any).ensureStagedSlots(session, 1, new AbortController().signal);
 
     expect(blocksMock.generateCanonicalStoryWindow).toHaveBeenCalledWith("main", "", 1, 9);
-    expect(mediaMock.finishCanonicalSlot).toHaveBeenCalledWith(
-      "main",
-      session,
-      expect.objectContaining({ title: "Fresh", content: "fresh text" }),
-      expect.anything(),
-    );
+    const finishCall = mediaMock.finishCanonicalSlot.mock.calls[0];
+    expect(finishCall?.[0]).toBe("main");
+    expect(finishCall?.[1]).toMatchObject({ id: 9, channelId: "main", status: "preparing" });
+    expect(finishCall?.[2]).toMatchObject({ title: "Fresh", content: "fresh text" });
   });
 
   it("does not deadlock the ambient commit chain when an earlier concurrent worker fails", async () => {
