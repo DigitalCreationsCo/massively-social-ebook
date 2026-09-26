@@ -2,34 +2,45 @@
 
 # Run the release guard only when this push targets main.
 #
-# Two sources of truth, because neither alone is reliable here:
+# The refs being pushed arrive on stdin, one per line:
+#   <local ref> SP <local sha> SP <remote ref> SP <remote sha>
+# The remote ref is the third field, and it is the only reliable source of
+# truth here: argv carries just <remote> <url>, so a hook that inspects argv
+# cannot tell what is being pushed and skips the guard whenever main is pushed
+# while standing on some other branch.
 #
-#   * git documents pre-push args as <remote> <url> [<ref> <sha> <ref> <sha> ...],
-#     so when it supplies refspecs the remote ref is every third argument from
-#     the third onwards. That is the accurate answer for an explicit
-#     `git push origin main feature/x`.
-#   * Some git/husky combinations invoke the hook with only <remote> <url> and
-#     no refspecs at all, so there is nothing to inspect. Fall back to whether
-#     HEAD tracks origin/main, which is correct for a bare `git push`.
-#
-# The previous version read only HEAD's upstream, which meant a branch with no
-# upstream aborted the hook (so the first push of a new branch was impossible)
-# and pushing main from another branch skipped the check.
+# Older git passed the refspecs as trailing arguments instead, so argv is still
+# consulted when stdin carries nothing, and HEAD's upstream is the last resort
+# when neither is available.
 pushing_main=false
+saw_refs=false
 
-if [ "$#" -ge 6 ]; then
-  shift 2  # drop <remote> <url>; now groups of 4 begin at $1
+while read -r local_ref local_sha remote_ref remote_sha; do
+  saw_refs=true
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    pushing_main=true
+    break
+  fi
+done
+
+if [ "$saw_refs" = false ] && [ "$#" -ge 6 ]; then
+  # legacy: <remote> <url> then groups of four beginning at $1
+  shift 2
   while [ "$#" -ge 4 ]; do
-    # $1 local ref, $2 local sha, $3 remote ref, $4 remote sha
     if [ "$3" = "refs/heads/main" ]; then
       pushing_main=true
       break
     fi
     shift 2
   done
-else
+fi
+
+if [ "$saw_refs" = false ] && [ "$#" -eq 2 ]; then
+  # no ref information at all: best effort from what HEAD tracks
   upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
-  [ "$upstream" = "origin/main" ] && pushing_main=true
+  if [ "$upstream" = "origin/main" ]; then
+    pushing_main=true
+  fi
 fi
 
 if [ "$pushing_main" = true ]; then
