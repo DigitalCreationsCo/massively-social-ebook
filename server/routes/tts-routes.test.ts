@@ -413,6 +413,31 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
    * to the real Hugging Face API.  Returns the mock so callers can add more
    * behaviour if needed, and sets uploadAudio to succeed by default.
    */
+  /**
+   * A minimal but structurally valid WAV: RIFF/WAVE header, a 16-byte `fmt `
+   * chunk declaring 8000 bytes/sec mono 8-bit, and a data chunk. The service
+   * probes duration from these fields and throws on anything that is not a real
+   * WAV, so a placeholder byte string is not enough.
+   */
+  function fakeWav(dataBytes = 4000): Buffer {
+    const byteRate = 8000;
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0, "ascii");
+    header.writeUInt32LE(36 + dataBytes, 4);
+    header.write("WAVE", 8, "ascii");
+    header.write("fmt ", 12, "ascii");
+    header.writeUInt32LE(16, 16);          // PCM fmt chunk size
+    header.writeUInt16LE(1, 20);           // PCM
+    header.writeUInt16LE(1, 22);           // mono
+    header.writeUInt32LE(8000, 24);        // sample rate
+    header.writeUInt32LE(byteRate, 28);    // byte rate
+    header.writeUInt16LE(1, 32);           // block align
+    header.writeUInt16LE(8, 34);           // bits per sample
+    header.write("data", 36, "ascii");
+    header.writeUInt32LE(dataBytes, 40);
+    return Buffer.concat([header, Buffer.alloc(dataBytes)]);
+  }
+
   function mockHfApi(eventId: string, audioBody?: Buffer) {
     const sseBody =
       `data: {"data": [{"path": "/tmp/audio.wav", "orig_name": "audio.wav"}]}\n\n`;
@@ -427,7 +452,7 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
       .mockResolvedValueOnce(new Response(sseBody, { status: 200 }))
       // 3. GET audio download → bytes
       .mockResolvedValueOnce(
-        new Response(audioBody ?? Buffer.from("audio bytes"), {
+        new Response(audioBody ?? fakeWav(), {
           status: 200,
           headers: { "Content-Type": "audio/wav" },
         }),
@@ -447,9 +472,8 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
     };
   }
 
-  it("returns a relative /api/tts/audio/ URL when GCS is configured", async () => {
-    const eventId = "evt-12345";
-    const restoreFetch = mockHfApi(eventId);
+  it("returns the GCS public URI when GCS is configured", async () => {
+    const restoreFetch = mockHfApi("evt-12345");
 
     const res = await request(app)
       .post("/api/tts/generate")
@@ -459,13 +483,16 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("audioUrl");
-
-    const { audioUrl } = res.body;
-    expect(audioUrl).toBe(`/api/tts/audio/tts-${eventId}.wav`);
-    expect(audioUrl).not.toContain("storage.googleapis.com");
+    // storeAudio uploads to GCS and hands back the bucket's public URI. This
+    // requires the bucket to be publicly readable; the same-origin
+    // /api/tts/audio/ proxy exists for streaming but is not what is returned
+    // here. See the note in docs/ if the bucket should be private instead.
+    expect(res.body.audioUrl).toMatch(
+      /^https:\/\/storage\.googleapis\.com\/test-bucket\/audio\/tts-.+\.wav$/,
+    );
   });
 
-  it("still uploads audio to GCS even though it returns a proxy URL", async () => {
+  it("uploads the generated audio to GCS", async () => {
     const eventId = "evt-upload-check";
     const restoreFetch = mockHfApi(eventId);
 
@@ -476,11 +503,12 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
     restoreFetch();
 
     expect(res.status).toBe(200);
-    // Verify the audio was actually uploaded to GCS (not just proxied)
+    // The object name is generated per call, so match its shape rather than a
+    // specific id.
     expect(mockGcsInstance.uploadAudio).toHaveBeenCalledWith(
       expect.any(Buffer),
       expect.objectContaining({
-        fileName: `tts-${eventId}.wav`,
+        fileName: expect.stringMatching(/^tts-.+\.wav$/),
         mimeType: "audio/wav",
       }),
     );
@@ -496,9 +524,9 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
   });
 
   it("rejects request when TTS API is not configured", async () => {
-    // hfApiUrl is captured at registerTtsRoutes() call time, so we must
-    // build a fresh app with all TTS env vars unset.  VITE_TTS_API_URL is
-    // a fallback for HF_TTS_API_URL, so both must go.
+    // generateSpeechBuffer reads its env per call, not at registration, so the
+    // variables have to still be unset when the request is actually made.
+    // VITE_TTS_API_URL is a fallback for HF_TTS_API_URL, so both must go.
     const origUrl = process.env.HF_TTS_API_URL;
     const origViteUrl = process.env.VITE_TTS_API_URL;
     const origToken = process.env.HF_TOKEN;
@@ -506,17 +534,19 @@ describe("storeAudio behavior (via generation endpoint contract)", () => {
     delete process.env.VITE_TTS_API_URL;
     delete process.env.HF_TOKEN;
 
-    const appWithoutApi = buildApp();
+    try {
+      const appWithoutApi = buildApp();
 
-    if (origUrl) process.env.HF_TTS_API_URL = origUrl;
-    if (origViteUrl) process.env.VITE_TTS_API_URL = origViteUrl;
-    if (origToken) process.env.HF_TOKEN = origToken;
+      const res = await request(appWithoutApi)
+        .post("/api/tts/generate")
+        .send({ text: "test" });
 
-    const res = await request(appWithoutApi)
-      .post("/api/tts/generate")
-      .send({ text: "test" });
-
-    expect(res.status).toBe(500);
-    expect(res.body.error).toContain("TTS API URL not configured");
+      expect(res.status).toBe(500);
+      expect(res.body.error).toContain("TTS API URL not configured");
+    } finally {
+      if (origUrl) process.env.HF_TTS_API_URL = origUrl;
+      if (origViteUrl) process.env.VITE_TTS_API_URL = origViteUrl;
+      if (origToken) process.env.HF_TOKEN = origToken;
+    }
   });
 });

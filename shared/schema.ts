@@ -533,7 +533,7 @@ export const chat = pgTable(
       .notNull()
       .defaultNow(),
     provenance: jsonb("provenance")
-      .$type<{ kind: "portals" | "external"; provider?: string; providerMessageId?: string }>()
+      .$type<{ kind: "portals" | "external"; provider?: string; providerMessageId?: string; paid?: boolean; purchaseId?: string }>()
       .notNull()
       .default({ kind: "portals" }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -602,6 +602,38 @@ export const insertUserSchema = createInsertSchema(users).omit({
 });
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+
+// ─── Monetization ────────────────────────────────────────────────────────────
+//
+// Purchases, webhook events, and entitlement grants are owned by
+// `@portalshq/monetization` (its schema is installed from the package's
+// sql/001_monetization.sql). This app does not mirror or extend those tables.
+//
+// `promptRequests` stays because it is application data, not billing data: it is
+// the creative direction a superchat bought, which the broadcast coordinator
+// spends an entitlement credit against. It links to a purchase by id without a
+// foreign key, because the referenced table is owned by another package.
+export const promptRequests = pgTable(
+  "prompt_requests",
+  {
+    id: serial("id").primaryKey(),
+    purchaseId: text("purchase_id").notNull().unique(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.channelId, { onDelete: "cascade" }),
+    promptText: text("prompt_text").notNull(),
+    status: text("status").notNull().default("queued"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    fulfilledAt: timestamp("fulfilled_at", { withTimezone: true }),
+  },
+  (table) => ({
+    promptQueueIdx: index("prompt_requests_queue_idx").on(table.channelId, table.status, table.createdAt),
+  }),
+);
+export type PromptRequest = typeof promptRequests.$inferSelect;
 
 // Note Likes table - allows users to like notes (chat messages on blocks)
 export const noteLikes = pgTable(

@@ -21,18 +21,20 @@ describe('Storyblock', () => {
         turnsToNextChoice: 5
     };
 
-    it('positions narrative content at the bottom (justify-end)', () => {
+    it('centers narrative content vertically (justify-center)', () => {
         const { getByText } = render(<Storyblock block={ mockBlock } />);
 
-        // Find the story title and walk up to find the container with centering classes
+        // Walk up from the title to the scroll container that positions the
+        // narrative block. The shipped layout centers this content; it is not
+        // bottom-aligned.
         const title = getByText('Test Story');
         let container = title.parentElement;
-        while (container && !container.classList.contains('justify-end')) {
+        while (container && !container.classList.contains('justify-center')) {
             container = container.parentElement;
         }
 
         expect(container).not.toBeNull();
-        expect(container).toHaveClass('justify-end');
+        expect(container).toHaveClass('justify-center');
     });
 
     it('renders the story content', () => {
@@ -43,6 +45,6 @@ describe('Storyblock', () => {
 
     it('renders a waiting state when no block is provided', () => {
         const { getByText } = render(<Storyblock />);
-        expect(getByText('Awaiting Story')).toBeInTheDocument();
+        expect(getByText('Loading')).toBeInTheDocument();
     });
 });

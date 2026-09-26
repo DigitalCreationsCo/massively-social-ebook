@@ -11,6 +11,7 @@ import type { WsMessage } from "@shared/schema";
 import { ChatGateway } from "../chat/gateway";
 import { ExternalChatConnectors } from "../chat/providers";
 import { logger } from "../logger";
+import { getDispatcher } from "../monetization/monetization";
 import { BroadcastCoordinator, type BroadcastCoordinatorStatus } from "./coordinator";
 import {
   createTimeoutFetch,
@@ -96,6 +97,40 @@ export class BroadcastRuntime {
       await this.ensureEngineActive(channel.config.channelId);
     }
     this.externalChat.start();
+    this.startSettlementDrain();
+  }
+
+  /**
+   * Drains the billing settlement outbox on an interval.
+   *
+   * The outbox is what applies entitlements after a purchase settles, so nothing
+   * is delivered to a buyer until this runs. It is a plain interval rather than a
+   * queue worker because this app has no worker host; the drain is idempotent per
+   * Stripe event, so an overlapping tick is wasted work, not a double charge. A
+   * `draining` guard skips ticks that would overlap and a never-ending rejection
+   * backs off rather than hammering the log.
+   */
+  private startSettlementDrain(): void {
+    const intervalMs = Number(process.env.MONETIZATION_DRAIN_INTERVAL_MS ?? 5_000);
+    if (!Number.isFinite(intervalMs) || intervalMs < 1_000) return;
+    let draining = false;
+    const tick = async () => {
+      if (draining) return;
+      draining = true;
+      try {
+        const result = await getDispatcher().drainOnce();
+        if (result.delivered > 0 || result.parked > 0) {
+          logger.info("Settlement drained", "monetization", { ...result });
+        }
+      } catch (cause) {
+        logger.warn("Settlement drain failed", "monetization", cause);
+      } finally {
+        draining = false;
+      }
+    };
+    const timer = setInterval(() => void tick(), intervalMs);
+    // Do not hold the process open just for settlement.
+    timer.unref?.();
   }
 
   hasChannel(channelId: string): boolean {

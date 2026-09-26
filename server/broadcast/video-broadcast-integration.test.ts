@@ -1,4 +1,59 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// The generation, TTS, and storage layers are mocked: this suite exercises the
+// slot composition in media-slots, and without these the real AI, TTS, and
+// archive providers are called over the network.
+const mocks = vi.hoisted(() => ({
+  generateStoryBlock: vi.fn(),
+  generateStoryImageAsset: vi.fn(),
+  generateVideoAsset: vi.fn(),
+  generateMockVideoAsset: vi.fn(),
+  synthesizeNarrationBuffers: vi.fn(),
+  archiveSpeechBuffer: vi.fn(),
+  archiveStoryImage: vi.fn(),
+  archiveVideo: vi.fn(),
+  downloadArchiveBuffer: vi.fn(),
+  downloadArchiveVideo: vi.fn(),
+  videoToUploadAsset: vi.fn(),
+  getSettings: vi.fn(),
+  updateSettings: vi.fn(),
+  saveAsset: vi.fn(),
+  createBlock: vi.fn(),
+}));
+
+vi.mock("../blocks/ai", () => ({ generateStoryBlock: mocks.generateStoryBlock }));
+vi.mock("../image-uploader", () => ({
+  generateStoryImageAsset: mocks.generateStoryImageAsset,
+  archiveStoryImage: mocks.archiveStoryImage,
+  downloadArchiveBuffer: mocks.downloadArchiveBuffer,
+}));
+vi.mock("../media/tts-service", () => ({
+  synthesizeNarrationBuffers: mocks.synthesizeNarrationBuffers,
+  archiveSpeechBuffer: mocks.archiveSpeechBuffer,
+}));
+vi.mock("../media/video-service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../media/video-service")>()),
+  generateVideoAsset: mocks.generateVideoAsset,
+  generateMockVideoAsset: mocks.generateMockVideoAsset,
+  archiveVideo: mocks.archiveVideo,
+  downloadArchiveVideo: mocks.downloadArchiveVideo,
+  videoToUploadAsset: mocks.videoToUploadAsset,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs/promises")>()),
+  // An ESM namespace cannot be spied on, so the static-file read is stubbed at
+  // the module boundary. Returns a minimal ftyp box so the probe sees a video.
+  readFile: vi.fn().mockResolvedValue(Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70])),
+}));
+vi.mock("../storage", () => ({
+  storage: {
+    getSettings: mocks.getSettings,
+    updateSettings: mocks.updateSettings,
+    saveAsset: mocks.saveAsset,
+    createBlock: mocks.createBlock,
+  },
+}));
+
 import { 
   prepareAmbientTurnFromText,
   finishCanonicalSlot,
@@ -7,7 +62,44 @@ import {
 } from "./media-slots";
 import type { VideoSourceConfig } from "../media/video-service";
 
+const VIDEO_BUFFER = {
+  buffer: Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]),
+  durationSeconds: 6,
+  extension: "mp4",
+  mimeType: "video/mp4",
+  filename: "slot.mp4",
+};
+const IMAGE_ASSET = {
+  buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  mimeType: "image/jpeg" as const,
+  filename: "slot.jpg",
+};
+
 describe("Video Broadcast Integration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Defaults for a healthy video turn. Individual tests override the one
+    // collaborator they are exercising (usually to make it fail).
+    mocks.generateStoryImageAsset.mockResolvedValue(IMAGE_ASSET);
+    mocks.generateVideoAsset.mockResolvedValue({ video: VIDEO_BUFFER, archiveUrl: "https://archive.test/slot.mp4" });
+    mocks.generateMockVideoAsset.mockResolvedValue({ video: VIDEO_BUFFER, archiveUrl: "https://archive.test/slot.mp4" });
+    mocks.synthesizeNarrationBuffers.mockResolvedValue([]);
+    mocks.archiveSpeechBuffer.mockResolvedValue("https://archive.test/slot.mp3");
+    mocks.archiveStoryImage.mockResolvedValue("https://archive.test/slot.jpg");
+    mocks.archiveVideo.mockResolvedValue("https://archive.test/slot.mp4");
+    mocks.downloadArchiveBuffer.mockResolvedValue(IMAGE_ASSET.buffer);
+    mocks.downloadArchiveVideo.mockResolvedValue(VIDEO_BUFFER);
+    mocks.videoToUploadAsset.mockResolvedValue({
+      data: new Blob([new Uint8Array([0x00, 0x00, 0x00, 0x20])], { type: "video/mp4" }),
+      filename: "slot.mp4",
+      sha256: "0".repeat(64),
+    });
+    mocks.getSettings.mockResolvedValue({});
+    mocks.updateSettings.mockResolvedValue(undefined);
+    mocks.saveAsset.mockResolvedValue(undefined);
+    mocks.createBlock.mockImplementation(async (blockData: unknown) => ({ id: "block-1", ...(blockData as object) }));
+  });
+
   describe("Ambient Mode with Video", () => {
     it("should generate ambient turn with video from URL source", async () => {
       const videoConfig: VideoSourceConfig = {
@@ -57,10 +149,6 @@ describe("Video Broadcast Integration", () => {
         mimeType: "video/mp4"
       };
 
-      const fs = await import("node:fs/promises");
-      vi.spyOn(fs, "readFile").mockResolvedValue(
-        Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70])
-      );
 
       const generated = {
         title: "Ambient Scene",
@@ -86,7 +174,7 @@ describe("Video Broadcast Integration", () => {
       expect(turn?.segments).toHaveLength(1);
     });
 
-    it("should fall back to image when video generation fails", async () => {
+    it("returns undefined when both video and image generation fail", async () => {
       const videoConfig: VideoSourceConfig = {
         type: "url",
         source: "https://invalid-url.com/video.mp4"
@@ -105,6 +193,11 @@ describe("Video Broadcast Integration", () => {
         selectedImageRepresentations: []
       };
 
+      // With a videoConfig present the source uses generateMockVideoAsset, not
+      // generateVideoAsset. Both it and the image fallback must fail.
+      mocks.generateMockVideoAsset.mockRejectedValue(new Error("video provider unavailable"));
+      mocks.generateStoryImageAsset.mockRejectedValue(new Error("image provider unavailable"));
+
       const turn = await prepareAmbientTurnFromText(
         "test-channel",
         generated,
@@ -115,7 +208,7 @@ describe("Video Broadcast Integration", () => {
         videoConfig
       );
 
-      // Should return undefined when both video and image fail
+      // Both providers failed, so there is nothing to broadcast.
       expect(turn).toBeUndefined();
     });
 

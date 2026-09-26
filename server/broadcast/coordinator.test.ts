@@ -26,8 +26,9 @@ const blocksMock = vi.hoisted(() => ({
 }));
 
 const monetizationMock = vi.hoisted(() => ({
-  getNextQueuedPrompt: vi.fn().mockResolvedValue(undefined),
-  markPromptApplied: vi.fn().mockResolvedValue(undefined),
+  claimPaidDirection: vi.fn().mockResolvedValue(undefined),
+  completePaidDirection: vi.fn().mockResolvedValue(true),
+  abandonPaidDirection: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));

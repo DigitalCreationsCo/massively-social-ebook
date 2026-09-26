@@ -30,6 +30,7 @@ import {
 } from "../game-loop/channel-tick";
 import { BroadcastRuntime } from "../broadcast/runtime";
 import { getChatIdentity, registerBroadcastRoutes } from "../broadcast/routes";
+import { registerMonetizationRoutes } from "../monetization/routes";
 
 // Re-export for tests
 export { READING_SEGMENT_MS, LOBBY_DELAY_MS, START_BEFORE_MS, clearChannelCache } from "../game-loop/channel-tick";
@@ -538,6 +539,7 @@ export async function registerRoutes(
   const broadcastRuntime = new BroadcastRuntime(broadcast);
   registerBroadcastRoutes(app, broadcastRuntime);
   await broadcastRuntime.initialize();
+  registerMonetizationRoutes(app);
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);

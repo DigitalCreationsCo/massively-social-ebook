@@ -263,44 +263,6 @@ describe('Admin Channels Cover Image Routes', () => {
     });
   });
 
-      const res = await request(app)
-        .post('/admin/api/channels/1/generate-cover')
-        .set(AUTH_HEADER)
-        .send({ description: 'A grim haunted house' });
-
-      expect(res.status).toBe(200);
-      expect(mockGenerateAndUploadImage).toHaveBeenCalledWith('A grim haunted house');
-      expect(mockStorage.updateChannel).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({ coverImage: generatedImage }),
-      );
-      expect(res.body.coverImage).toBe(generatedImage);
-    });
-
-    it('returns 400 when description is missing', async () => {
-      const res = await request(app)
-        .post('/admin/api/channels/1/generate-cover')
-        .set(AUTH_HEADER)
-        .send({});
-
-      expect(res.status).toBe(400);
-      expect(res.body.message).toContain('Description is required');
-      expect(mockGenerateAndUploadImage).not.toHaveBeenCalled();
-    });
-
-    it('returns 500 when image generation fails', async () => {
-      mockGenerateAndUploadImage.mockRejectedValue(new Error('Model overloaded'));
-
-      const res = await request(app)
-        .post('/admin/api/channels/1/generate-cover')
-        .set(AUTH_HEADER)
-        .send({ description: 'Some description' });
-
-      expect(res.status).toBe(500);
-      expect(res.body.message).toContain('Failed to generate cover image');
-    });
-  });
-
   // ── Auth guard ──────────────────────────────────────────────────────────
 
   describe('Auth enforcement', () => {

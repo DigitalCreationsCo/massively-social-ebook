@@ -22,8 +22,11 @@ export class CalendarService {
     }
 
     static generateCalendarUrls(session: Session, urlAppBase: string) {
-        const start = new Date(session.scheduledStart).toISOString().replace(/-|:|\.\d\d\d/g, "");
-        const end = new Date(session.scheduledEnd).toISOString().replace(/-|:|\.\d\d\d/g, "");
+        // Via parseDateStrict, like every other date path in this class. Calling
+        // new Date(...).toISOString() directly threw a bare RangeError
+        // ("Invalid time value") that named neither the field nor the value.
+        const start = this.parseDateStrict(session.scheduledStart).toISOString().replace(/-|:|\.\d\d\d/g, "");
+        const end = this.parseDateStrict(session.scheduledEnd).toISOString().replace(/-|:|\.\d\d\d/g, "");
         const title = encodeURIComponent(`The 25th Chapter: ${session.title}`);
         const details = encodeURIComponent(`${session.description}\n\nJoin: ${urlAppBase}`);
 

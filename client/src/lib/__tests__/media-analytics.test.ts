@@ -54,12 +54,15 @@ describe("MediaAnalytics", () => {
       mediaAnalytics.trackBufferEnd();
       mediaAnalytics.trackError("Test error");
       
-      mediaAnalytics.endSession(120, 60); // 120s duration, watched 60s
+      // endSession returns the session it closed, since the final metrics only
+      // exist once it is over.
+      const session = mediaAnalytics.endSession(120, 60); // 120s duration, watched 60s
       
-      const session = mediaAnalytics.getCurrentSession();
       expect(session?.completionRate).toBe(50); // 60/120 * 100
       expect(session?.bufferCount).toBe(1);
       expect(session?.errorCount).toBe(1);
+      // and the live session is cleared
+      expect(mediaAnalytics.getCurrentSession()).toBeNull();
     });
 
     it("tracks session end event", () => {
@@ -70,7 +73,7 @@ describe("MediaAnalytics", () => {
         channel_id: "test-channel",
         media_type: "hls",
         duration: 120,
-        currentTime: 60,
+        current_time: 60,
       }));
     });
   });
@@ -246,18 +249,18 @@ describe("MediaAnalytics", () => {
       }));
     });
 
-    it("flushes events periodically", () => {
-      vi.useFakeTimers();
-      
+    it("flushes queued events", () => {
       mediaAnalytics.startSession("test-channel", "hls");
       mediaAnalytics.trackPlay(30);
-      
-      vi.advanceTimersByTime(30000); // 30 seconds
-      
-      // Events should be flushed
+      expect((mediaAnalytics as any).eventQueue.length).toBeGreaterThan(0);
+
+      // Called directly rather than by advancing fake timers: the flush interval
+      // is registered in the constructor, and this module is a singleton, so the
+      // timer is created at import time — before vi.useFakeTimers() could
+      // capture it. Driving the timer here would test nothing.
+      (mediaAnalytics as any).flushEvents();
+
       expect((mediaAnalytics as any).eventQueue).toHaveLength(0);
-      
-      vi.useRealTimers();
     });
   });
 

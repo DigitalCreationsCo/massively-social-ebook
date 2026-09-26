@@ -43,11 +43,19 @@ class MediaAnalytics {
   private currentBufferStart: number | null = null;
   private eventQueue: MediaAnalyticsEvent[] = [];
   private flushInterval: ReturnType<typeof setInterval> | null = null;
-  private isMixpanelAvailable: boolean;
 
   constructor() {
-    this.isMixpanelAvailable = typeof window !== 'undefined' && !!(window as any).mixpanel;
     this.startFlushInterval();
+  }
+
+  /**
+   * Resolved at emit time, not cached in the constructor. This module is a
+   * singleton, so the constructor runs at import time — before Mixpanel's async
+   * snippet has necessarily defined `window.mixpanel`. Caching the check meant a
+   * late-loading snippet silently dropped every event for the page's lifetime.
+   */
+  private get mixpanel(): { track: (name: string, props: Record<string, unknown>) => void } | undefined {
+    return typeof window === 'undefined' ? undefined : (window as any).mixpanel;
   }
 
   private startFlushInterval() {
@@ -87,9 +95,19 @@ class MediaAnalytics {
     return sessionId;
   }
 
-  endSession(duration?: number, currentTime?: number) {
-    if (!this.currentSession) return;
+  /**
+   * Ends the current session and returns it with its final metrics, or undefined
+   * if no session was running.
+   *
+   * Returning the finished session is deliberate: the interesting numbers
+   * (completion rate, buffer and error counts) only exist after the session is
+   * over, and nulling the field is what makes them unreachable. Callers that
+   * report or persist the summary had no way to get it before.
+   */
+  endSession(duration?: number, currentTime?: number): MediaAnalyticsSession | undefined {
+    if (!this.currentSession) return undefined;
 
+    const session = this.currentSession;
     const endTime = Date.now();
     this.currentSession.endTime = endTime;
     this.currentSession.totalWatchTime = endTime - this.currentSession.startTime;
@@ -112,6 +130,7 @@ class MediaAnalytics {
 
     this.flushEvents();
     this.currentSession = null;
+    return session;
   }
 
   trackPlay(currentTime?: number) {
@@ -230,18 +249,39 @@ class MediaAnalytics {
     });
   }
 
+  /**
+   * The analytics payload is a stable external contract (Mixpanel properties and
+   * whatever backend replaces it), so it is snake_case throughout. Event data is
+   * authored in camelCase to match the rest of the app; converting here means
+   * callers never have to think about the wire format, and a new caller cannot
+   * accidentally introduce a second naming convention into the same payload.
+   * Shallow: analytics properties are flat scalars.
+   */
+  private static toSnakeCase(properties: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(properties).map(([key, value]) => [
+        key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase(),
+        value,
+      ]),
+    );
+  }
+
   private trackEvent(event: MediaAnalyticsEvent) {
     this.eventQueue.push(event);
     
-    // Track to Mixpanel if available
-    if (this.isMixpanelAvailable) {
+    // Track to Mixpanel if it is available right now
+    const mixpanel = this.mixpanel;
+    if (mixpanel) {
       try {
-        (window as any).mixpanel.track(`media_${event.eventType}`, {
-          session_id: event.sessionId,
-          channel_id: event.channelId,
-          media_type: event.mediaType,
-          ...event.data,
-        });
+        mixpanel.track(
+          `media_${event.eventType}`,
+          MediaAnalytics.toSnakeCase({
+            session_id: event.sessionId,
+            channel_id: event.channelId,
+            media_type: event.mediaType,
+            ...event.data,
+          }),
+        );
       } catch (error) {
         console.warn('Failed to track media event to Mixpanel:', error);
       }

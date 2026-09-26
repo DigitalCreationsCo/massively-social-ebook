@@ -168,7 +168,14 @@ export function registerTtsRoutes(app: Express) {
       res.json({ audioUrl: permanentUrl, durationSeconds: speech.durationSeconds });
     } catch (err) {
       logger.error("TTS error", "tts", err instanceof Error ? err : new Error(String(err)));
-      res.status(500).json({ error: "TTS generation failed" });
+      // A missing or misconfigured provider is an operator problem, not a client
+      // one. Reporting only "TTS generation failed" sends someone hunting a
+      // provider outage when the actual cause is an unset variable. Known
+      // configuration errors are surfaced; they name env vars, never secrets.
+      // Everything else stays generic so internals are not leaked.
+      const reason = err instanceof Error ? err.message : String(err);
+      const isConfigurationIssue = /not configured|is required when|is required/i.test(reason);
+      res.status(500).json({ error: isConfigurationIssue ? reason : "TTS generation failed" });
     }
   });
 

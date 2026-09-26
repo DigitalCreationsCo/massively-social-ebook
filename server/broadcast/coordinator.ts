@@ -34,6 +34,11 @@ import {
 } from "./media-slots";
 import { AmbientPipeline, type AmbientPipelineStatus } from "./ambient-pipeline";
 import { generateAmbientStoryWindow, generateCanonicalStoryWindow } from "../blocks/ai";
+import {
+  abandonPaidDirection,
+  claimPaidDirection,
+  completePaidDirection,
+} from "../monetization/service";
 
 type DesiredState = "running" | "stopped";
 type BroadcastMode = "stopped" | "waiting_for_streamer" | "ambient" | "preparing" | "episode";
@@ -668,6 +673,15 @@ export class BroadcastCoordinator {
       const previousContext = blocks.at(-1)?.content
         ?? (await storage.getLastBlock(this.channelId))?.content
         ?? "";
+      // Only honour a paid direction on a turn that starts a fresh text window,
+      // and only when one is actually waiting. The credit is spent after the turn
+      // succeeds, so a failed generation leaves the purchase intact.
+      const paidPrompt = !this.canonicalTextWindow || this.canonicalTextWindow.sessionId !== session.id || this.canonicalTextWindow.texts.length === 0
+        ? await claimPaidDirection(this.channelId)
+        : undefined;
+      const generationContext = paidPrompt
+        ? `${previousContext}\n\nPAID AUDIENCE DIRECTION (honor this as a creative constraint for the next story turn; keep the story coherent and safe):\n${paidPrompt.promptText}`
+        : previousContext;
       await this.requireStreamerAvailable(signal);
 
       let generated: CanonicalText;
@@ -679,7 +693,7 @@ export class BroadcastCoordinator {
           const missingSlots = Math.max(1, minimumSlots - slotCount);
           const texts = await generateCanonicalStoryWindow(
             this.channelId,
-            previousContext,
+            generationContext,
             Math.min(3, missingSlots),
             session.id,
           );
@@ -688,10 +702,14 @@ export class BroadcastCoordinator {
         generated = this.canonicalTextWindow.texts.shift()!;
       } catch (cause) {
         this.canonicalTextWindow = undefined;
+        // The turn failed, so the credit was never spent. Hand the direction back
+        // rather than stranding a purchase nobody will ever honour.
+        if (paidPrompt) await abandonPaidDirection(paidPrompt.id);
         throw cause;
       }
 
       if (!generated?.content) {
+        if (paidPrompt) await abandonPaidDirection(paidPrompt.id);
         await wait(2_000, signal);
         return;
       }
@@ -707,11 +725,24 @@ export class BroadcastCoordinator {
       // Generation failures are terminal for this turn, not the channel. Wait
       // before moving on so a persistent provider failure cannot busy-loop.
       if (!prepared?.block || prepared.slots.length === 0) {
+        if (paidPrompt) await abandonPaidDirection(paidPrompt.id);
         await wait(2_000, signal);
         return;
       }
       for (const slot of prepared.slots) {
         await this.stageCanonicalSlot(prepared.block, slot, signal);
+      }
+      if (paidPrompt && !(await completePaidDirection(this.channelId, paidPrompt))) {
+        // The credit vanished between the check and the spend, so a concurrent
+        // turn for this buyer took it. The block is already staged and staged
+        // slots cannot be unpublished, so the turn publishes and the direction
+        // goes back to the queue without a charge. A rare free direction is a
+        // better failure than a corrupted slot queue; log it so it is visible.
+        logger.warn("Paid direction published without a spent credit", "monetization", undefined, {
+          channelId: this.channelId,
+          promptId: paidPrompt.id,
+          userId: paidPrompt.userId,
+        });
       }
       blocks = [...blocks, prepared.block];
       slotCount += prepared.slots.length;

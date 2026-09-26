@@ -1,6 +1,19 @@
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
+// Several server modules construct clients at import time and throw when the
+// credential is missing, so a test that merely imports a route fails before it
+// can assert anything. Unit tests must not need real credentials: these are
+// syntactically valid placeholders and nothing sends on them. Tests that assert
+// on delivery mock the client.
+process.env.RESEND_API_KEY ??= 're_test_placeholder';
+// sendEmail rejects a configured client without a from-address, so supply one
+// here rather than in each suite that exercises the real implementation.
+process.env.RESEND_FROM_EMAIL ??= 'test@25thchapter.com';
+// server/db throws at import time without this. pg.Pool connects lazily, so a
+// placeholder does not open a socket; a test that queries still fails loudly.
+process.env.DATABASE_URL ??= 'postgres://localhost:5432/mse_test';
+
 // Mock matchMedia if not available in jsdom
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'matchMedia', {

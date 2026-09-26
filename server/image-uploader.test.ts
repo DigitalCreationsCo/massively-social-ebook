@@ -27,10 +27,16 @@ vi.mock("./blocks/image-references", async (importOriginal) => {
 });
 
 import { generateStoryImageAsset, generateAndUploadStoryImage, archiveStoryImage, generateStoryImageAssetsBatch } from "./image-uploader";
+import { resetImageProviderBudgetForTests } from "./blocks/provider-budget";
 
 describe("image-uploader reference forwarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The single-image lane allows one start per 15s and is not env-tunable, so
+    // without a reset the second test onwards waits out the window left by the
+    // first and times out before asserting anything. The batch lane is tunable.
+    resetImageProviderBudgetForTests();
+    vi.stubEnv("IMAGE_BATCH_INTERVAL_MS", "0");
     mockGetAiConfiguration.mockReturnValue({
       text: { provider: "test", model: "test-text" },
       image: { provider: "test", model: "test-image-model" },

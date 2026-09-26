@@ -11,13 +11,30 @@ vi.mock('../storage', () => ({
         getUsers: vi.fn(),
         listSessions: vi.fn(),
         createSession: vi.fn(),
+        // The scheduler reads its watermark cursor through this and queries
+        // sessions via getGlobalSessionsInWindow; without them the module throws
+        // before the behaviour under test is reached.
+        getSystemSetting: vi.fn(),
+        setSystemSetting: vi.fn(),
+        getGlobalSessionsInWindow: vi.fn(),
     },
 }));
 
-vi.mock('.', () => ({
-    sendEmail: vi.fn(),
-    sendPushNotification: vi.fn(),
-}));
+// Partial mock: sendEmail is the subject under test here and must be the real
+// implementation talking to the mocked Resend client. Only the push path is
+// stubbed, so the scheduler tests can assert on it without a Firebase project.
+vi.mock('.', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('.')>();
+    return {
+        ...actual,
+        // A spy over the real implementation, so this file can both assert on
+        // the call (CalendarService, scheduler) and on the Resend interaction
+        // (Notifications suite). vi.clearAllMocks() clears call records without
+        // discarding the wrapped implementation.
+        sendEmail: vi.fn(actual.sendEmail),
+        sendPushNotification: vi.fn(),
+    };
+});
 
 vi.mock('@react-email/render', () => ({
     render: vi.fn().mockResolvedValue('<html lang="en">Mock Email</html>'),
@@ -27,11 +44,15 @@ vi.mock('@react-email/render', () => ({
 vi.mock('resend', () => {
     const mockMethodSend = vi.fn();
     return {
-        Resend: vi.fn().mockImplementation(() => ({
-            emails: {
-                send: mockMethodSend,
-            },
-        })),
+        // A `function` expression, not an arrow: the test constructs the client
+        // with `new Resend()`, and arrow functions are not constructable.
+        Resend: vi.fn().mockImplementation(function ResendMock() {
+            return {
+                emails: {
+                    send: mockMethodSend,
+                },
+            };
+        }),
     };
 });
 
@@ -140,7 +161,10 @@ describe('CalendarService Test Suite', () => {
         expect(sendEmail).toHaveBeenCalledWith(
             'test@domain.com',
             'Calendar Invite: Midnight Alibi: Case 08',
-            expect.stringContaining('You are invited to join the story session'),
+            // The plain-text fallback is link-first: the styled links live in the
+            // HTML, so the text version has to carry the URL itself or a text-only
+            // client has no way in. Assert the URL, not some older wording.
+            expect.stringContaining('https://25thchapter.com'),
             '<html lang="en">Mock Email</html>',
             expect.arrayContaining([
                 expect.objectContaining({ filename: 'invite.ics' })
@@ -183,7 +207,8 @@ describe('Notification System', () => {
             pushToken: 'token-123',
         };
 
-        vi.mocked(storage.listSessions).mockResolvedValue([mockSession] as any);
+        vi.mocked(storage.getGlobalSessionsInWindow).mockResolvedValue([mockSession] as any);
+        vi.mocked(storage.getSystemSetting).mockResolvedValue(undefined);
         // getUsers returns { users: [...], total: number }
         vi.mocked(storage.getUsers).mockResolvedValue({ users: [mockUser], total: 1 });
 
@@ -212,6 +237,8 @@ describe('Notification System', () => {
             email: 'test@example.com',
         };
 
+        // The weekly briefing reads the whole schedule via listSessions, unlike
+        // the push path which uses the windowed query.
         vi.mocked(storage.listSessions).mockResolvedValue([mockSession] as any);
         // getUsers returns { users: [...], total: number }
         vi.mocked(storage.getUsers).mockResolvedValue({ users: [mockUser], total: 1 });

@@ -25,7 +25,7 @@ vi.mock('googleapis', () => {
 });
 
 // Mock notifications
-vi.mock('./notifications', () => ({
+vi.mock('../notifications', () => ({
     sendEmail: vi.fn().mockResolvedValue({ success: true }),
     sendPushNotification: vi.fn().mockResolvedValue({ success: true }),
 }));
