@@ -1,22 +1,36 @@
 #!/bin/bash
 
-# Run the release guard only when this push actually targets main.
+# Run the release guard only when this push targets main.
 #
-# The branch must be read from the refspec being pushed, not from HEAD's
-# upstream. Reading @{u} was wrong twice over: it aborts the first push of any
-# branch that has no upstream yet, and it silently skips the check when main is
-# pushed while standing on some other branch.
-# git invokes a pre-push hook once per ref, with four arguments:
-#   $1 local ref   $2 local sha   $3 remote ref   $4 remote sha
-# The remote ref is the third, so step two at a time and inspect it.
+# Two sources of truth, because neither alone is reliable here:
+#
+#   * git documents pre-push args as <remote> <url> [<ref> <sha> <ref> <sha> ...],
+#     so when it supplies refspecs the remote ref is every third argument from
+#     the third onwards. That is the accurate answer for an explicit
+#     `git push origin main feature/x`.
+#   * Some git/husky combinations invoke the hook with only <remote> <url> and
+#     no refspecs at all, so there is nothing to inspect. Fall back to whether
+#     HEAD tracks origin/main, which is correct for a bare `git push`.
+#
+# The previous version read only HEAD's upstream, which meant a branch with no
+# upstream aborted the hook (so the first push of a new branch was impossible)
+# and pushing main from another branch skipped the check.
 pushing_main=false
-while [ "$#" -ge 4 ]; do
-  if [ "$3" = "refs/heads/main" ]; then
-    pushing_main=true
-    break
-  fi
-  shift 2
-done
+
+if [ "$#" -ge 6 ]; then
+  shift 2  # drop <remote> <url>; now groups of 4 begin at $1
+  while [ "$#" -ge 4 ]; do
+    # $1 local ref, $2 local sha, $3 remote ref, $4 remote sha
+    if [ "$3" = "refs/heads/main" ]; then
+      pushing_main=true
+      break
+    fi
+    shift 2
+  done
+else
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+  [ "$upstream" = "origin/main" ] && pushing_main=true
+fi
 
 if [ "$pushing_main" = true ]; then
   echo "[+] main is being pushed. running pre-push release validation..."
