@@ -450,33 +450,37 @@ async function generateTurnMedia(
   videoSourceConfig?: VideoSourceConfig,
 ): Promise<{ image?: GeneratedImageWithArchive; video?: GeneratedVideoWithArchive; narration: PreparedNarration[] }> {
   const description = `${content.slice(0, 300)}`;
-  
+
   if (useVideo) {
-    // Video generation path (includes audio, no separate TTS needed)
-    const videoResult = await retryGeneration(
-      "story video",
-      () => generateVideoWithFallback(description, channelId, imageType, signal, videoSourceConfig),
-      signal,
-    );
-    
-    if (!videoResult) {
-      logger.error(
-        `Skipping ${imageType} turn for ${channelId}: video generation failed`,
-        "broadcast",
+    // Video generation path (includes audio, no separate TTS needed).
+    // Single attempt: video is slow/expensive and transient HTTP flakes are
+    // already retried inside the provider. On failure fall back to the proven
+    // image+audio pipeline so playback never stalls on a video outage.
+    let videoResult: GeneratedVideoWithArchive | undefined;
+    try {
+      videoResult = await retryGeneration(
+        "story video",
+        () => generateVideoWithFallback(description, channelId, imageType, signal, videoSourceConfig),
+        signal,
+        1,
       );
-      return { narration: [] };
+    } catch (cause) {
+      logger.warn(`Video generation failed for ${channelId}; falling back to image+audio`, "broadcast", asError(cause));
     }
-    
-    logger.info(
-      `Video generation succeeded for ${channelId}`,
-      "broadcast",
-      { durationSeconds: videoResult.video.durationSeconds }
-    );
-    
-    return { video: videoResult, narration: [] };
+
+    if (videoResult) {
+      logger.info(
+        `Video generation succeeded for ${channelId}`,
+        "broadcast",
+        { durationSeconds: videoResult.video.durationSeconds }
+      );
+
+      return { video: videoResult, narration: [] };
+    }
+    // Fall through to image pipeline below.
   }
-  
-  // Image generation path (original behavior)
+
+  // Image generation path (original behavior, also the video fallback)
   // Image and narration generate concurrently. Narration is best-effort: a
   // single failed attempt falls back to an image-only turn (playback must
   // proceed identically with or without narration), so it defaults to one

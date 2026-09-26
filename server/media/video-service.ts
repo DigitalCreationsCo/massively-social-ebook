@@ -1,7 +1,8 @@
 import { generateUUID } from "@portalshq/capability-realtime-fanout";
 import { GCPStorageManager } from "../storage-manager";
 import { logger } from "../logger";
-import { generateProviderVideo, type ProviderVideoRequest, getVideoSavingConfig } from "../blocks/ai-provider";
+import { generateProviderVideo, getVideoSavingConfig, VideoProviderError, type ProviderVideoRequest } from "../blocks/ai-provider";
+import { getVideoConfig, normalizeAspectRatio, snapDurationForProvider } from "./video-config";
 
 /**
  * Video generation reference types - text, image, or video references
@@ -20,12 +21,16 @@ export interface VideoGenerationOptions {
   references?: VideoReference[];
   /** Broadcast abort signal for cancellation */
   signal?: AbortSignal;
-  /** Target duration in seconds (optional, provider-dependent) */
+  /** Target duration in seconds (optional, provider-dependent; snapped per provider) */
   targetDurationSeconds?: number;
-  /** Video aspect ratio (default 16:9) */
+  /** Video aspect ratio (default from VIDEO_ASPECT_RATIO; 1:1 maps to 16:9 for Veo) */
   aspectRatio?: "16:9" | "9:16" | "1:1";
+  /** Output resolution (default from VIDEO_RESOLUTION) */
+  resolution?: "720p" | "1080p" | "4k";
   /** Whether to include audio in generated video (default true) */
   includeAudio?: boolean;
+  /** Overall timeout override in ms (default VIDEO_GEN_TIMEOUT_MS) */
+  timeoutMs?: number;
 }
 
 /**
@@ -73,15 +78,30 @@ export async function generateVideo(
   description: string,
   options: VideoGenerationOptions = {}
 ): Promise<VideoBuffer> {
-  const { signal, references = [], targetDurationSeconds, aspectRatio = "16:9", includeAudio = true } = options;
+  const cfg = getVideoConfig();
+  const {
+    signal,
+    references = [],
+    targetDurationSeconds = cfg.durationSeconds,
+    aspectRatio = cfg.aspectRatio,
+    resolution = cfg.resolution,
+    includeAudio = cfg.generateAudio,
+    timeoutMs = cfg.timeoutMs,
+  } = options;
 
   signal?.throwIfAborted();
+
+  // Veo (both providers) only supports 16:9 / 9:16 — normalize early so the
+  // request matches provider capabilities instead of 400ing.
+  const effectiveAspect = normalizeAspectRatio(aspectRatio, "16:9");
+  const duration = snapDurationForProvider(targetDurationSeconds, cfg.provider);
 
   logger.info("[VideoGen] generating video", "video", {
     description: description.slice(0, 100),
     referenceCount: references.length,
-    targetDurationSeconds,
-    aspectRatio,
+    targetDurationSeconds: duration,
+    aspectRatio: effectiveAspect,
+    resolution,
     includeAudio,
   });
 
@@ -89,7 +109,7 @@ export async function generateVideo(
     // Convert references to provider format
     const referenceImages: Buffer[] = [];
     const referenceMimeTypes: string[] = [];
-    
+
     for (const ref of references) {
       if (ref.type === "image") {
         referenceImages.push(ref.buffer);
@@ -108,13 +128,22 @@ export async function generateVideo(
       text: description,
       referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       referenceMimeTypes: referenceMimeTypes.length > 0 ? referenceMimeTypes : undefined,
-      aspectRatio,
-      duration: targetDurationSeconds,
+      aspectRatio: effectiveAspect,
+      duration,
+      resolution,
       generateAudio: includeAudio,
-      abortSignal: signal,
+      abortSignal: timeoutMs !== undefined ? withTimeout(signal, timeoutMs) : signal,
     };
 
     const result = await generateProviderVideo(providerRequest);
+
+    const quality = validateVideoQuality(result.videoBuffer, result.mimeType, result.durationSeconds);
+    if (!quality.ok) {
+      throw new VideoProviderError(
+        "generation_failed",
+        `generated video failed quality checks: ${quality.issues.join("; ")}`,
+      );
+    }
 
     logger.info("[VideoGen] video generation completed", "video", {
       sizeBytes: result.videoBuffer.length,
@@ -135,8 +164,23 @@ export async function generateVideo(
       error: error instanceof Error ? error.message : String(error),
       description: description.slice(0, 100),
     });
-    
-    // Provide fallback error handling
+
+    // Provide fallback error handling (preserve typed code for callers)
+    if (error instanceof VideoProviderError) {
+      if (error.code === "budget_exceeded") {
+        throw new Error(`Daily video budget limit reached. Try again tomorrow or increase VIDEO_DAILY_BUDGET_USD.`);
+      }
+      if (error.code === "quota_exceeded") {
+        throw new Error(`Video generation quota exceeded. Please check your provider account balance.`);
+      }
+      if (error.code === "rate_limited") {
+        throw new Error(`Video provider rate limit hit. Try again shortly.`);
+      }
+      if (error.code === "timeout") {
+        throw new Error(`Video generation timed out. Try again or increase VIDEO_GEN_TIMEOUT_MS.`);
+      }
+      throw error;
+    }
     if (error instanceof Error) {
       if (error.message.includes("budget exceeded")) {
         throw new Error(`Video generation cost limit reached: ${error.message}`);
@@ -148,9 +192,23 @@ export async function generateVideo(
         throw new Error(`Daily video budget limit reached. Try again tomorrow or increase VIDEO_DAILY_BUDGET_USD.`);
       }
     }
-    
+
     throw error;
   }
+}
+
+/** Combine an outer abort signal with a wall-clock timeout. */
+function withTimeout(outer: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(outer?.reason);
+  if (outer) {
+    if (outer.aborted) controller.abort(outer.reason);
+    else outer.addEventListener("abort", onAbort, { once: true });
+  }
+  const timer = setTimeout(() => controller.abort(new Error(`video generation timed out after ${timeoutMs}ms`)), timeoutMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  // ponytail: timer lives until generation settles; outer-abort clears via GC, no explicit dispose needed for one-shot calls
+  return controller.signal;
 }
 
 /**
@@ -281,10 +339,10 @@ export async function archiveVideo(
   videoType: "ambient" | "session" = "ambient"
 ): Promise<string | null> {
   const config = getVideoSavingConfig();
-  
+
   // Check if video should be saved based on mode and configuration
   const shouldSave = videoType === "session" ? config.saveSessionVideos : config.saveAmbientVideos;
-  
+
   if (!shouldSave) {
     logger.info("[VideoGen] skipping video archival based on configuration", "video", {
       videoType,
@@ -294,28 +352,34 @@ export async function archiveVideo(
     return null;
   }
 
+  // Streaming gate: never archive (or queue) bytes that fail quality checks.
+  const quality = validateVideoQuality(video.buffer, video.mimeType, video.durationSeconds);
+  if (!quality.ok) {
+    throw new Error(`Cannot archive video that failed quality checks: ${quality.issues.join("; ")}`);
+  }
+
   const bucket = process.env.GOOGLE_CLOUD_BUCKET;
-  
+
   if (bucket) {
     const gcs = new GCPStorageManager(process.env.GOOGLE_CLOUD_PROJECT || "", bucket);
     const path = buildVideoPath(channelId, videoType, video.filename);
     const base64Data = video.buffer.toString("base64");
     const gsUri = await gcs.uploadBase64Image(base64Data, path, video.mimeType);
-    const publicUrl = gcs.getPublicUrl(gsUri);
-    
+    const publicUrl = applyCdnBaseUrl(gcs.getPublicUrl(gsUri));
+
     logger.info("[VideoGen] video archived to GCS", "video", {
       path,
       url: publicUrl,
       sizeBytes: video.buffer.length,
     });
-    
+
     return publicUrl;
   }
 
   // Fallback to local storage
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
-  
+
   const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, "");
   if (!publicBaseUrl) {
     throw new Error("PUBLIC_BASE_URL is required when GCS is unavailable");
@@ -323,18 +387,18 @@ export async function archiveVideo(
 
   const videoDir = path.resolve(process.cwd(), "server/public/video");
   await fs.mkdir(videoDir, { recursive: true });
-  
+
   const localPath = path.join(videoDir, video.filename);
   await fs.writeFile(localPath, video.buffer);
-  
-  const localUrl = `${publicBaseUrl}/video/${encodeURIComponent(video.filename)}`;
-  
+
+  const localUrl = applyCdnBaseUrl(`${publicBaseUrl}/video/${encodeURIComponent(video.filename)}`);
+
   logger.info("[VideoGen] video archived to local storage", "video", {
     path: localPath,
     url: localUrl,
     sizeBytes: video.buffer.length,
   });
-  
+
   return localUrl;
 }
 
@@ -358,15 +422,16 @@ export async function downloadArchiveVideo(url: string): Promise<Buffer | null> 
  * Convert video buffer to queue upload asset
  */
 export async function videoToUploadAsset(video: VideoBuffer): Promise<VideoUploadAsset> {
-  if (video.buffer.length === 0) {
-    throw new Error(`Cannot queue empty video: ${video.filename}`);
+  const optimized = optimizeVideoForStreaming(video);
+  if (optimized.buffer.length === 0) {
+    throw new Error(`Cannot queue empty video: ${optimized.filename}`);
   }
-  
+
   const crypto = await import("node:crypto");
   return {
-    data: new Blob([Uint8Array.from(video.buffer)], { type: video.mimeType }),
-    filename: video.filename,
-    sha256: crypto.createHash("sha256").update(video.buffer).digest("hex"),
+    data: new Blob([Uint8Array.from(optimized.buffer)], { type: optimized.mimeType }),
+    filename: optimized.filename,
+    sha256: crypto.createHash("sha256").update(optimized.buffer).digest("hex"),
   };
 }
 
@@ -407,20 +472,80 @@ function estimateVideoDuration(buffer: Buffer, mimeType: string): number {
  */
 export function validateVideoBuffer(buffer: Buffer, mimeType: string): boolean {
   if (buffer.length < 4) return false;
-  
+
   // Check for common video file signatures
   const signatures: Record<string, (number | null)[]> = {
     "video/mp4": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70], // ftyp box
     "video/webm": [0x1A, 0x45, 0xDF, 0xA3], // WebM
     "video/quicktime": [0x00, 0x00, 0x00, null, 0x66, 0x74, 0x79, 0x70], // same as MP4
   };
-  
+
   const sig = signatures[mimeType];
   if (!sig) return true; // Unknown MIME type, assume valid
-  
+
   for (let i = 0; i < sig.length; i++) {
     if (sig[i] !== null && buffer[i] !== sig[i]) return false;
   }
-  
+
   return true;
+}
+
+export interface VideoQualityReport {
+  ok: boolean;
+  issues: string[];
+}
+
+const STREAMABLE_MIME_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+
+/**
+ * Production quality gate: size bounds, container signature, MIME allowlist,
+ * and duration sanity. No ffprobe dependency — header + bounds checks only.
+ */
+export function validateVideoQuality(
+  buffer: Buffer,
+  mimeType: string,
+  durationSeconds?: number,
+): VideoQualityReport {
+  const cfg = getVideoConfig();
+  const issues: string[] = [];
+  if (buffer.length < cfg.minBytes) issues.push(`video too small (${buffer.length} bytes, min ${cfg.minBytes})`);
+  if (buffer.length > cfg.maxBytes) issues.push(`video too large (${buffer.length} bytes, max ${cfg.maxBytes})`);
+  if (!STREAMABLE_MIME_TYPES.has(mimeType)) issues.push(`unsupported mime type ${mimeType}`);
+  if (!validateVideoBuffer(buffer, mimeType)) issues.push(`container signature mismatch for ${mimeType}`);
+  if (durationSeconds !== undefined && !(durationSeconds > 0 && durationSeconds <= 300)) {
+    issues.push(`invalid duration ${durationSeconds}s`);
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+/**
+ * Rewrite an archive URL onto the configured CDN base (VIDEO_CDN_BASE_URL).
+ * Pass-through when unset so GCS-direct and local URLs keep working.
+ */
+export function applyCdnBaseUrl(url: string): string {
+  const cdn = getVideoConfig().cdnBaseUrl;
+  if (!cdn) return url;
+  try {
+    const parsed = new URL(url);
+    return `${cdn}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Lightweight streaming optimization hook.
+ *
+ * Providers already return streamable MP4; without an ffmpeg sidecar there is
+ * nothing safe to transcode in-process, so this enforces the streaming gates
+ * (quality + max-bytes + mp4 normalization) instead of pretending to compress.
+ * Add real transcoding behind this function when an encoder is available.
+ */
+export function optimizeVideoForStreaming(video: VideoBuffer): VideoBuffer {
+  const quality = validateVideoQuality(video.buffer, video.mimeType, video.durationSeconds);
+  if (!quality.ok) {
+    throw new Error(`Video failed streaming quality checks: ${quality.issues.join("; ")}`);
+  }
+  // Providers return MP4; keep bytes as-is to avoid a lossy re-encode here.
+  return video;
 }
