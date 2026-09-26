@@ -1,13 +1,26 @@
 #!/bin/bash
 
-# Identify the remote branch being pushed to
-remote_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u})
+# Run the release guard only when this push actually targets main.
+#
+# The branch must be read from the refspec being pushed, not from HEAD's
+# upstream. Reading @{u} was wrong twice over: it aborts the first push of any
+# branch that has no upstream yet, and it silently skips the check when main is
+# pushed while standing on some other branch.
+# git invokes a pre-push hook once per ref, with four arguments:
+#   $1 local ref   $2 local sha   $3 remote ref   $4 remote sha
+# The remote ref is the third, so step two at a time and inspect it.
+pushing_main=false
+while [ "$#" -ge 4 ]; do
+  if [ "$3" = "refs/heads/main" ]; then
+    pushing_main=true
+    break
+  fi
+  shift 2
+done
 
-# Only run the check-version script if pushing to production
-if [ "$remote_branch" = "origin/main" ]; then
-  echo "[+] production branch detected. running pre-push validation..."
+if [ "$pushing_main" = true ]; then
+  echo "[+] main is being pushed. running pre-push release validation..."
   sh scripts/check-version.sh
 else
-  echo "[+] skipping pre-push validation for non-production branch."
+  echo "[+] not pushing main. skipping release validation."
 fi
-
